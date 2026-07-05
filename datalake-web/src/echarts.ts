@@ -1,6 +1,7 @@
 // ECharts 按需注册 + 双主题（tech-dark 霓虹 / tech-light DIFY 风格）
 // 各视图统一从这里引入 VChart，并用 theme.chartTheme 绑定 :theme，随全局主题切换。
 import { use, registerTheme } from 'echarts/core'
+import 'echarts-gl'  // 3D 图表（bar3D / grid3D 等）
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, GaugeChart, LineChart, PieChart } from 'echarts/charts'
 import {

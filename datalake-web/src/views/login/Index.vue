@@ -1,0 +1,252 @@
+<template>
+  <div class="login">
+    <!-- 背景层：网格 + 扫描线 + 浮动光点 -->
+    <div class="bg-grid" />
+    <div class="bg-scan" />
+    <div class="orbs"><span v-for="n in 6" :key="n" :style="orb(n)" /></div>
+
+    <!-- 主题切换 -->
+    <div class="top-tools"><ThemeToggle /></div>
+
+    <!-- 左侧品牌区 -->
+    <div class="brand">
+      <div class="brand-logo">
+        <el-icon :size="40"><DataLine /></el-icon>
+      </div>
+      <h1>数据中台</h1>
+      <p>现代湖仓 · Kafka → Flink → StarRocks → Spark</p>
+      <ul class="brand-points">
+        <li><el-icon><Connection /></el-icon> 采 · 多源接入 / 实时入湖</li>
+        <li><el-icon><Cpu /></el-icon> 算 · 流批一体分层加工</li>
+        <li><el-icon><DataAnalysis /></el-icon> 服 · 统一数据资产服务</li>
+      </ul>
+    </div>
+
+    <!-- 登录卡片 -->
+    <div class="card">
+      <div class="card-head">
+        <span class="dot" />
+        <span>系统登录 / SYSTEM ACCESS</span>
+      </div>
+
+      <!-- 登录方式切换 -->
+      <div class="seg">
+        <button :class="['seg-btn', { on: tab === 'account' }]" @click="tab = 'account'">账号登录</button>
+        <button :class="['seg-btn', { on: tab === 'qrcode' }]" @click="tab = 'qrcode'">扫码登录</button>
+        <span class="seg-ink" :class="{ right: tab === 'qrcode' }" />
+      </div>
+
+      <!-- 账号登录 -->
+      <el-form v-show="tab === 'account'" ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="onLogin">
+        <el-form-item prop="username">
+          <el-input v-model="form.username" placeholder="账号" :prefix-icon="User" clearable />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input v-model="form.password" type="password" show-password placeholder="密码" :prefix-icon="Lock" clearable />
+        </el-form-item>
+        <el-button class="enter" type="primary" :loading="loading" @click="onLogin">
+          进 入 中 台 <el-icon class="el-icon--right"><Right /></el-icon>
+        </el-button>
+        <div class="hint">演示账号 <b>admin</b> / <b>admin123</b></div>
+      </el-form>
+
+      <!-- 扫码登录 -->
+      <div v-show="tab === 'qrcode'" class="qr-wrap">
+        <div class="qr-box">
+          <img v-if="qrSrc" :src="qrSrc" alt="登录二维码" class="qr-img" />
+          <div class="qr-mask" :class="{ show: qrExpiry <= 0 }">
+            <span>二维码已失效</span>
+            <el-button size="small" type="primary" @click="genQR">点击刷新</el-button>
+          </div>
+          <span class="qr-corner tl" /><span class="qr-corner tr" /><span class="qr-corner bl" /><span class="qr-corner br" />
+        </div>
+        <div class="qr-tip"><el-icon><Iphone /></el-icon> 请使用 <b>Pharma 移动端</b> 扫码登录</div>
+        <div class="qr-sub">二维码 {{ qrExpiry }}s 后自动刷新</div>
+      </div>
+    </div>
+
+    <div class="footer">© 2026 Pharma Data Lake · GxP / 21 CFR Part 11 Ready</div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, type FormInstance } from 'element-plus'
+import { User, Lock, Right, Iphone } from '@element-plus/icons-vue'
+import QRCode from 'qrcode'
+import { api } from '@/api'
+import { auth } from '@/auth'
+import ThemeToggle from '@/components/ThemeToggle.vue'
+
+const router = useRouter()
+const route = useRoute()
+const formRef = ref<FormInstance>()
+const loading = ref(false)
+const form = reactive({ username: 'admin', password: 'admin123' })
+const rules = {
+  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+}
+
+const tab = ref<'account' | 'qrcode'>('account')
+
+async function onLogin() {
+  await formRef.value?.validate(async (ok) => {
+    if (!ok) return
+    loading.value = true
+    try {
+      const data = await api.login(form.username, form.password)
+      auth.set(data.token, data.user, data.menus || [])
+      ElMessage.success('登录成功')
+      router.replace((route.query.redirect as string) || '/')
+    } catch {
+      ElMessage.error('账号或密码错误')
+    } finally {
+      loading.value = false
+    }
+  })
+}
+
+// 二维码：生成可扫码的登录票据 URL，每 60s 自动刷新
+const qrSrc = ref('')
+const qrExpiry = ref(60)
+async function genQR() {
+  const ticket = Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+  const payload = `${location.origin}/#/m/login?t=${ticket}`
+  qrSrc.value = await QRCode.toDataURL(payload, { margin: 1, width: 224, color: { dark: '#101828', light: '#ffffff' } })
+  qrExpiry.value = 60
+}
+let qrTimer: number
+let countdown: number
+
+// 浮动光点随机位置（按索引确定，避免渲染抖动）
+function orb(n: number) {
+  const seed = [12, 78, 30, 62, 88, 45][n - 1]
+  const size = 120 + ((n * 37) % 160)
+  return {
+    left: `${seed}%`,
+    top: `${(n * 53) % 90}%`,
+    width: `${size}px`,
+    height: `${size}px`,
+    animationDuration: `${14 + n * 3}s`,
+    animationDelay: `${-n * 2}s`
+  }
+}
+
+onMounted(() => {
+  genQR()
+  qrTimer = window.setInterval(genQR, 60000)
+  countdown = window.setInterval(() => { if (qrExpiry.value > 0) qrExpiry.value-- }, 1000)
+})
+onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
+</script>
+
+<style scoped>
+.login {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 80px;
+  overflow: hidden;
+}
+.bg-grid {
+  position: absolute; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--tech-primary) 9%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--tech-primary) 9%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, #000 35%, transparent 80%);
+}
+.bg-scan {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--tech-primary) 7%, transparent) 50%, transparent);
+  animation: scan 7s linear infinite;
+}
+@keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100%); } }
+.orbs span {
+  position: absolute; border-radius: 50%; filter: blur(40px); opacity: .35;
+  background: radial-gradient(circle, var(--tech-primary), transparent 70%);
+  animation: float 16s ease-in-out infinite;
+}
+@keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(40px, -30px); } }
+
+.top-tools { position: absolute; top: 20px; right: 24px; z-index: 5; }
+
+/* 品牌 */
+.brand { position: relative; z-index: 2; color: var(--tech-text); max-width: 420px; }
+.brand-logo {
+  width: 72px; height: 72px; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--tech-primary);
+  background: color-mix(in srgb, var(--tech-primary) 10%, transparent);
+  border: 1px solid var(--tech-panel-border);
+  box-shadow: var(--tech-glow);
+  margin-bottom: 18px;
+}
+.brand h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 2px; text-shadow: var(--tech-glow); }
+.brand > p { color: var(--tech-text-muted); margin: 0 0 26px; letter-spacing: 1px; }
+.brand-points { list-style: none; padding: 0; margin: 0; }
+.brand-points li {
+  display: flex; align-items: center; gap: 10px; color: var(--tech-text-muted);
+  padding: 10px 0; border-bottom: 1px dashed var(--tech-panel-border);
+}
+.brand-points .el-icon { color: var(--tech-primary); }
+
+/* 登录卡片 */
+.card {
+  position: relative; z-index: 2;
+  width: 360px; padding: 26px 26px 22px;
+  background: var(--tech-panel);
+  border: 1px solid var(--tech-panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+  box-shadow: var(--tech-shadow), 0 0 30px color-mix(in srgb, var(--tech-primary) 12%, transparent);
+}
+.card::before {
+  content: ""; position: absolute; inset: -1px; border-radius: 14px; padding: 1px;
+  background: linear-gradient(135deg, var(--tech-primary), transparent 40%, var(--tech-accent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; opacity: .55;
+}
+.card-head {
+  display: flex; align-items: center; gap: 8px; color: var(--tech-primary);
+  font-size: 13px; letter-spacing: 2px; margin-bottom: 18px;
+}
+.card-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tech-primary); box-shadow: 0 0 10px var(--tech-primary); animation: pulse 1.6s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* 分段切换 */
+.seg { position: relative; display: flex; margin-bottom: 22px; background: color-mix(in srgb, var(--tech-primary) 7%, transparent); border-radius: 9px; padding: 3px; }
+.seg-btn { flex: 1; position: relative; z-index: 2; padding: 8px 0; border: none; background: transparent; cursor: pointer; font-size: 14px; color: var(--tech-text-muted); transition: color .25s ease; }
+.seg-btn.on { color: var(--tech-primary); font-weight: 600; }
+.seg-ink { position: absolute; z-index: 1; top: 3px; left: 3px; width: calc(50% - 3px); height: calc(100% - 6px); border-radius: 7px; background: var(--tech-bg-2); box-shadow: var(--tech-shadow); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+.seg-ink.right { transform: translateX(100%); }
+
+.enter { width: 100%; letter-spacing: 4px; }
+.hint { margin-top: 14px; text-align: center; color: var(--tech-text-muted); font-size: 12px; }
+.hint b { color: var(--tech-primary); }
+
+/* 扫码区 */
+.qr-wrap { display: flex; flex-direction: column; align-items: center; padding: 4px 0 6px; }
+.qr-box { position: relative; width: 224px; height: 224px; padding: 10px; background: #fff; border-radius: 12px; box-shadow: var(--tech-shadow); }
+.qr-img { width: 100%; height: 100%; display: block; }
+.qr-mask { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(255,255,255,.92); border-radius: 12px; color: #101828; font-size: 13px; }
+.qr-mask.show { display: flex; }
+.qr-corner { position: absolute; width: 16px; height: 16px; border: 2px solid var(--tech-primary); }
+.qr-corner.tl { top: 4px; left: 4px; border-right: none; border-bottom: none; }
+.qr-corner.tr { top: 4px; right: 4px; border-left: none; border-bottom: none; }
+.qr-corner.bl { bottom: 4px; left: 4px; border-right: none; border-top: none; }
+.qr-corner.br { bottom: 4px; right: 4px; border-left: none; border-top: none; }
+.qr-tip { margin-top: 16px; display: flex; align-items: center; gap: 6px; color: var(--tech-text); font-size: 14px; }
+.qr-tip .el-icon { color: var(--tech-primary); }
+.qr-tip b { color: var(--tech-primary); }
+.qr-sub { margin-top: 4px; color: var(--tech-text-muted); font-size: 12px; }
+
+.footer { position: absolute; bottom: 18px; color: var(--tech-text-muted); font-size: 12px; z-index: 2; opacity: .7; }
+
+@media (max-width: 880px) { .brand { display: none; } }
+</style>

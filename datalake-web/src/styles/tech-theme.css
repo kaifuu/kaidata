@@ -1,0 +1,190 @@
+/* ============================================================
+   主题系统 — 浅色(DIFY 风格) + 暗色(霓虹科技)
+   ------------------------------------------------------------
+   统一语义变量 --tech-* ：
+     :root       → 浅色（参考 DIFY：白底 / 靛蓝主色 / 柔和阴影）
+     html.dark   → 暗色（深空蓝底 + 青/蓝霓虹 + 玻璃拟态）
+   切换由 <html> 上的 .dark 类驱动（theme.ts 控制），组件无需改动。
+   Element Plus 的 --el-* 同步覆盖，保证表格/输入/按钮等组件随主题变化。
+   ============================================================ */
+
+/* ---------- 浅色（默认，参考 DIFY） ---------- */
+:root {
+  /* 品牌色：DIFY 靛蓝 */
+  --tech-primary: #1557ef;
+  --tech-primary-2: #4f46e5;
+  --tech-accent: #7c5cff;
+  --tech-success: #16b364;
+  --tech-warn: #f79009;
+  --tech-danger: #f04438;
+
+  /* 中性色 */
+  --tech-bg: #f5f7fa;
+  --tech-bg-2: #ffffff;
+  --tech-panel: #ffffff;
+  --tech-panel-border: #e9ebf0;
+  --tech-text: #101828;
+  --tech-text-muted: #667085;
+  --tech-glow: none;
+  --tech-shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --tech-grid: rgba(21, 87, 239, 0.05);
+
+  /* 覆盖 Element Plus 主色为 DIFY 蓝 */
+  --el-color-primary: #1557ef;
+  --el-color-primary-light-3: #4779f4;
+  --el-color-primary-light-5: #8aa9f7;
+  --el-color-primary-light-7: #b9cdfa;
+  --el-color-primary-light-8: #d2e0fc;
+  --el-color-primary-light-9: #eaf1fe;
+  --el-color-primary-dark-2: #1146c0;
+  --el-color-success: #16b364;
+  --el-color-warning: #f79009;
+  --el-color-danger: #f04438;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f5f7fa;
+  --el-bg-color-overlay: #ffffff;
+  --el-text-color-primary: #101828;
+  --el-text-color-regular: #475467;
+  --el-border-color: #e9ebf0;
+  --el-border-color-light: #eef0f4;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color: #f5f7fa;
+  --el-fill-color-light: #f7f9fc;
+  --el-box-shadow-light: 0 1px 3px rgba(16, 24, 40, 0.08);
+}
+
+/* ---------- 暗色（霓虹科技） ---------- */
+html.dark {
+  --tech-primary: #00e0ff;
+  --tech-primary-2: #2f6bff;
+  --tech-accent: #7c5cff;
+  --tech-success: #2ee6a6;
+  --tech-warn: #ffb020;
+  --tech-danger: #ff4d6d;
+
+  --tech-bg: #060c1c;
+  --tech-bg-2: #0a1430;
+  --tech-panel: rgba(15, 28, 60, 0.55);
+  --tech-panel-border: rgba(0, 224, 255, 0.22);
+  --tech-text: #d6e6ff;
+  --tech-text-muted: #7f93bf;
+  --tech-glow: 0 0 14px rgba(0, 224, 255, 0.35);
+  --tech-shadow: 0 4px 24px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --tech-grid: rgba(0, 224, 255, 0.04);
+
+  --el-color-primary: #00d7f5;
+  --el-color-primary-light-3: #2fdcf7;
+  --el-color-primary-light-5: #5ce2f9;
+  --el-color-primary-light-7: #9aeefc;
+  --el-color-primary-light-8: #c0f3fd;
+  --el-color-primary-light-9: #e4faff;
+  --el-color-primary-dark-2: #00b8d4;
+  --el-color-success: #2ee6a6;
+  --el-color-warning: #ffb020;
+  --el-color-danger: #ff4d6d;
+  --el-bg-color: #0a1430;
+  --el-bg-color-page: #060c1c;
+  --el-bg-color-overlay: #0d1a3a;
+  --el-text-color-primary: #d6e6ff;
+  --el-text-color-regular: #aebfe2;
+  --el-border-color: rgba(0, 224, 255, 0.18);
+  --el-border-color-light: rgba(0, 224, 255, 0.14);
+  --el-fill-color-blank: #0a1430;
+  --el-fill-color: rgba(0, 224, 255, 0.06);
+  --el-fill-color-light: rgba(0, 224, 255, 0.08);
+}
+
+/* ---------- 全局背景与文字（两套） ---------- */
+body {
+  color: var(--tech-text);
+  background: var(--tech-bg);
+  background-attachment: fixed;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+/* 暗色：径向光晕底 */
+html.dark body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(47, 107, 255, 0.18), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(124, 92, 255, 0.16), transparent 55%),
+    linear-gradient(180deg, #060c1c 0%, #050a17 100%);
+}
+
+/* 暗色网格扫描层 */
+html.dark body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--tech-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--tech-grid) 1px, transparent 1px);
+  background-size: 38px 38px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---------- 卡片 ---------- */
+.dl-card {
+  position: relative;
+  background: var(--tech-panel);
+  border: 1px solid var(--tech-panel-border);
+  border-radius: 10px;
+  box-shadow: var(--tech-shadow);
+  color: var(--tech-text);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+/* 顶部主色装饰条（浅色为柔和蓝线，暗色为霓虹线） */
+.dl-card::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; height: 2px; width: 46%;
+  background: linear-gradient(90deg, var(--tech-primary), transparent);
+  border-radius: 10px 0 0 0;
+  opacity: 0.85;
+}
+html.dark .dl-card { backdrop-filter: blur(8px); }
+html.dark .dl-card::before { opacity: 1; }
+
+.metric-value { font-size: 28px; font-weight: 600; color: var(--tech-primary); text-shadow: var(--tech-glow); }
+.card-title { color: var(--tech-text); }
+.card-title span:first-child { letter-spacing: .5px; }
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tech-primary) 35%, transparent); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--tech-primary) 55%, transparent); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 表格（暗色透明化；浅色用 Element Plus 默认） ---------- */
+html.dark .el-table,
+html.dark .el-table tr,
+html.dark .el-table td.el-table__cell,
+html.dark .el-table th.el-table__cell.is-leaf {
+  background-color: transparent;
+  border-color: rgba(0, 224, 255, 0.12);
+}
+html.dark .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell { background: rgba(0, 224, 255, 0.06); }
+html.dark .el-table__inner-wrapper::before,
+html.dark .el-table__border-left-patch { background-color: transparent !important; }
+
+/* ---------- 输入框聚焦（两套） ---------- */
+.el-input__wrapper,
+.el-select .el-input__wrapper { transition: box-shadow 0.2s ease; }
+.el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--tech-primary) inset !important; }
+html.dark .el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--tech-primary) inset, 0 0 10px rgba(0, 224, 255, 0.35) !important; }
+
+/* ---------- 主按钮：浅色扁平实色 / 暗色霓虹渐变 ---------- */
+.el-button--primary { border: none; background: var(--tech-primary); transition: filter 0.2s ease, box-shadow 0.2s ease; }
+.el-button--primary:hover { filter: brightness(1.08); }
+html.dark .el-button--primary {
+  background: linear-gradient(90deg, var(--tech-primary), var(--tech-primary-2));
+  box-shadow: 0 0 14px rgba(0, 224, 255, 0.4);
+}
+html.dark .el-button--primary:hover { filter: brightness(1.12); }
+
+/* ---------- 标签 / 进度条 ---------- */
+.el-tag { border-color: color-mix(in srgb, var(--tech-primary) 30%, transparent); }
+.el-progress-bar__outer { background: color-mix(in srgb, var(--tech-primary) 14%, transparent); }
+
+/* ---------- Element Plus 菜单/下拉暗色兜底 ---------- */
+html.dark .el-menu,
+html.dark .el-popper.is-light { background: transparent; }

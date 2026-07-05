@@ -1,0 +1,31 @@
+server:
+  port: 8090   # 服务层 API 端口（8080 被 Nacos 占用，用 8090）
+
+spring:
+  application:
+    name: datalake-service
+  datasource:
+    # StarRocks/Doris MySQL 协议，宿主机访问映射的 9030
+    url: jdbc:mysql://${STARROCKS_HOST:127.0.0.1}:${STARROCKS_PORT:9030}/?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8
+    username: ${STARROCKS_USER:root}
+    password: ${STARROCKS_PWD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 200MB   # 文件管理上传上限
+      max-request-size: 200MB
+
+# 数据接入子系统配置
+pharma:
+  crypto:
+    # 数据源/文件存储密码 AES-GCM 加密密钥（32 字节）。生产应通过环境变量 PHARMA_AES_KEY 注入并轮换
+    aes-key: ${PHARMA_AES_KEY:pharma-datalake-2026-key!!32bytes}
+  kafka:
+    # Kafka 引导地址：宿主机进程用 localhost:9094；容器化部署用 kafka:9092（环境变量覆盖）
+    bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}
+    # StarRocks ROUTINE LOAD 内部访问 Kafka 用的容器内地址（StarRocks FE 视角）
+    internal-broker: ${KAFKA_INTERNAL:kafka:9092}
+  access:
+    pool:
+      max-size: 5          # 每个外部数据源连接池上限
+      idle-timeout-sec: 1800

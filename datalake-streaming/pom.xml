@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  流计算层：Flink 作业，消费 Kafka 实时写入 Doris 数仓 + 越限告警。
+  打成 job jar 提交到 Flink 集群（flink run）。
+  Flink 核心 API 设为 provided（集群已自带），连接器/jdbc/mysql 打入 jar。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.pharma</groupId>
+    <artifactId>datalake-streaming</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <flink.version>1.18.1</flink.version>
+        <scala.binary.version>2.12</scala.binary.version>
+    </properties>
+
+    <dependencies>
+        <!-- Flink 核心（provided：集群自带） -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-clients_${scala.binary.version}</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- Kafka 连接器（打入 jar） -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-kafka_${scala.binary.version}</artifactId>
+            <version>3.1.0-1.18</version>
+        </dependency>
+        <!-- JDBC 连接器（写 Doris，Doris 兼容 MySQL 协议） -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-jdbc_${scala.binary.version}</artifactId>
+            <version>3.1.2-1.18</version>
+        </dependency>
+        <!-- MySQL 驱动（Doris 用） -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.0.33</version>
+        </dependency>
+        <!-- JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.16.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.12</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>datalake-streaming</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.2</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.pharma.streaming.EnvironmentMonitorJob</mainClass>
+                                </transformer>
+                            </transformers>
+                            <!-- 排除 provided 的 Flink 核心，避免与集群冲突 -->
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.apache.flink:flink-streaming-java_*</exclude>
+                                    <exclude>org.apache.flink:flink-clients_*</exclude>
+                                    <exclude>org.slf4j:*</exclude>
+                                </excludes>
+                            </artifactSet>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

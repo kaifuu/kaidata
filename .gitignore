@@ -1,0 +1,28 @@
+# 构建产物
+**/target/
+**/dist/
+dependency-reduced-pom.xml
+*.jar
+*.class
+original-*.jar
+
+# 依赖
+**/node_modules/
+
+# 日志 / 运行时
+logs/
+*.log
+*.pid
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.iml
+
+# 索引 / 缓存
+.codegraph/
+*.tmp
+
+# 系统
+.DS_Store
+Thumbs.db

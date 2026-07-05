@@ -1,0 +1,3 @@
+/* 基础 reset。卡片背景/边框/阴影由 tech-theme.css 按主题提供。 */
+html, body, #app { height: 100%; margin: 0; padding: 0; font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+.dl-card { padding: 16px; margin-bottom: 16px; }

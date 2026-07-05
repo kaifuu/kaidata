@@ -41,10 +41,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Connection, List, CircleCheck, Box, InfoFilled } from '@element-plus/icons-vue'
+import { VChart } from '@/echarts'
 import { api } from '@/api'
 import { theme } from '@/theme'
 
-const chartTheme = computed(() => theme.chartTheme.value)
+const chartTheme = theme.chartTheme
 const ov = ref<any>({})
 const taskStats = ref<any>({})
 const dsStats = ref<any[]>([])

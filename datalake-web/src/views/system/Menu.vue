@@ -25,10 +25,14 @@
           <el-tag size="small" :type="row.type === 'CATALOG' ? 'info' : 'success'">{{ row.type === 'CATALOG' ? '目录' : '菜单' }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="状态" width="80">
+        <template #default="{ row }"><el-tag size="small" :type="row.status === 'DISABLED' ? 'info' : 'success'">{{ row.status === 'DISABLED' ? '停用' : '启用' }}</el-tag></template>
+      </el-table-column>
       <el-table-column prop="sort" label="排序" width="70" />
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button size="small" link type="success" @click="open(null, row)">新增下级</el-button>
+          <el-button size="small" link :type="row.status === 'DISABLED' ? 'success' : 'warning'" @click="toggle(row)">{{ row.status === 'DISABLED' ? '启用' : '停用' }}</el-button>
           <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
           <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
         </template>
@@ -144,6 +148,11 @@ async function del(row: MenuRow) {
   await ElMessageBox.confirm(`确定删除菜单「${row.name}」？`, '提示', { type: 'warning' })
   try { await api.sysDeleteMenu(row.id); ElMessage.success('已删除'); await load() } catch (e) { ElMessage.error(errMsg(e)) }
 }
+async function toggle(row: MenuRow) {
+  try { const r: any = await api.sysToggleMenu(row.id); ElMessage.success(r.status === 'ENABLED' ? '已启用' : '已停用'); await load() }
+  catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+
 onMounted(load)
 </script>
 

@@ -106,6 +106,7 @@ export const api = {
   sysMenus: () => http.get<MenuRow[]>('/system/menu').then((r) => r.data),
   sysSaveMenu: (body: any) => save('/system/menu', body),
   sysDeleteMenu: (id: number) => http.delete('/system/menu', { params: { id } }).then((r) => r.data),
+  sysToggleMenu: (id: number) => http.post('/system/menu/toggle', null, { params: { id } }).then((r) => r.data),
 
   // ===== 日志 [AUDIT_ADMIN] =====
   sysLogs: (params: { username?: string; result?: string; keyword?: string; limit?: number } = {}) =>

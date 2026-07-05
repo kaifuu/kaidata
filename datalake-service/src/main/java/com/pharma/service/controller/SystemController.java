@@ -285,17 +285,17 @@ public class SystemController {
     @GetMapping("/menu")
     public List<Map<String, Object>> listMenus() {
         Authz.require(Authz.SEC_ADMIN);
-        return jdbc.queryForList("SELECT id, parent_id, name, path, icon, perm, type, sort FROM meta.sys_menu ORDER BY sort, id");
+        return jdbc.queryForList("SELECT id, parent_id, name, path, icon, perm, type, sort, status FROM meta.sys_menu ORDER BY sort, id");
     }
 
     @PostMapping("/menu")
     public Map<String, Object> createMenu(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SEC_ADMIN);
         long id = System.currentTimeMillis();
-        jdbc.update("INSERT INTO meta.sys_menu(id, parent_id, name, path, icon, perm, type, sort) VALUES (?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.sys_menu(id, parent_id, name, path, icon, perm, type, sort, status) VALUES (?,?,?,?,?,?,?,?,?)",
                 id, num(b.get("parent_id")), b.getOrDefault("name", ""), b.getOrDefault("path", ""),
                 b.getOrDefault("icon", "Menu"), b.getOrDefault("perm", ""), b.getOrDefault("type", "MENU"),
-                intVal(b.get("sort"), 99));
+                intVal(b.get("sort"), 99), b.getOrDefault("status", "ENABLED"));
         return Map.of("success", true, "id", id);
     }
 
@@ -303,11 +303,23 @@ public class SystemController {
     public Map<String, Object> updateMenu(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SEC_ADMIN);
         long id = ((Number) b.get("id")).longValue();
-        jdbc.update("UPDATE meta.sys_menu SET parent_id=?, name=?, path=?, icon=?, perm=?, type=?, sort=? WHERE id=?",
+        jdbc.update("UPDATE meta.sys_menu SET parent_id=?, name=?, path=?, icon=?, perm=?, type=?, sort=?, status=? WHERE id=?",
                 num(b.get("parent_id")), b.getOrDefault("name", ""), b.getOrDefault("path", ""),
                 b.getOrDefault("icon", "Menu"), b.getOrDefault("perm", ""), b.getOrDefault("type", "MENU"),
-                intVal(b.get("sort"), 99), id);
+                intVal(b.get("sort"), 99), b.getOrDefault("status", "ENABLED"), id);
         return Map.of("success", true);
+    }
+
+    /** 菜单启停切换（停用后侧栏不显示）。 */
+    @PostMapping("/menu/toggle")
+    public Map<String, Object> toggleMenu(@RequestParam long id) {
+        Authz.require(Authz.SEC_ADMIN);
+        String cur;
+        try { cur = jdbc.queryForObject("SELECT status FROM meta.sys_menu WHERE id=?", String.class, id); }
+        catch (Exception e) { cur = null; }
+        String next = "DISABLED".equals(cur) ? "ENABLED" : "DISABLED";
+        jdbc.update("UPDATE meta.sys_menu SET status=? WHERE id=?", next, id);
+        return Map.of("success", true, "status", next);
     }
 
     @DeleteMapping("/menu")

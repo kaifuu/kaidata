@@ -56,6 +56,9 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("CREATE TABLE IF NOT EXISTS meta.sys_user (id BIGINT, username VARCHAR(64), password VARCHAR(128), name VARCHAR(64), status VARCHAR(16), tenant_id BIGINT, org_id BIGINT, create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.sys_role (id BIGINT, code VARCHAR(64), name VARCHAR(64)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.sys_menu (id BIGINT, parent_id BIGINT, name VARCHAR(64), path VARCHAR(128), icon VARCHAR(64), perm VARCHAR(64), type VARCHAR(16), sort INT) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // 菜单启停字段（ALTER 幂等，已存在则忽略；旧数据 status 为 NULL → 统一置 ENABLED）
+        exec("ALTER TABLE meta.sys_menu ADD COLUMN status VARCHAR(16)");
+        exec("UPDATE meta.sys_menu SET status='ENABLED' WHERE status IS NULL");
         exec("CREATE TABLE IF NOT EXISTS meta.sys_user_role (user_id BIGINT, role_id BIGINT) PRIMARY KEY(user_id, role_id) DISTRIBUTED BY HASH(user_id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.sys_role_menu (role_id BIGINT, menu_id BIGINT) PRIMARY KEY(role_id, menu_id) DISTRIBUTED BY HASH(role_id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
 

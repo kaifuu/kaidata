@@ -93,7 +93,7 @@ public class AuthController {
                         "JOIN meta.sys_role_menu rm ON rm.menu_id = m.id " +
                         "JOIN meta.sys_user_role ur ON ur.role_id = rm.role_id " +
                         "JOIN meta.sys_user u ON u.id = ur.user_id " +
-                        "WHERE u.username = ? AND m.status = 'ENABLED' ORDER BY m.sort, m.id", username);
+                        "WHERE u.username = ? AND (m.status = 'ENABLED' OR m.status IS NULL) ORDER BY m.sort, m.id", username);
     }
 
     private ResponseEntity<Map<String, Object>> unauthorized(String msg) {

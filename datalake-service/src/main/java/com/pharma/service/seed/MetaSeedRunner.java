@@ -362,6 +362,8 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(56, 55, "数据集", "/market/dataset", "Files", "market:dataset", "MENU", 1);
         menu(57, 55, "资源概览", "/market/overview", "DataAnalysis", "market:overview", "MENU", 2);
 
+        // 数据门户 → 数据总览（重命名，幂等 UPDATE）
+        try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
         // ---------- 角色-菜单授权（三员各管其域） ----------
         // SYS_ADMIN：业务 + 用户/组织/租户
         int[] sysMenus = {1, 2, 3, 4, 5, 6, 7, 8};

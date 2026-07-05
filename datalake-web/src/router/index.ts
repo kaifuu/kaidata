@@ -8,7 +8,7 @@ const routes = [
     component: () => import('@/layout/index.vue'),
     redirect: '/portal',
     children: [
-      { path: 'portal', name: 'Portal', component: () => import('@/views/portal/Home.vue'), meta: { title: '数据门户', icon: 'DataBoard' } },
+      { path: 'portal', name: 'Portal', component: () => import('@/views/portal/Home.vue'), meta: { title: '数据总览', icon: 'DataBoard' } },
       { path: 'env', name: 'Env', component: () => import('@/views/env-monitor/Index.vue'), meta: { title: '环境监控(实时)', icon: 'Monitor' } },
       { path: 'batch', name: 'Batch', component: () => import('@/views/batch-trace/Index.vue'), meta: { title: '批次质量追溯', icon: 'Connection' } },
       { path: 'board', name: 'Board', component: () => import('@/views/production-board/Index.vue'), meta: { title: '生产效能看板', icon: 'TrendCharts' } },

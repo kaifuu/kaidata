@@ -77,5 +77,5 @@ router.beforeEach((to) => {
   return true
 })
 
-router.afterEach((to) => { document.title = `${to.meta.title || ''} - 药厂数据中台` })
+router.afterEach((to) => { document.title = `${to.meta.title || ''} - 数据中台` })
 export default router

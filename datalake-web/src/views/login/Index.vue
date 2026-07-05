@@ -10,9 +10,8 @@
 
     <!-- 左侧品牌区 -->
     <div class="brand">
-      <div class="brand-logo">
-        <el-icon :size="40"><DataLine /></el-icon>
-      </div>
+      <div class="brand-logo"><div class="logo-mark">K</div></div>
+      <div class="brand-name">kaidata</div>
       <h1>数据中台</h1>
       <p>现代湖仓 · Kafka → Flink → StarRocks → Spark</p>
       <ul class="brand-points">
@@ -60,12 +59,12 @@
           </div>
           <span class="qr-corner tl" /><span class="qr-corner tr" /><span class="qr-corner bl" /><span class="qr-corner br" />
         </div>
-        <div class="qr-tip"><el-icon><Iphone /></el-icon> 请使用 <b>Pharma 移动端</b> 扫码登录</div>
+        <div class="qr-tip"><el-icon><Iphone /></el-icon> 请使用 <b>kaidata App</b> 扫码登录</div>
         <div class="qr-sub">二维码 {{ qrExpiry }}s 后自动刷新</div>
       </div>
     </div>
 
-    <div class="footer">© 2026 Pharma Data Lake · GxP / 21 CFR Part 11 Ready</div>
+    <div class="footer">© 2026 kaidata · 数据中台 DATA MIDDLE PLATFORM</div>
   </div>
 </template>
 
@@ -179,14 +178,18 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 /* 品牌 */
 .brand { position: relative; z-index: 2; color: var(--tech-text); max-width: 420px; }
 .brand-logo {
-  width: 72px; height: 72px; border-radius: 16px;
+  width: 76px; height: 76px; border-radius: 18px;
   display: flex; align-items: center; justify-content: center;
-  color: var(--tech-primary);
-  background: color-mix(in srgb, var(--tech-primary) 10%, transparent);
-  border: 1px solid var(--tech-panel-border);
-  box-shadow: var(--tech-glow);
-  margin-bottom: 18px;
+  background: linear-gradient(135deg, var(--tech-primary), var(--tech-accent));
+  box-shadow: var(--tech-glow), 0 6px 18px color-mix(in srgb, var(--tech-primary) 35%, transparent);
+  margin-bottom: 14px;
 }
+.brand-logo .logo-mark {
+  color: #fff; font-size: 46px; font-weight: 800; line-height: 1;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  letter-spacing: -2px; text-shadow: 0 2px 8px rgba(0,0,0,.28);
+}
+.brand-name { font-size: 15px; letter-spacing: 7px; color: var(--tech-primary); font-weight: 700; margin-bottom: 6px; }
 .brand h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 2px; text-shadow: var(--tech-glow); }
 .brand > p { color: var(--tech-text-muted); margin: 0 0 26px; letter-spacing: 1px; }
 .brand-points { list-style: none; padding: 0; margin: 0; }

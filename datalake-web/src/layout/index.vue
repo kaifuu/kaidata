@@ -4,8 +4,8 @@
       <div class="logo">
         <el-icon class="logo-ico"><DataLine /></el-icon>
         <div class="logo-txt">
-          <div class="t1">药厂数据中台</div>
-          <div class="t2">DATA LAKE</div>
+          <div class="t1">数据中台</div>
+          <div class="t2">KAIDATA</div>
         </div>
       </div>
       <el-menu :default-active="route.path" router class="nav" unique-opened>

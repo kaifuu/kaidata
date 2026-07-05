@@ -10,7 +10,22 @@
 
     <!-- 左侧品牌区 -->
     <div class="brand">
-      <div class="brand-logo"><div class="logo-mark">K</div></div>
+      <div class="brand-logo">
+        <svg viewBox="0 0 120 120" class="logo-svg">
+          <defs>
+            <linearGradient id="kg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e0ff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
+            <linearGradient id="kg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f6bff"/><stop offset="1" stop-color="#00e0ff"/></linearGradient>
+            <filter id="kgw" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4"/></filter>
+          </defs>
+          <g stroke="url(#kg)" stroke-width="1" opacity="0.4" fill="none"><path d="M16 16 L40 26 M104 16 L82 26 M16 104 L40 94 M104 104 L82 94 M16 60 L40 60 M104 60 L82 60 M60 12 L60 36"/></g>
+          <g fill="#00e0ff" opacity="0.8"><circle cx="16" cy="16" r="2.6"/><circle cx="104" cy="16" r="2.6"/><circle cx="16" cy="104" r="2.6"/><circle cx="104" cy="104" r="2.6"/><circle cx="16" cy="60" r="2.6"/><circle cx="104" cy="60" r="2.6"/><circle cx="60" cy="12" r="2.2"/><circle cx="60" cy="36" r="2.2"/></g>
+          <g fill="none" stroke="url(#kg)" stroke-width="9.5" stroke-linecap="round" opacity="0.55" filter="url(#kgw)"><path d="M40 26 L40 94 M40 60 L82 26 M40 60 L82 94"/></g>
+          <g fill="none" stroke="url(#kg2)" stroke-width="6.5" stroke-linecap="round"><path d="M40 26 L40 94 M40 60 L82 26 M40 60 L82 94"/></g>
+          <circle cx="40" cy="26" r="6" fill="#00e0ff"/><circle cx="40" cy="94" r="6" fill="#00e0ff"/>
+          <circle cx="82" cy="26" r="6" fill="#7c5cff"/><circle cx="82" cy="94" r="6" fill="#7c5cff"/>
+          <circle cx="40" cy="60" r="8" fill="#fff"/><circle cx="40" cy="60" r="3.5" fill="#00e0ff"/>
+        </svg>
+      </div>
       <div class="brand-name">kaidata</div>
       <h1>数据中台</h1>
       <p>现代湖仓 · Kafka → Flink → StarRocks → Spark</p>
@@ -178,18 +193,13 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 /* 品牌 */
 .brand { position: relative; z-index: 2; color: var(--tech-text); max-width: 420px; }
 .brand-logo {
-  width: 76px; height: 76px; border-radius: 18px;
-  display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, var(--tech-primary), var(--tech-accent));
-  box-shadow: var(--tech-glow), 0 6px 18px color-mix(in srgb, var(--tech-primary) 35%, transparent);
-  margin-bottom: 14px;
+  width: 96px; height: 96px; margin-bottom: 14px;
+  filter: drop-shadow(0 6px 22px rgba(0, 224, 255, 0.4));
+  animation: logoFloat 5s ease-in-out infinite;
 }
-.brand-logo .logo-mark {
-  color: #fff; font-size: 46px; font-weight: 800; line-height: 1;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  letter-spacing: -2px; text-shadow: 0 2px 8px rgba(0,0,0,.28);
-}
-.brand-name { font-size: 15px; letter-spacing: 7px; color: var(--tech-primary); font-weight: 700; margin-bottom: 6px; }
+.brand-logo .logo-svg { width: 100%; height: 100%; display: block; }
+@keyframes logoFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+.brand-name { font-size: 16px; letter-spacing: 8px; color: var(--tech-primary); font-weight: 700; margin-bottom: 6px; text-shadow: var(--tech-glow); }
 .brand h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 2px; text-shadow: var(--tech-glow); }
 .brand > p { color: var(--tech-text-muted); margin: 0 0 26px; letter-spacing: 1px; }
 .brand-points { list-style: none; padding: 0; margin: 0; }

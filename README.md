@@ -1,6 +1,8 @@
 <div align="center">
 
-# <img src="https://img.shields.io/badge/K-kaidata-00e0ff?style=for-the-badge&labelColor=1557ef" alt="kaidata"> 数据中台
+<img src="logo.svg" width="128" alt="kaidata LOGO">
+
+# 数据中台 · kaidata
 
 ### 现代湖仓架构的企业级数据中台 · 10 大域 40+ 子模块
 

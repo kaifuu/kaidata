@@ -39,6 +39,7 @@
         </div>
         <div class="header-right">
           <ThemeToggle />
+          <TodoBell />
           <span class="clock">{{ now }}</span>
           <el-dropdown @command="onCmd">
             <div class="user">
@@ -48,13 +49,18 @@
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout"><el-icon><SwitchButton /></el-icon> 退出登录</el-dropdown-item>
+                <el-dropdown-item command="profile"><el-icon><User /></el-icon> 个人资料</el-dropdown-item>
+                <el-dropdown-item command="password"><el-icon><Lock /></el-icon> 修改密码</el-dropdown-item>
+                <el-dropdown-item command="logs"><el-icon><Document /></el-icon> 我的操作</el-dropdown-item>
+                <el-dropdown-item divided command="logout"><el-icon><SwitchButton /></el-icon> 退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
       </el-header>
       <el-main class="main"><router-view /></el-main>
+      <PasswordDialog ref="pwdDlg" />
+      <ProfileDialog ref="profileDlg" />
     </el-container>
   </el-container>
 </template>
@@ -65,11 +71,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { auth } from '@/auth'
 import { api, type MenuRow } from '@/api'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import TodoBell from '@/components/TodoBell.vue'
+import PasswordDialog from '@/components/PasswordDialog.vue'
+import ProfileDialog from '@/components/ProfileDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const user = computed(() => auth.user())
 const menus = ref<MenuRow[]>(auth.menus())
+const pwdDlg = ref()
+const profileDlg = ref()
 
 const menuTree = computed(() => {
   const flat = menus.value
@@ -91,10 +102,10 @@ onMounted(async () => {
 onUnmounted(() => clearInterval(timer))
 
 function onCmd(c: string) {
-  if (c === 'logout') {
-    auth.clear()
-    router.replace('/login')
-  }
+  if (c === 'logout') { auth.clear(); router.replace('/login') }
+  else if (c === 'profile') profileDlg.value?.open('profile')
+  else if (c === 'logs') profileDlg.value?.open('logs')
+  else if (c === 'password') pwdDlg.value?.open()
 }
 </script>
 

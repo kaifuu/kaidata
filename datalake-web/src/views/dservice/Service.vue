@@ -21,7 +21,7 @@
         <el-form-item label="编码"><el-input v-model="form.code" placeholder="唯一编码，如 batch_list" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="数据源"><el-select v-model="form.datasource_id" style="width:100%"><el-option v-for="d in dsList" :key="d.id" :label="`${d.name}(${d.type})`" :value="d.id" /></el-select></el-form-item>
-        <el-form-item label="SQL"><el-input v-model="form.sql_text" type="textarea" :rows="4" placeholder="SELECT * FROM ods.ods_batch WHERE status='{status}' LIMIT 10" style="font-family:monospace" /></el-form-item>
+        <el-form-item label="SQL"><el-input v-model="form.sql_text" type="textarea" :rows="4" placeholder="SELECT * FROM ods.your_table WHERE status='{status}' LIMIT 10" style="font-family:monospace" /></el-form-item>
         <el-form-item label="参数定义"><el-input v-model="form.params" placeholder='["status"]（SQL 用 {status} 引用，调用时传 ?status=DONE）' /></el-form-item>
         <el-form-item label="方法"><el-radio-group v-model="form.method"><el-radio value="GET">GET</el-radio><el-radio value="POST">POST</el-radio></el-radio-group></el-form-item>
         <el-form-item label="需登录"><el-switch v-model="form.auth" /><span class="muted" style="margin-left:8px">关闭则公开访问 /open/{code}（免鉴权）</span></el-form-item>

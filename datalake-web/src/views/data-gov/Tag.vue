@@ -38,7 +38,7 @@
         <el-form-item label="标签"><el-select v-model="relForm.tag_id" style="width:100%"><el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" /></el-select></el-form-item>
         <el-form-item label="对象"><el-radio-group v-model="relForm.target_type"><el-radio value="table">表</el-radio><el-radio value="column">字段</el-radio></el-radio-group></el-form-item>
         <el-form-item label="库"><el-input v-model="relForm.target_db" placeholder="ods" /></el-form-item>
-        <el-form-item label="表"><el-input v-model="relForm.target_table" placeholder="ods_batch" /></el-form-item>
+        <el-form-item label="表"><el-input v-model="relForm.target_table" placeholder="your_table" /></el-form-item>
         <el-form-item v-if="relForm.target_type === 'column'" label="字段"><el-input v-model="relForm.target_column" placeholder="batch_no" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="relDlg = false">取消</el-button><el-button type="primary" @click="bind">打标</el-button></template>

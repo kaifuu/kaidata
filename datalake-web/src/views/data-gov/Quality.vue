@@ -28,7 +28,7 @@
         <el-form-item label="名称"><el-input v-model="ruleForm.name" /></el-form-item>
         <el-form-item label="维度"><el-select v-model="ruleForm.dimension" style="width:100%"><el-option v-for="d in ['完整性','唯一性','自定义']" :key="d" :label="d" :value="d" /></el-select></el-form-item>
         <el-form-item label="数据源"><el-select v-model="ruleForm.ds_id" style="width:100%"><el-option v-for="d in dsList" :key="d.id" :label="`${d.name}(${d.type})`" :value="d.id" /></el-select></el-form-item>
-        <el-form-item label="表"><el-input v-model="ruleForm.table_name" placeholder="ods.ods_batch" /></el-form-item>
+        <el-form-item label="表"><el-input v-model="ruleForm.table_name" placeholder="ods.your_table" /></el-form-item>
         <el-form-item label="字段"><el-input v-model="ruleForm.column_name" placeholder="完整性/唯一性填字段" /></el-form-item>
         <el-form-item v-if="ruleForm.dimension === '自定义'" label="表达式"><el-input v-model="ruleForm.expression" placeholder="SQL where，如 quantity < 0" /></el-form-item>
         <el-form-item label="阈值"><el-input-number v-model="ruleForm.threshold" :min="0" :step="0.05" controls-position="right" /><span class="muted" style="margin-left:8px">完整性=最大空率 / 唯一性=最低唯一率 / 自定义=最大违规数</span></el-form-item>

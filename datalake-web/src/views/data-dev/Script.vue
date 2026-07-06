@@ -19,7 +19,7 @@
           <el-button size="small" type="primary" @click="save">保存</el-button>
           <el-button size="small" @click="del" :disabled="!form.id">删除</el-button>
         </div>
-        <el-input v-model="form.content" type="textarea" :rows="8" placeholder="SELECT * FROM ods.ods_batch LIMIT 10" style="font-family:monospace" />
+        <el-input v-model="form.content" type="textarea" :rows="8" placeholder="SELECT * FROM ods.your_table LIMIT 10" style="font-family:monospace" />
         <div v-if="result" class="result">
           <div class="muted">结果：{{ result.status }} · {{ result.rowsRead }} 行 · {{ result.msg || 'OK' }}</div>
           <el-table :data="result.rows" size="small" border max-height="220" v-if="result.rows && result.rows.length">
@@ -37,7 +37,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errMsg } from '@/api'
 const scripts = ref<any[]>([]); const dsList = ref<any[]>([])
 const running = ref(false); const result = ref<any>(null)
-const form = reactive<any>({ id: null, name: '', script_type: 'SQL', datasource_id: null as any, content: 'SELECT COUNT(*) total FROM ods.ods_batch;', description: '' })
+const form = reactive<any>({ id: null, name: '', script_type: 'SQL', datasource_id: null as any, content: 'SELECT COUNT(*) total FROM ods.your_table;', description: '' })
 async function load() { try { scripts.value = await api.devScripts() } catch (e:any) { ElMessage.error(errMsg(e)) } }
 function pick(row: any) { if (!row) return; Object.assign(form, { id: row.id, name: row.name, script_type: row.script_type, datasource_id: row.datasource_id, content: row.content, description: row.description }) }
 function open() { Object.assign(form, { id: null, name: '', script_type: 'SQL', datasource_id: dsList.value[0]?.id || null, content: '', description: '' }); result.value = null }

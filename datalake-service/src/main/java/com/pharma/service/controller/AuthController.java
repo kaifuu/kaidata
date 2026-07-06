@@ -51,14 +51,73 @@ public class AuthController {
         ));
     }
 
-    /** 当前登录用户信息（需令牌） */
+    /** 当前登录用户信息（需令牌）：含多角色 / 租户 / 组织 / 状态 / 创建时间 */
     @GetMapping("/info")
-    public Map<String, Object> info() {
+    public ResponseEntity<?> info() {
+        String username = AuthContext.username();
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT u.id, u.username, u.name, u.status, u.create_time, " +
+                        "t.name AS tenant_name, o.name AS org_name " +
+                        "FROM meta.sys_user u " +
+                        "LEFT JOIN meta.sys_tenant t ON t.id = u.tenant_id " +
+                        "LEFT JOIN meta.sys_org o ON o.id = u.org_id " +
+                        "WHERE u.username = ?", username);
+        if (rows.isEmpty()) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "用户不存在"));
+        Map<String, Object> u = rows.get(0);
+        long uid = ((Number) u.get("id")).longValue();
+        List<String> roles = roleCodesOf(uid);
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("username", u.get("username"));
+        result.put("name", u.get("name"));
+        result.put("status", u.get("status"));
+        result.put("create_time", String.valueOf(u.get("create_time")));
+        result.put("tenant_name", u.get("tenant_name"));
+        result.put("org_name", u.get("org_name"));
+        result.put("role", roles.isEmpty() ? "GUEST" : roles.get(0));
+        result.put("roles", roles);
+        return ResponseEntity.ok(result);
+    }
+
+    /** 修改自己的密码：校验原密码 → 写入新密码哈希 */
+    @PostMapping("/password")
+    public ResponseEntity<?> changePassword(@RequestBody Map<String, String> body) {
+        String oldPwd = body.get("oldPassword");
+        String newPwd = body.get("newPassword");
+        if (oldPwd == null || newPwd == null || newPwd.length() < 6)
+            return ResponseEntity.badRequest().body(Map.of("message", "新密码不少于 6 位"));
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT password FROM meta.sys_user WHERE username = ?", AuthContext.username());
+        if (rows.isEmpty()) return unauthorized("用户不存在");
+        String hashed = String.valueOf(rows.get(0).get("password"));
+        if (!PasswordUtil.matches(oldPwd, hashed))
+            return ResponseEntity.badRequest().body(Map.of("message", "原密码错误"));
+        jdbc.update("UPDATE meta.sys_user SET password = ? WHERE username = ?",
+                PasswordUtil.hash(newPwd), AuthContext.username());
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /** 我的操作日志（只查自己，自服务） */
+    @GetMapping("/logs")
+    public List<Map<String, Object>> myLogs(@RequestParam(defaultValue = "20") int limit) {
+        if (limit > 100) limit = 100;
+        return jdbc.queryForList(
+                "SELECT id, username, action, uri, method, params, result, ip, ts " +
+                        "FROM meta.sys_audit_log WHERE username = ? ORDER BY ts DESC LIMIT ?",
+                AuthContext.username(), limit);
+    }
+
+    /** 我的待办计数：未处理告警 / 待审资产 / 质量异常 */
+    @GetMapping("/todo")
+    public Map<String, Object> myTodo() {
         return Map.of(
-                "username", AuthContext.username(),
-                "name", AuthContext.get().getOrDefault("name", ""),
-                "role", AuthContext.get().getOrDefault("role", "")
-        );
+                "alerts", cnt("SELECT COUNT(*) FROM meta.sec_alert_event WHERE status = '未处理'"),
+                "assets", cnt("SELECT COUNT(*) FROM meta.asset WHERE status = '待审'"),
+                "quality", cnt("SELECT COUNT(*) FROM meta.gov_quality_result WHERE status = 'FAIL'"));
+    }
+
+    private long cnt(String sql) {
+        try { return jdbc.queryForObject(sql, Long.class); }
+        catch (Exception e) { return 0; }
     }
 
     /** 当前用户的可见菜单（动态侧栏） */

@@ -36,7 +36,7 @@
     <el-dialog v-model="relDlg" title="绑定字段" width="460px">
       <el-form :model="relForm" label-width="70px" size="small">
         <el-form-item label="规则"><el-select v-model="relForm.rule_id" style="width:100%"><el-option v-for="r in rules" :key="r.id" :label="r.name" :value="r.id" /></el-select></el-form-item>
-        <el-form-item label="表"><el-input v-model="relForm.source_table" placeholder="ods.ods_batch" /></el-form-item>
+        <el-form-item label="表"><el-input v-model="relForm.source_table" placeholder="ods.your_table" /></el-form-item>
         <el-form-item label="字段"><el-input v-model="relForm.source_column" placeholder="phone" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="relDlg = false">取消</el-button><el-button type="primary" @click="bind">绑定</el-button></template>

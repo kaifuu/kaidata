@@ -9,9 +9,6 @@ const routes = [
     redirect: '/portal',
     children: [
       { path: 'portal', name: 'Portal', component: () => import('@/views/portal/Home.vue'), meta: { title: '数据总览', icon: 'DataBoard' } },
-      { path: 'env', name: 'Env', component: () => import('@/views/env-monitor/Index.vue'), meta: { title: '环境监控(实时)', icon: 'Monitor' } },
-      { path: 'batch', name: 'Batch', component: () => import('@/views/batch-trace/Index.vue'), meta: { title: '批次质量追溯', icon: 'Connection' } },
-      { path: 'board', name: 'Board', component: () => import('@/views/production-board/Index.vue'), meta: { title: '生产效能看板', icon: 'TrendCharts' } },
       { path: 'system/user', name: 'SysUser', component: () => import('@/views/system/User.vue'), meta: { title: '用户管理', icon: 'User' } },
       { path: 'system/org', name: 'SysOrg', component: () => import('@/views/system/Org.vue'), meta: { title: '组织管理', icon: 'OfficeBuilding' } },
       { path: 'system/tenant', name: 'SysTenant', component: () => import('@/views/system/Tenant.vue'), meta: { title: '租户管理', icon: 'Files' } },

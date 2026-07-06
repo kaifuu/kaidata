@@ -29,11 +29,6 @@ export function errMsg(e: any, def = '操作失败') {
   return msg || def
 }
 
-export interface EnvLatestRow { device_id: string; metric: string; value: number; min_val: number; max_val: number; ts: string }
-export interface AlarmRow { device_id: string; metric: string; value: number; min_val: number; max_val: number; severity: string; ts: string }
-export interface BatchQualityRow { batch_no: string; material_code: string; quantity: number; batch_status: string; qc_pass: boolean | number; qc_result: number; qc_spec: number; ts: string }
-export interface EfficiencyRow { material_code: string; material_name: string; total_batches: number; abnormal_batches: number; total_quantity: number; avg_qc_result: number; pass_rate: number }
-
 export interface MenuRow { id: number; parent_id: number; name: string; path: string; icon: string; perm: string; type: string; sort: number }
 export interface UserRow { id: number; username: string; name: string; status: string; tenant_id?: number; org_id?: number; create_time: string; tenant_name?: string; org_name?: string; roles: string[] }
 export interface RoleFullRow { id: number; code: string; name: string; menu_ids: number[]; user_ids: number[] }
@@ -68,17 +63,11 @@ export const api = {
   login: (username: string, password: string) =>
     http.post<{ token: string; user: any; menus: MenuRow[] }>('/auth/login', { username, password }).then((r) => r.data),
   authMenus: () => http.get<MenuRow[]>('/auth/menus').then((r) => r.data),
-
-  // 数据
-  overview: () => http.get('/portal/overview').then((r) => r.data),
-  envLatest: () => http.get<EnvLatestRow[]>('/env/latest').then((r) => r.data),
-  envAlarms: (limit = 50) => http.get<AlarmRow[]>('/env/alarms', { params: { limit } }).then((r) => r.data),
-  envHistory: (deviceId: string, metric: string, limit = 100) =>
-    http.get('/env/history', { params: { deviceId, metric, limit } }).then((r) => r.data),
-  batchQuality: (batchNo?: string) =>
-    http.get<BatchQualityRow[]>('/batch/quality', { params: batchNo ? { batchNo } : {} }).then((r) => r.data),
-  compliance: () => http.get('/env/compliance').then((r) => r.data),
-  productionEfficiency: () => http.get<EfficiencyRow[]>('/production/efficiency').then((r) => r.data),
+  authInfo: () => http.get('/auth/info').then((r) => r.data),
+  authLogs: (limit = 20) => http.get('/auth/logs', { params: { limit } }).then((r) => r.data),
+  authTodo: () => http.get('/auth/todo').then((r) => r.data),
+  authChangePassword: (oldPassword: string, newPassword: string) =>
+    http.post('/auth/password', { oldPassword, newPassword }).then((r) => r.data),
 
   // ===== 系统管理：用户 [SYS_ADMIN] =====
   sysUsers: () => http.get<UserRow[]>('/system/user').then((r) => r.data),

@@ -12,7 +12,7 @@
       <el-form :model="form" label-width="80px" size="small">
         <el-form-item label="角色"><el-select v-model="form.role_id" style="width:100%"><el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" /></el-select></el-form-item>
         <el-form-item label="库"><el-input v-model="form.target_db" placeholder="ods" /></el-form-item>
-        <el-form-item label="表"><el-input v-model="form.target_table" placeholder="ods_batch" /></el-form-item>
+        <el-form-item label="表"><el-input v-model="form.target_table" placeholder="your_table" /></el-form-item>
         <el-form-item label="权限"><el-select v-model="form.permission" style="width:100%"><el-option value="select" label="select (查询)" /><el-option value="all" label="all (读写)" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg = false">取消</el-button><el-button type="primary" @click="save">授权</el-button></template>

@@ -10,7 +10,7 @@
       <el-button size="small" @click="sql = 'SHOW TABLES FROM ods;'">表</el-button>
       <el-button size="small" @click="sql = 'SHOW ROUTINE LOAD;'">RoutineLoad</el-button>
     </div>
-    <el-input v-model="sql" type="textarea" :rows="8" placeholder="SHOW DATABASES; / SELECT * FROM ods.ods_batch LIMIT 10;" style="font-family:monospace" />
+    <el-input v-model="sql" type="textarea" :rows="8" placeholder="SHOW DATABASES; / SELECT * FROM ods.your_table LIMIT 10;" style="font-family:monospace" />
     <div v-if="result" class="result">
       <span class="muted">{{ result.status }} · {{ result.rowsRead }} 行 · {{ result.msg || 'OK' }}</span>
       <el-table :data="result.rows" size="small" border max-height="340" v-if="result.rows && result.rows.length" style="margin-top:8px">

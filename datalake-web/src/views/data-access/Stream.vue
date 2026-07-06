@@ -70,7 +70,7 @@
               <el-option v-for="d in dsList" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
             </el-select>
           </el-form-item>
-          <el-form-item label="源SQL"><el-input v-model="form.source_query" type="textarea" :rows="2" placeholder="SELECT * FROM ods.ods_batch" /></el-form-item>
+          <el-form-item label="源SQL"><el-input v-model="form.source_query" type="textarea" :rows="2" placeholder="SELECT * FROM 库名.表名" /></el-form-item>
           <el-form-item label="Kafka Topic"><el-input v-model="form.kafka_topic" /></el-form-item>
           <el-form-item label="轮询间隔(秒)"><el-input v-model="form.schedule_cron" placeholder="30" /></el-form-item>
         </template>
@@ -112,7 +112,7 @@ const saving = ref(false)
 const runsDlg = ref(false)
 const runRows = ref<any[]>([])
 const current = ref<StreamJobRow | null>(null)
-const form = reactive<any>({ id: null, name: '', type: 'KAFKA_TO_SR', source_ds_id: null, source_query: '', kafka_topic: 'pharma-batch', target_db: 'ods', target_table: '', columns_json: '', schedule_cron: '30' })
+const form = reactive<any>({ id: null, name: '', type: 'KAFKA_TO_SR', source_ds_id: null, source_query: '', kafka_topic: '', target_db: 'ods', target_table: '', columns_json: '', schedule_cron: '30' })
 
 async function load() {
   loading.value = true
@@ -129,7 +129,7 @@ async function loadRl() {
 }
 
 function open(row?: StreamJobRow) {
-  Object.assign(form, { id: null, name: '', type: 'KAFKA_TO_SR', source_ds_id: dsList.value[0]?.id || null, source_query: '', kafka_topic: 'pharma-batch', target_db: 'ods', target_table: '', columns_json: '', schedule_cron: '30' })
+  Object.assign(form, { id: null, name: '', type: 'KAFKA_TO_SR', source_ds_id: dsList.value[0]?.id || null, source_query: '', kafka_topic: '', target_db: 'ods', target_table: '', columns_json: '', schedule_cron: '30' })
   if (row) Object.assign(form, { id: row.id, name: row.name, type: row.type, source_ds_id: row.source_ds_id, source_query: row.source_query || '', kafka_topic: row.kafka_topic, target_db: row.target_db || 'ods', target_table: row.target_table || '', columns_json: row.columns_json || '', schedule_cron: row.schedule_cron || '30' })
   dlg.value = true
 }

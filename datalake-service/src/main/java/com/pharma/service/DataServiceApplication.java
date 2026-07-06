@@ -6,10 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /**
  * 数据服务层启动类
  * <p>
- * 单体 Spring Boot 应用，通过 JDBC 查 StarRocks 数仓，为前端提供 REST API：
- *   - 环境监测（实时值/告警）→ 查 ods.ods_env_monitor / ods.ods_alarm
- *   - 批次质量追溯          → 查 ads.ads_batch_quality
- *   - 门户总览              → 各表计数聚合
+ * 单体 Spring Boot 应用，通过 JDBC 查 StarRocks，为前端提供数据中台 REST API：
+ *   - 数据中台全域：数据接入 / 治理 / 开发 / 资产 / 安全 / 服务 / 集市 / 运维 / 系统
+ *     （查 meta.* 元数据库 + 动态多源 JDBC + SQL 工作台）
  * <p>
  * 运行在宿主机（JDK17），连接 StarRocks localhost:9030。
  */

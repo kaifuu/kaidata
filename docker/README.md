@@ -1,19 +1,17 @@
 # 大数据组件编排 (docker/)
 
-现代湖仓栈一键部署：MinIO(湖) + Kafka(总线) + Flink(流) + StarRocks(数仓)。
-Spark 按需 `spark-submit` 提交，不常驻（省内存）。
+通用数据中台的底层基础设施一键部署：MinIO(湖存储) + Kafka(数据总线) + Flink(流计算引擎) + StarRocks(实时数仓, MySQL 协议)。
+各组件供中台的「数据接入 / 数据开发 / 数据服务」等模块按需使用。
 
 ## 一、目录结构
 
 ```
 docker/
 ├── docker-compose.yml      # 常驻组件（MinIO/Kafka/Flink JM+TM/StarRocks），name=pharma-bigdata
-├── bring-up.sh             # 一键：compose up + 建表 + ROUTINE LOAD 桥接 + 后台告警桥接
-├── alarm-bridge.sh         # 周期 INSERT...SELECT 去重，把越限读数写 ods_alarm（后台常驻）
+├── bring-up.sh             # 一键：compose up + 等 Kafka/StarRocks 就绪 + 建数仓分层库
 └── init/
-    ├── doris-ddl.sql        # 数仓分层建表（ODS/DWD/DWS/ADS/DIM）+ 物料维度种子
-    ├── routine-load.sh      # 创建 rl_env/rl_batch/rl_qc（StarRocks 消费 Kafka 入 ODS，Flink 桥接）
-    ├── kafka-topics.sh      # 建 Kafka topic（auto-create 已开，可选规范化分区）
+    ├── doris-ddl.sql        # 建数仓分层库（ODS/DWD/DWS/ADS/DIM）
+    ├── kafka-topics.sh      # Kafka topic 初始化框架（按需创建，auto-create 已开）
     └── minio-init.sh        # 建 MinIO bucket
 ```
 
@@ -33,45 +31,35 @@ docker/
 
 ## 三、启动步骤
 
-**推荐：一键拉起（含数据流桥接）**
+**推荐：一键拉起**
 ```bash
 cd docker
-bash bring-up.sh          # compose up + 建表 + ROUTINE LOAD 桥接 + 后台告警桥接
+bash bring-up.sh          # compose up + 等 StarRocks 就绪 + 建数仓分层库
 docker compose ps         # 确认组件 running
 ```
-`bring-up.sh` 会等 StarRocks 就绪后建表，并创建 `rl_env/rl_batch/rl_qc` 三个
-ROUTINE LOAD（本机 Flink 依赖拉不到时，由 StarRocks 直接消费 Kafka 入 ODS），
-再后台启动 `alarm-bridge.sh` 生成越限告警。
+`bring-up.sh` 会等 Kafka/StarRocks 就绪后，执行 `doris-ddl.sql` 建立 ods/dwd/dws/ads/dim
+五个分层库（供中台运行期由「数据仓库分层 / 离线接入 / 数据开发」等模块写入业务表）。
 
 **或：手动分步**
 
 ```bash
 cd docker
 docker compose up -d                # 起组件
-docker compose ps                   # 确认全部 healthy/running
-```
+docker compose ps                   # 确认全部 running
 
-初始化（首次启动后执行一次）：
+# 建数仓分层库（首次启动后执行一次）
+docker exec -i pharma-starrocks mysql -h 127.0.0.1 -P 9030 -u root < init/doris-ddl.sql
 
-```bash
-# 1. 数仓建表（用任意 mysql 客户端连 localhost:9030，root/无密码）
-mysql -h 127.0.0.1 -P 9030 -u root < init/doris-ddl.sql
-#   或：docker exec -i pharma-starrocks mysql -P 9030 -h 127.0.0.1 -u root < init/doris-ddl.sql
-
-# 2. ROUTINE LOAD 桥接（Kafka → ODS；Flink 缺席时必需）
-bash init/routine-load.sh
-
-# 3. 告警桥接（后台；越限读数 → ods_alarm）
-nohup bash alarm-bridge.sh > ../logs/alarm-bridge.log 2>&1 &
-
-# 4. Kafka topic（可选，auto-create 已开）
+# Kafka topic（可选，auto-create 已开；按需在 kafka-topics.sh 里加 create_topic）
 docker exec -i pharma-kafka sh < init/kafka-topics.sh
 
-# 5. MinIO bucket（可选，湖存储预留）
+# MinIO bucket（可选，湖存储预留）
 docker run --rm --network=pharma-bigdata_default \
   -e MC_HOST_pharma=http://minioadmin:minioadmin@minio:9000 \
   minio/mc:latest sh -c "$(cat init/minio-init.sh)"
 ```
+
+起完组件后，在宿主机启动中台服务层与前端（见根 README「快速开始」）。
 
 ## 四、验证各组件可达
 
@@ -79,18 +67,10 @@ docker run --rm --network=pharma-bigdata_default \
 # Kafka topic 列表
 docker exec pharma-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
 
-# StarRocks 查询（应看到 ods/dwd/dws/ads/dim 库）
-mysql -h 127.0.0.1 -P 9030 -u root -e "SHOW DATABASES;"
+# StarRocks 查询（应看到 ods/dwd/dws/ads/dim + meta 库）
+docker exec -i pharma-starrocks mysql -h 127.0.0.1 -P 9030 -u root -e "SHOW DATABASES;"
 
-# ROUTINE LOAD 状态（State 应为 RUNNING；采集器投递后 NumMessagesReceived 增长）
-docker exec -i pharma-starrocks mysql -h 127.0.0.1 -P 9030 -u root -e "SHOW ROUTINE LOAD\G"
-
-# 起采集模拟器后，ODS 应持续入库（验证 Kafka→StarRocks 已打通）
-docker exec -i pharma-starrocks mysql -h 127.0.0.1 -P 9030 -u root \
-  -e "SELECT COUNT(*) FROM ods.ods_env_monitor; SELECT COUNT(*) FROM ods.ods_alarm;"
-
-# Flink Web UI
-# 浏览器打开 http://localhost:8081
+# Flink Web UI：浏览器打开 http://localhost:8081
 ```
 
 ## 五、停服与清理

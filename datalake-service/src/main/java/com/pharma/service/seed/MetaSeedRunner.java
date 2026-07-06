@@ -271,13 +271,13 @@ public class MetaSeedRunner implements ApplicationRunner {
         Timestamp now = new Timestamp(System.currentTimeMillis());
 
         // ---------- 租户 ----------
-        tenant(1, "PHARMA", "制药集团总部", "NORMAL", now);
+        tenant(1, "DATA", "数据集团总部", "NORMAL", now);
         tenant(2, "PARTNER", "合作研发中心", "NORMAL", now);
 
         // ---------- 组织（租户内树形） ----------
         org(10, 1, 0, "HQ", "集团总部", 1, now);
-        org(11, 1, 10, "PROD", "生产中心", 1, now);
-        org(12, 1, 10, "QA", "质量中心", 2, now);
+        org(11, 1, 10, "BIZ", "业务中心", 1, now);
+        org(12, 1, 10, "GOV", "数据治理中心", 2, now);
         org(13, 1, 10, "IT", "信息技术与安全部", 3, now);
         org(20, 2, 0, "RD", "研发总部", 1, now);
 
@@ -287,11 +287,8 @@ public class MetaSeedRunner implements ApplicationRunner {
         role(3, "AUDIT_ADMIN", "安全审计员");
 
         // ---------- 菜单 ----------
-        // 业务数据 4 个 + 系统管理目录 + 6 个系统子菜单
+        // 数据门户 + 系统管理目录 + 6 个系统子菜单
         menu(1, 0, "数据门户", "/portal", "DataBoard", "portal:view", "MENU", 1);
-        menu(2, 0, "环境监控(实时)", "/env", "Monitor", "env:view", "MENU", 2);
-        menu(3, 0, "批次质量追溯", "/batch", "Connection", "batch:view", "MENU", 3);
-        menu(4, 0, "生产效能看板", "/board", "TrendCharts", "board:view", "MENU", 4);
         menu(5, 0, "系统管理", "", "Setting", "", "CATALOG", 5);
         menu(6, 5, "用户管理", "/system/user", "User", "sys:user", "MENU", 1);
         menu(7, 5, "组织管理", "/system/org", "OfficeBuilding", "sys:org", "MENU", 2);
@@ -366,11 +363,11 @@ public class MetaSeedRunner implements ApplicationRunner {
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
         // ---------- 角色-菜单授权（三员各管其域） ----------
         // SYS_ADMIN：业务 + 用户/组织/租户
-        int[] sysMenus = {1, 2, 3, 4, 5, 6, 7, 8};
+        int[] sysMenus = {1, 5, 6, 7, 8};
         // SEC_ADMIN：业务 + 角色/菜单
-        int[] secMenus = {1, 2, 3, 4, 5, 9, 10};
+        int[] secMenus = {1, 5, 9, 10};
         // AUDIT_ADMIN：业务 + 日志
-        int[] audMenus = {1, 2, 3, 4, 5, 11};
+        int[] audMenus = {1, 5, 11};
         for (int m : sysMenus) grantMenu(1, m);
         for (int m : secMenus) grantMenu(2, m);
         for (int m : audMenus) grantMenu(3, m);

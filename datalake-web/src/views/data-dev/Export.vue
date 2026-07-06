@@ -13,7 +13,7 @@
       <el-form :model="form" label-width="90px" size="small">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="源数据源"><el-select v-model="form.source_ds_id" style="width:100%"><el-option v-for="d in dsList" :key="d.id" :label="`${d.name}(${d.type})`" :value="d.id" /></el-select></el-form-item>
-        <el-form-item label="源查询"><el-input v-model="form.source_query" type="textarea" :rows="3" placeholder="SELECT * FROM ods.ods_batch WHERE status='DONE'" /></el-form-item>
+        <el-form-item label="源查询"><el-input v-model="form.source_query" type="textarea" :rows="3" placeholder="SELECT * FROM ods.your_table WHERE status='DONE'" /></el-form-item>
         <el-form-item label="目标类型"><el-radio-group v-model="form.target_type"><el-radio value="db">写入数据库</el-radio><el-radio value="api">REST推送</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="form.target_type === 'db'" label="目标配置">
           <el-input v-model="form.target_config" type="textarea" :rows="2" placeholder='{"datasource_id":123,"table":"ads.target_table"}' />

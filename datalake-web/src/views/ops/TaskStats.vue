@@ -22,7 +22,7 @@ import { ElMessage } from 'element-plus'
 import { api, errMsg } from '@/api'
 const stats = ref<any>({}); const loading = ref(false)
 const labels: any = { profile: '数据探查', quality: '数据质量', workflow: '工作流', export: '数据接出', script: '数据开发', offline: '离线接入' }
-const label = (k: string) => labels[k] || k
+const label = (k: string | number) => labels[k] || k
 const rate = (s: any) => s.total > 0 ? Math.round((s.success / s.total) * 100) : 0
 async function load() { loading.value = true; try { stats.value = await api.opsTaskStats() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 onMounted(load)

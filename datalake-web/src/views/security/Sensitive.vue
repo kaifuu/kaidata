@@ -12,9 +12,9 @@
     </el-table>
     <el-dialog v-model="dlg" :title="form.id ? '编辑敏感字段' : '登记敏感字段'" width="500px">
       <el-form :model="form" label-width="80px" size="small">
-        <el-form-item label="表名"><el-input v-model="form.source_table" placeholder="如 ods.ods_batch" /></el-form-item>
+        <el-form-item label="表名"><el-input v-model="form.source_table" placeholder="如 库名.表名" /></el-form-item>
         <el-form-item label="字段名"><el-input v-model="form.source_column" placeholder="如 phone" /></el-form-item>
-        <el-form-item label="敏感类型"><el-select v-model="form.sensitive_type" style="width:100%"><el-option v-for="t in ['个人信息','财务','医疗','证件','其他']" :key="t" :label="t" :value="t" /></el-select></el-form-item>
+        <el-form-item label="敏感类型"><el-select v-model="form.sensitive_type" style="width:100%"><el-option v-for="t in ['个人信息','财务','证件','其他']" :key="t" :label="t" :value="t" /></el-select></el-form-item>
         <el-form-item label="级别"><el-select v-model="form.level" style="width:100%"><el-option v-for="l in ['敏感','机密']" :key="l" :label="l" :value="l" /></el-select></el-form-item>
         <el-form-item label="脱敏规则"><el-select v-model="form.mask_rule_id" clearable placeholder="关联脱敏规则" style="width:100%"><el-option v-for="r in maskRules" :key="r.id" :label="r.name" :value="r.id" /></el-select></el-form-item>
         <el-form-item label="说明"><el-input v-model="form.description" /></el-form-item>

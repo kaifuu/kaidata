@@ -18,6 +18,7 @@ public class FtpFileClient implements FileClient {
 
     private FTPClient connect(Map<String, Object> store) throws Exception {
         FTPClient ftp = new FTPClient();
+        ftp.setControlEncoding("UTF-8"); // vsftpd 按 UTF-8 传输文件名，避免中文乱码
         ftp.setDefaultTimeout(10000);
         ftp.connect(StoreConfig.s(store, "host"), StoreConfig.port(store, 21));
         if (!ftp.login(StoreConfig.s(store, "username"), StoreConfig.s(store, "password")))
@@ -51,8 +52,10 @@ public class FtpFileClient implements FileClient {
 
     @Override public List<Map<String, Object>> list(Map<String, Object> store, String path) {
         return with(store, ftp -> {
+            String dir = StoreConfig.resolve(store, path);
             List<Map<String, Object>> out = new ArrayList<>();
-            for (FTPFile f : ftp.listFiles(StoreConfig.resolve(store, path))) {
+            FTPFile[] entries = dir.isEmpty() ? ftp.listFiles() : ftp.listFiles(dir);
+            for (FTPFile f : entries) {
                 if (".".equals(f.getName()) || "..".equals(f.getName())) continue;
                 Map<String, Object> r = new LinkedHashMap<>();
                 r.put("name", f.getName());

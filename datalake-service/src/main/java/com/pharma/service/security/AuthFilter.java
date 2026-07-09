@@ -35,8 +35,8 @@ public class AuthFilter implements Filter {
 
         // 非 /api/ 前缀（静态/错误页等）直接放行
         if (!uri.startsWith("/api/")) { chain.doFilter(req, res); return; }
-        // 登录接口免鉴权
-        if (uri.equals("/api/auth/login")) { chain.doFilter(req, res); return; }
+        // 登录 / 验证码接口免鉴权（在审计 try/finally 之前 return，不写审计）
+        if (uri.equals("/api/auth/login") || uri.equals("/api/auth/captcha")) { chain.doFilter(req, res); return; }
 
         Map<String, Object> payload = TokenUtil.verify(http.getHeader("Authorization"));
 

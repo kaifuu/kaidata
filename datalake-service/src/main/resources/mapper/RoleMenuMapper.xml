@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.RoleMenuMapper">
+
+    <!-- 角色列表聚合：按角色 id 取已授权菜单 id -->
+    <select id="findMenuIdsByRoleIds" resultType="java.util.Map">
+        SELECT role_id AS roleId, menu_id AS menuId
+        FROM meta.sys_role_menu
+        WHERE role_id IN
+        <foreach collection="roleIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <delete id="deleteByRole">
+        DELETE FROM meta.sys_role_menu WHERE role_id = #{roleId}
+    </delete>
+
+    <delete id="deleteByMenu">
+        DELETE FROM meta.sys_role_menu WHERE menu_id = #{menuId}
+    </delete>
+
+    <!-- grantMenus：批量插入（service 保证 menuIds 非空才调用） -->
+    <insert id="batchInsertForRole">
+        INSERT INTO meta.sys_role_menu(role_id, menu_id) VALUES
+        <foreach collection="menuIds" item="mid" separator=",">(#{roleId}, #{mid})</foreach>
+    </insert>
+</mapper>

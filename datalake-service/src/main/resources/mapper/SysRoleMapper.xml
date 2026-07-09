@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.SysRoleMapper">
+
+    <select id="selectRolePage" resultType="com.pharma.service.system.entity.SysRole">
+        SELECT id, code, name
+        FROM meta.sys_role
+        <where>
+            <if test="q.keyword != null and q.keyword != ''">
+                AND (name LIKE CONCAT('%', #{q.keyword}, '%') OR code LIKE CONCAT('%', #{q.keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY id
+    </select>
+</mapper>

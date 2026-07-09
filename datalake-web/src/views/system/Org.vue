@@ -1,15 +1,25 @@
 <template>
   <div class="dl-card">
     <div class="card-title">
-      <span>组织管理</span>
-      <div style="display:flex;align-items:center;gap:10px">
+      <span class="ct-left"><el-icon class="title-icon"><OfficeBuilding /></el-icon>组织管理</span>
+      <div class="head-right">
+        <span class="count-badge">共 <b>{{ visibleCount }}</b> 个组织</span>
         <span class="role-tag">系统管理员</span>
-        <el-select v-model="tenantId" size="small" style="width:180px" @change="load">
-          <el-option v-for="t in tenants" :key="t.id" :label="t.name" :value="t.id" />
-        </el-select>
         <el-button type="primary" size="small" :disabled="!tenantId" @click="open()"><el-icon><Plus /></el-icon> 新增组织</el-button>
       </div>
     </div>
+
+    <!-- 检索工具条：租户切换 + 关键字过滤树 -->
+    <div class="dl-toolbar">
+      <el-select v-model="tenantId" size="small" placeholder="选择租户" style="width:180px" @change="onTenantChange">
+        <el-option v-for="t in tenants" :key="t.id" :label="t.name" :value="t.id" />
+      </el-select>
+      <el-input v-model="keyword" placeholder="名称 / 编码 关键字" size="small" clearable style="width:220px" />
+      <div class="toolbar-actions">
+        <span class="muted">输入关键字即时过滤组织树</span>
+      </div>
+    </div>
+
     <el-table :data="tree" row-key="id" :tree-props="{ children: 'children' }" size="small" stripe border
               default-expand-all v-loading="loading">
       <el-table-column prop="name" label="组织名称" min-width="220" />
@@ -18,9 +28,11 @@
       <el-table-column prop="sort" label="排序" width="80" />
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" link type="success" @click="open(null, row)">新增下级</el-button>
-          <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
-          <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
+          <div class="row-actions">
+            <el-button size="small" link type="success" @click="open(null, row)">新增下级</el-button>
+            <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
+            <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -47,19 +59,27 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, OfficeBuilding } from '@element-plus/icons-vue'
 import { api, errMsg, type OrgRow, type TenantRow } from '@/api'
 
 const tenants = ref<TenantRow[]>([])
 const tenantId = ref<number | null>(null)
 const flat = ref<OrgRow[]>([])
+const keyword = ref('')
 const loading = ref(false)
 const dlg = ref(false)
 const saving = ref(false)
 const form = reactive<any>({ id: null, parent_id: null, code: '', name: '', sort: 1 })
 
-// 扁平 → 树
-const tree = computed<OrgRow[]>(() => build(flat.value.filter((o) => o.tenant_id === tenantId.value)))
+// 按租户 + 关键字过滤 → 建树
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return flat.value.filter((o) =>
+    o.tenant_id === tenantId.value &&
+    (!kw || (o.name || '').toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw)))
+})
+const visibleCount = computed(() => filtered.value.length)
+const tree = computed<OrgRow[]>(() => build(filtered.value))
 function build(list: OrgRow[]): OrgRow[] {
   const map = new Map<number, OrgRow>()
   list.forEach((o) => map.set(o.id, { ...o, children: [] }))
@@ -77,9 +97,8 @@ function parentOptions(excludeId: any) {
     opts.push({ id: n.id, label: '— '.repeat(depth) + n.name })
     if (n.children?.length) walk(n.children, depth + 1)
   })
-  // 过滤掉自身子树
-  const filtered = excludeId ? removeSubtree(tree.value, Number(excludeId)) : tree.value
-  walk(filtered, 0)
+  const filteredTree = excludeId ? removeSubtree(tree.value, Number(excludeId)) : tree.value
+  walk(filteredTree, 0)
   return opts
 }
 function removeSubtree(nodes: OrgRow[], id: number): OrgRow[] {
@@ -89,8 +108,9 @@ function removeSubtree(nodes: OrgRow[], id: number): OrgRow[] {
 async function load() {
   if (!tenantId.value) return
   loading.value = true
-  try { flat.value = await api.sysOrgs(tenantId.value!) } catch (e) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
+  try { flat.value = await api.sysOrgOptions(tenantId.value!) } catch (e) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }
+function onTenantChange() { keyword.value = ''; load() }
 
 function open(row?: OrgRow | null, parent?: OrgRow) {
   Object.assign(form, { id: null, parent_id: null, code: '', name: '', sort: 1 })
@@ -98,7 +118,6 @@ function open(row?: OrgRow | null, parent?: OrgRow) {
   else if (parent) form.parent_id = parent.id
   dlg.value = true
 }
-
 async function save() {
   if (!form.name) return ElMessage.warning('请输入名称')
   saving.value = true
@@ -107,19 +126,20 @@ async function save() {
     ElMessage.success('保存成功'); dlg.value = false; await load()
   } catch (e) { ElMessage.error(errMsg(e)) } finally { saving.value = false }
 }
-
 async function del(row: OrgRow) {
   await ElMessageBox.confirm(`确定删除组织「${row.name}」？`, '提示', { type: 'warning' })
   try { await api.sysDeleteOrg(row.id); ElMessage.success('已删除'); await load() } catch (e) { ElMessage.error(errMsg(e)) }
 }
-
 onMounted(async () => {
-  tenants.value = await api.sysTenants()
+  tenants.value = await api.sysTenantOptions()
   if (tenants.value[0]) { tenantId.value = tenants.value[0].id; await load() }
 })
 </script>
 
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
+.ct-left { display: inline-flex; align-items: center; }
+.head-right { display: flex; align-items: center; gap: 10px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
+.muted { color: var(--tech-text-muted); font-size: 12px; }
 </style>

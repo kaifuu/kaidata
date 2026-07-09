@@ -1,12 +1,20 @@
 <template>
   <div class="dl-card">
     <div class="card-title">
-      <span>菜单管理</span>
-      <div style="display:flex;align-items:center;gap:10px">
+      <span class="ct-left"><el-icon class="title-icon"><MenuIcon /></el-icon>菜单管理</span>
+      <div class="head-right">
+        <span class="count-badge">共 <b>{{ flat.length }}</b> 个菜单</span>
         <span class="role-tag">安全保密管理员</span>
         <el-button type="primary" size="small" @click="open()"><el-icon><Plus /></el-icon> 新增菜单</el-button>
       </div>
     </div>
+
+    <!-- 检索工具条：关键字过滤树 -->
+    <div class="dl-toolbar">
+      <el-input v-model="keyword" placeholder="名称 / 路径 / 权限 关键字" size="small" clearable style="width:240px" />
+      <div class="toolbar-actions"><span class="muted">输入关键字即时过滤菜单树</span></div>
+    </div>
+
     <el-table :data="tree" row-key="id" :tree-props="{ children: 'children' }" size="small" stripe border
               default-expand-all v-loading="loading">
       <el-table-column prop="name" label="名称" min-width="200" />
@@ -31,10 +39,12 @@
       <el-table-column prop="sort" label="排序" width="70" />
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" link type="success" @click="open(null, row)">新增下级</el-button>
-          <el-button size="small" link :type="row.status === 'DISABLED' ? 'success' : 'warning'" @click="toggle(row)">{{ row.status === 'DISABLED' ? '启用' : '停用' }}</el-button>
-          <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
-          <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
+          <div class="row-actions">
+            <el-button size="small" link type="success" @click="open(null, row)">新增下级</el-button>
+            <el-button size="small" link :type="row.status === 'DISABLED' ? 'success' : 'warning'" @click="toggle(row)">{{ row.status === 'DISABLED' ? '启用' : '停用' }}</el-button>
+            <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
+            <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -89,7 +99,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, ArrowDown, Search } from '@element-plus/icons-vue'
+import { Plus, ArrowDown, Search, Menu as MenuIcon } from '@element-plus/icons-vue'
 import * as Icons from '@element-plus/icons-vue'
 import { api, errMsg, type MenuRow } from '@/api'
 
@@ -105,14 +115,17 @@ const filteredIcons = computed(() => {
 function pickIcon(n: string) { form.icon = n; pickerOpen.value = false; iconSearch.value = '' }
 
 const flat = ref<MenuRow[]>([])
+const keyword = ref('')
 const loading = ref(false)
 const dlg = ref(false)
 const saving = ref(false)
 const form = reactive<any>({ id: null, parent_id: null, name: '', icon: 'Menu', path: '', perm: '', type: 'MENU', sort: 99 })
 
 const tree = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const list = kw ? flat.value.filter(m => (m.name || '').toLowerCase().includes(kw) || (m.path || '').toLowerCase().includes(kw) || (m.perm || '').toLowerCase().includes(kw)) : flat.value
   const map = new Map<number, any>()
-  flat.value.forEach((m) => map.set(m.id, { ...m, children: [] }))
+  list.forEach((m) => map.set(m.id, { ...m, children: [] }))
   const roots: any[] = []
   map.forEach((n) => { n.parent_id && map.has(n.parent_id) ? map.get(n.parent_id).children.push(n) : roots.push(n) })
   return roots
@@ -158,6 +171,8 @@ onMounted(load)
 
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
+.ct-left { display: inline-flex; align-items: center; }
+.head-right { display: flex; align-items: center; gap: 10px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .muted { color: var(--tech-text-muted); font-size: 12px; }
 

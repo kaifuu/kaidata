@@ -38,7 +38,7 @@ public class ProfileController {
     public List<Map<String, Object>> listJobs() {
         Authz.require(Authz.SYS_ADMIN);
         return jdbc.queryForList("SELECT id, name, source_ds_id, target_db, first_create_table, " +
-                "alert_enabled, extra_columns, cron, status, create_time, update_time FROM meta.ing_profile_job ORDER BY id");
+                "alert_enabled, extra_columns, cron, status, create_by, create_time, update_time FROM meta.ing_profile_job ORDER BY id");
     }
 
     @GetMapping("/job/detail")
@@ -142,6 +142,19 @@ public class ProfileController {
         return Map.of("exists", autoModler.tableExists(db, t));
     }
 
+    /** 批量检查目标库中是否已存在同名表（供前端左侧表列表一次性置灰）。 */
+    @GetMapping("/target-exists-batch")
+    public Map<String, Boolean> targetExistsBatch(@RequestParam String db, @RequestParam String tables) {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Boolean> out = new LinkedHashMap<>();
+        for (String t : tables.split(",")) {
+            if (t == null || t.isEmpty()) continue;
+            String name = t.contains(".") ? t.substring(t.lastIndexOf('.') + 1) : t;
+            out.put(t, autoModler.tableExists(db, name));
+        }
+        return out;
+    }
+
     // ==================== 执行 / 上下线 ====================
 
     @PostMapping("/run")
@@ -186,6 +199,22 @@ public class ProfileController {
         Authz.require(Authz.SYS_ADMIN);
         return jdbc.queryForMap("SELECT id, job_id, start_time, end_time, status, tables_changed, tables_total, error_msg, log_text " +
                 "FROM meta.ing_profile_run WHERE id=?", id);
+    }
+
+    /** 清除日志（清洗规则：all=该任务全部 / failed=失败 / before7d=7天前）。jobId 必传，防止误清全表。 */
+    @DeleteMapping("/run")
+    public Map<String, Object> clearRuns(@RequestParam long jobId, @RequestParam(defaultValue = "all") String rule) {
+        Authz.require(Authz.SYS_ADMIN);
+        StringBuilder sql = new StringBuilder("DELETE FROM meta.ing_profile_run WHERE job_id=?");
+        List<Object> args = new ArrayList<>();
+        args.add(jobId);
+        if ("failed".equalsIgnoreCase(rule)) {
+            sql.append(" AND status<>'SUCCESS'");
+        } else if ("before7d".equalsIgnoreCase(rule)) {
+            sql.append(" AND start_time < DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        }
+        int n = jdbc.update(sql.toString(), args.toArray());
+        return Map.of("success", true, "deleted", n);
     }
 
     // ==================== 探查记录 + 版本对比 ====================

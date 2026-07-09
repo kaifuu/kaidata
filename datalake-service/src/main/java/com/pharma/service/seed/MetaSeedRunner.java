@@ -149,6 +149,22 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("CREATE TABLE IF NOT EXISTS meta.gov_data_element (id BIGINT, code VARCHAR(64), name VARCHAR(128), data_type VARCHAR(32), length INT, precision_ INT, scale_ INT, definition VARCHAR(1024), value_domain VARCHAR(2048), status VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.gov_code_set (id BIGINT, code VARCHAR(64), name VARCHAR(128), description VARCHAR(512), status VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.gov_code_item (id BIGINT, set_id BIGINT, code VARCHAR(64), name VARCHAR(128), sort INT) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // ①+ 数据标准增强（ALTER 幂等，已存在列会被 exec 吞掉）：数据元扩展（英文名/分类/单位/格式/安全分级/负责人/引用代码集/版本）、代码集分类、代码项启用+备注
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN en_name VARCHAR(128)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN category VARCHAR(64)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN unit VARCHAR(32)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN data_format VARCHAR(64)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN security_level VARCHAR(16)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN owner VARCHAR(64)");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN code_set_id BIGINT");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN version INT");
+        exec("ALTER TABLE meta.gov_data_element ADD COLUMN update_time DATETIME");
+        exec("ALTER TABLE meta.gov_code_set ADD COLUMN category VARCHAR(64)");
+        exec("ALTER TABLE meta.gov_code_item ADD COLUMN is_enabled BOOLEAN");
+        exec("ALTER TABLE meta.gov_code_item ADD COLUMN remark VARCHAR(256)");
+        exec("UPDATE meta.gov_data_element SET version=1 WHERE version IS NULL");
+        exec("UPDATE meta.gov_data_element SET code_set_id=0 WHERE code_set_id IS NULL");
+        exec("UPDATE meta.gov_code_item SET is_enabled=true WHERE is_enabled IS NULL");
         // ②数据模型：模型 + 模型表 + 模型字段
         exec("CREATE TABLE IF NOT EXISTS meta.gov_model (id BIGINT, name VARCHAR(128), domain VARCHAR(64), model_type VARCHAR(32), description VARCHAR(512), status VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.gov_model_table (id BIGINT, model_id BIGINT, name VARCHAR(128), layer VARCHAR(32), description VARCHAR(512)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
@@ -237,6 +253,58 @@ public class MetaSeedRunner implements ApplicationRunner {
         boolean mkt = "10".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.portal_cart (id BIGINT, username VARCHAR(64), item_type VARCHAR(16), item_ref VARCHAR(255), item_name VARCHAR(255), add_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!mkt) kvSet("schema_ver", "10");
+
+        // ============ 离线接入任务增加 where_clause（schema_ver=11，增量） ============
+        boolean wc = "11".equals(kv("schema_ver"));
+        exec("ALTER TABLE meta.ing_offline_job ADD COLUMN where_clause VARCHAR(1024)");
+        if (!wc) kvSet("schema_ver", "11");
+
+        // ============ 元数据管理完整体系（schema_ver=12，增量） ============
+        // 采集任务、采集日志、元数据版本、接口/文件元数据补录、字段级血缘映射
+        boolean m12 = "12".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_collect_job (id BIGINT, name VARCHAR(128), ds_id BIGINT, schema_filter VARCHAR(255), table_filter VARCHAR(1024), cron VARCHAR(64), status VARCHAR(16), create_by VARCHAR(64), create_time DATETIME, update_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_collect_log (id BIGINT, job_id BIGINT, start_time DATETIME, end_time DATETIME, status VARCHAR(16), tables_total INT, tables_added INT, tables_changed INT, tables_removed INT, detail VARCHAR(65535), error_msg VARCHAR(2048), triggered_by VARCHAR(64)) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_version (id BIGINT, meta_id BIGINT, version_n INT, columns_json VARCHAR(65535), change_type VARCHAR(16), change_detail VARCHAR(8192), source VARCHAR(32), created_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_api (id BIGINT, service_id BIGINT, cn_name VARCHAR(255), dept VARCHAR(128), app_system VARCHAR(128), subject_id BIGINT, share_type VARCHAR(32), admin_owner VARCHAR(128), admin_contact VARCHAR(128), data_category VARCHAR(32), security_level VARCHAR(16), description VARCHAR(1024), fill_percent INT, mount_status VARCHAR(16), create_time DATETIME, update_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_file (id BIGINT, file_id BIGINT, store_id BIGINT, path VARCHAR(1024), cn_name VARCHAR(255), dept VARCHAR(128), app_system VARCHAR(128), subject_id BIGINT, share_type VARCHAR(32), admin_owner VARCHAR(128), admin_contact VARCHAR(128), data_category VARCHAR(32), security_level VARCHAR(16), description VARCHAR(1024), fill_percent INT, mount_status VARCHAR(16), file_format VARCHAR(32), encoding VARCHAR(16), delimiter VARCHAR(16), has_header BOOLEAN, columns_json VARCHAR(65535), create_time DATETIME, update_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_field_map (id BIGINT, meta_id BIGINT, logical_field VARCHAR(128), src_ds_id BIGINT, src_schema VARCHAR(128), src_table VARCHAR(255), src_field VARCHAR(128), job_type VARCHAR(16), job_id BIGINT, create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // gov_meta_table 补录字段扩展（每列一条 ALTER，已存在则 exec 吞异常，幂等）
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN cn_name VARCHAR(255)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN dept VARCHAR(128)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN app_system VARCHAR(128)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN resource_attr VARCHAR(32)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN layer_code VARCHAR(32)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN subject_id BIGINT");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN share_type VARCHAR(32)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN admin_owner VARCHAR(128)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN admin_contact VARCHAR(128)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN data_category VARCHAR(32)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN security_level VARCHAR(16)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN mask_rule_id BIGINT");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN alert_def_id BIGINT");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN fill_percent INT");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN mount_status VARCHAR(16)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN current_version INT");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN description VARCHAR(1024)");
+        exec("ALTER TABLE meta.gov_meta_table ADD COLUMN update_time DATETIME");
+        if (!m12) kvSet("schema_ver", "12");
+
+        // ============ 数据开发重构（分类树 + 离线任务 + 脚本/流分类）（schema_ver=13，增量） ============
+        boolean m13 = "13".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.dev_catalog (id BIGINT, parent_id BIGINT, name VARCHAR(128), module_type VARCHAR(16), sort INT, create_by VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.dev_offline_task (id BIGINT, name VARCHAR(128), catalog_id BIGINT, datasource_id BIGINT, sql_content VARCHAR(65535), cron VARCHAR(64), status VARCHAR(16), create_by VARCHAR(64), create_time DATETIME, update_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.dev_offline_run (id BIGINT, task_id BIGINT, start_time DATETIME, end_time DATETIME, status VARCHAR(16), rows_read BIGINT, cols INT, error_msg VARCHAR(2048), log_text VARCHAR(65535), triggered_by VARCHAR(64)) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("ALTER TABLE meta.dev_script ADD COLUMN catalog_id BIGINT");
+        exec("ALTER TABLE meta.dev_script ADD COLUMN update_time DATETIME");
+        exec("ALTER TABLE meta.dev_script_run ADD COLUMN log_text VARCHAR(65535)");
+        exec("ALTER TABLE meta.ing_stream_job ADD COLUMN catalog_id BIGINT");
+        // 离线开发重构：4类作业统一模型（job_type: jdbc_sql 兼容旧 / flink_sql / flink_jar / flink_dag / kettle_hop）
+        exec("ALTER TABLE meta.dev_offline_task ADD COLUMN job_type VARCHAR(16)");
+        exec("UPDATE meta.dev_offline_task SET job_type='jdbc_sql' WHERE job_type IS NULL OR job_type=''");
+        exec("ALTER TABLE meta.dev_offline_task ADD COLUMN dag_json VARCHAR(65535)");
+        exec("ALTER TABLE meta.dev_offline_task ADD COLUMN config_json VARCHAR(8192)");
+        exec("ALTER TABLE meta.dev_offline_run ADD COLUMN engine_job_id VARCHAR(128)");
+        if (!m13) kvSet("schema_ver", "13");
     }
 
     private void seedStd(String code, String name, int level, String desc) {
@@ -312,6 +380,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(21, 18, "数据仓库", "/data-gov/wh", "Files", "gov:wh", "MENU", 3);
         menu(22, 18, "数据质量", "/data-gov/quality", "CircleCheck", "gov:quality", "MENU", 4);
         menu(23, 18, "元数据", "/data-gov/meta", "Document", "gov:meta", "MENU", 5);
+        menu(58, 18, "采集管理", "/data-gov/meta-collect", "Refresh", "gov:metacollect", "MENU", 6);
         menu(24, 18, "数据标签", "/data-gov/tag", "PriceTag", "gov:tag", "MENU", 6);
         menu(25, 18, "主数据", "/data-gov/master", "Box", "gov:master", "MENU", 7);
 
@@ -321,6 +390,11 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(28, 26, "数据开发", "/data-dev/script", "EditPen", "dev:script", "MENU", 2);
         menu(29, 26, "数据接出", "/data-dev/export", "Promotion", "dev:export", "MENU", 3);
         menu(30, 26, "工作流", "/data-dev/workflow", "Connection", "dev:workflow", "MENU", 4);
+        // 数据开发菜单收敛(schema_ver=13)：28→离线开发, 29→实时开发, 30→脚本开发, 59→任务日志(复用 id)
+        try { jdbc.update("UPDATE meta.sys_menu SET name='离线开发', path='/data-dev/offline', perm='dev:offline', icon='Download', sort=2 WHERE id=28"); } catch (Exception ignored) {}
+        try { jdbc.update("UPDATE meta.sys_menu SET name='实时开发', path='/data-dev/realtime', perm='dev:realtime', icon='VideoPlay', sort=3 WHERE id=29"); } catch (Exception ignored) {}
+        try { jdbc.update("UPDATE meta.sys_menu SET name='脚本开发', path='/data-dev/script-dev', perm='dev:scriptdev', icon='EditPen', sort=4 WHERE id=30"); } catch (Exception ignored) {}
+        menu(59, 26, "任务日志", "/data-dev/tasklog", "Document", "dev:tasklog", "MENU", 5);
 
         // 数据资产（一级目录 + 3 子菜单）
         menu(31, 0, "数据资产", "/asset", "FolderOpened", "", "CATALOG", 9);
@@ -361,6 +435,13 @@ public class MetaSeedRunner implements ApplicationRunner {
 
         // 数据门户 → 数据总览（重命名，幂等 UPDATE）
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
+        // 元数据门户收敛：23→数据地图，58→采集管理，删除 59-62（接口/文件/血缘/检索 并入数据地图门户）
+        try { jdbc.update("UPDATE meta.sys_menu SET name='数据地图', sort=5 WHERE id=23"); } catch (Exception ignored) {}
+        try { jdbc.update("UPDATE meta.sys_menu SET name='采集管理', sort=6 WHERE id=58"); } catch (Exception ignored) {}
+        try { jdbc.update("UPDATE meta.sys_menu SET sort=11 WHERE id=24"); } catch (Exception ignored) {}
+        try { jdbc.update("UPDATE meta.sys_menu SET sort=12 WHERE id=25"); } catch (Exception ignored) {}
+        try { jdbc.update("DELETE FROM meta.sys_role_menu WHERE menu_id IN (60,61,62)"); } catch (Exception ignored) {}
+        try { jdbc.update("DELETE FROM meta.sys_menu WHERE id IN (60,61,62)"); } catch (Exception ignored) {}
         // ---------- 角色-菜单授权（三员各管其域） ----------
         // SYS_ADMIN：业务 + 用户/组织/租户
         int[] sysMenus = {1, 5, 6, 7, 8};
@@ -375,10 +456,10 @@ public class MetaSeedRunner implements ApplicationRunner {
         int[] daMenus = {12, 13, 14, 15, 16, 17};
         for (int m : daMenus) grantMenu(1, m);
         // 数据治理菜单授予 SYS_ADMIN
-        int[] govMenus = {18, 19, 20, 21, 22, 23, 24, 25};
+        int[] govMenus = {18, 19, 20, 21, 22, 23, 24, 25, 58};
         for (int m : govMenus) grantMenu(1, m);
         // 数据开发菜单授予 SYS_ADMIN
-        int[] devMenus = {26, 27, 28, 29, 30};
+        int[] devMenus = {26, 27, 28, 29, 30, 59};
         for (int m : devMenus) grantMenu(1, m);
         // 数据资产菜单授予 SYS_ADMIN
         int[] assetMenus = {31, 32, 33, 34};

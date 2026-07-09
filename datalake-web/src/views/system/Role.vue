@@ -5,13 +5,21 @@
       <el-col :span="9">
         <div class="dl-card">
           <div class="card-title">
-            <span>角色管理</span>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span class="role-tag">安全保密管理员</span>
+            <span class="ct-left"><el-icon class="title-icon"><UserFilled /></el-icon>角色管理</span>
+            <div class="head-right">
+              <span class="count-badge">共 <b>{{ total }}</b> 个</span>
               <el-button type="primary" size="small" @click="openRole()"><el-icon><Plus /></el-icon> 新建</el-button>
             </div>
           </div>
-          <el-table :data="roles" size="small" stripe border highlight-current-row @current-change="pick" height="420">
+
+          <div class="dl-toolbar" style="padding:8px 12px;margin-bottom:8px">
+            <el-input v-model="keyword" placeholder="编码 / 名称" size="small" clearable style="width:160px" @keyup.enter="search" />
+            <div class="toolbar-actions">
+              <el-button size="small" type="primary" @click="search"><el-icon><Search /></el-icon>查询</el-button>
+            </div>
+          </div>
+
+          <el-table :data="roles" size="small" stripe border highlight-current-row @current-change="pick" height="360">
             <el-table-column prop="code" label="角色码" width="130" />
             <el-table-column prop="name" label="名称" />
             <el-table-column label="操作" width="120" fixed="right">
@@ -21,6 +29,11 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="dl-pagination" style="margin-top:8px">
+            <el-pagination :current-page="page.page" :page-size="page.size" :total="total"
+              :page-sizes="[10, 20]" layout="total, prev, pager, next" small
+              @size-change="onSizeChange" @current-change="onPageChange" />
+          </div>
           <div class="hint">内置三员(id≤3)受保护，可调菜单权限、不可删/改成员。</div>
         </div>
       </el-col>
@@ -79,10 +92,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ElTree } from 'element-plus'
-import { Plus, Pointer } from '@element-plus/icons-vue'
+import { Plus, Pointer, Search, UserFilled } from '@element-plus/icons-vue'
 import { api, errMsg, type RoleFullRow, type MenuRow, type UserRow } from '@/api'
 
 const roles = ref<RoleFullRow[]>([])
@@ -94,6 +107,9 @@ const dlg = ref(false)
 const saving = ref(false)
 const savingMenu = ref(false)
 const savingUser = ref(false)
+const total = ref(0)
+const page = reactive({ page: 1, size: 10 })
+const keyword = ref('')
 const form = reactive<any>({ id: null, code: '', name: '' })
 const menuTreeRef = ref<InstanceType<typeof ElTree>>()
 const memberIds = ref<number[]>([])
@@ -108,15 +124,25 @@ const menuTree = computed(() => {
 const userTransfer = computed(() => users.value.map((u) => ({ key: u.id, label: `${u.username}（${u.name}）` })))
 
 async function load() {
-  const [r, m, u] = await Promise.all([api.sysRoles(), api.sysMenus(), api.sysUsers()])
-  roles.value = r; menus.value = m; users.value = u
-  if (!cur.value && r[0]) pick(r[0])
+  const [res, m, u] = await Promise.all([
+    api.sysRoles({ page: page.page, size: page.size, keyword: keyword.value || undefined }),
+    api.sysMenus(),
+    api.sysUserOptions()
+  ])
+  roles.value = res.records
+  total.value = res.total
+  menus.value = m
+  users.value = u
+  if (!cur.value && roles.value[0]) pick(roles.value[0])
 }
+function search() { page.page = 1; load() }
+function onPageChange(p: number) { page.page = p; load() }
+function onSizeChange(s: number) { page.size = s; page.page = 1; load() }
 
 function pick(row: RoleFullRow | null) {
   if (!row) return
   cur.value = row
-  memberIds.value = [...row.user_ids]
+  memberIds.value = [...(row.user_ids || [])]
   tab.value = 'menu'
 }
 
@@ -160,6 +186,8 @@ onMounted(load)
 
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
+.ct-left { display: inline-flex; align-items: center; }
+.head-right { display: flex; align-items: center; gap: 10px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .hint { color: var(--tech-text-muted); font-size: 12px; }
 .empty { text-align: center; color: var(--tech-text-muted); padding: 60px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }

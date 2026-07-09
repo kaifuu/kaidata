@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.UserRoleMapper">
+
+    <!-- 用户列表聚合：按用户 id 取角色码 -->
+    <select id="findRoleCodesByUserIds" resultType="java.util.Map">
+        SELECT ur.user_id AS userId, r.code AS code
+        FROM meta.sys_user_role ur
+        JOIN meta.sys_role r ON r.id = ur.role_id
+        WHERE ur.user_id IN
+        <foreach collection="userIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <!-- 角色列表聚合：按角色 id 取成员用户 id -->
+    <select id="findUserIdsByRoleIds" resultType="java.util.Map">
+        SELECT role_id AS roleId, user_id AS userId
+        FROM meta.sys_user_role
+        WHERE role_id IN
+        <foreach collection="roleIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <delete id="deleteByUser">
+        DELETE FROM meta.sys_user_role WHERE user_id = #{userId}
+    </delete>
+
+    <delete id="deleteByRole">
+        DELETE FROM meta.sys_user_role WHERE role_id = #{roleId}
+    </delete>
+
+    <!-- grantUsers：批量插入（service 保证 userIds 非空才调用） -->
+    <insert id="batchInsertForRole">
+        INSERT INTO meta.sys_user_role(user_id, role_id) VALUES
+        <foreach collection="userIds" item="uid" separator=",">(#{uid}, #{roleId})</foreach>
+    </insert>
+</mapper>

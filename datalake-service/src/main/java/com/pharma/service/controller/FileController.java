@@ -30,8 +30,11 @@ public class FileController {
     @GetMapping("/store/list")
     public List<Map<String, Object>> storeList() {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, name, type, host, port, username, base_path, props, status, create_time " +
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT id, name, type, host, port, username, password, base_path, props, status, create_time " +
                 "FROM meta.ing_filestore ORDER BY id");
+        // 解密密码回传，供编辑表单回显（星号掩码 + 眼睛查看）；列表表格不展示该列
+        rows.forEach(r -> r.put("password", crypto.decrypt(str(r.get("password")))));
+        return rows;
     }
 
     @PostMapping("/store")

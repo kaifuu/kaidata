@@ -2,42 +2,74 @@
   <div>
     <div class="dl-card">
       <div class="card-title">
-        <span>离线数据接入</span>
-        <div style="display:flex;align-items:center;gap:10px">
+        <span class="ct-left"><el-icon class="title-icon"><Download /></el-icon>离线数据接入</span>
+        <div class="head-right">
+          <span class="count-badge">共 <b>{{ filtered.length }}</b> 个任务</span>
           <span class="role-tag">系统管理员</span>
           <el-button type="primary" size="small" @click="open()"><el-icon><Plus /></el-icon> 新建任务</el-button>
         </div>
       </div>
-      <el-table :data="jobs" size="small" stripe border v-loading="loading">
-        <el-table-column prop="id" label="ID" width="140" />
+
+      <div class="dl-toolbar">
+        <el-input v-model="kw" placeholder="任务名称" size="small" clearable style="width:180px" />
+        <el-select v-model="kwStrategy" placeholder="策略" size="small" clearable style="width:120px">
+          <el-option label="全量" value="FULL" />
+          <el-option label="增量" value="INCREMENTAL" />
+        </el-select>
+        <el-select v-model="kwStatus" placeholder="状态" size="small" clearable style="width:120px">
+          <el-option label="上线" value="ENABLED" />
+          <el-option label="下线" value="DISABLED" />
+        </el-select>
+        <div class="toolbar-actions"><el-button size="small" @click="resetQuery">重置</el-button></div>
+      </div>
+
+      <el-table :data="paged" size="small" stripe border v-loading="loading">
+        <el-table-column prop="id" label="ID" width="130" />
         <el-table-column prop="name" label="任务名" min-width="130" />
-        <el-table-column label="源 → 目标" min-width="240">
+        <el-table-column label="源 → 目标" min-width="260">
           <template #default="{ row }">
-            <span class="muted">ds{{ row.source_ds_id }}/{{ row.source_table }}</span>
+            <span class="muted">{{ dsMap[row.source_ds_id] || ('ds#' + row.source_ds_id) }}/{{ row.source_table }}</span>
             <b style="margin:0 4px">→</b>
             <span>{{ row.target_db }}.{{ row.target_table }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="策略" width="90">
+        <el-table-column label="策略" width="80">
           <template #default="{ row }"><el-tag size="small" :type="row.strategy === 'INCREMENTAL' ? 'warning' : ''">{{ row.strategy === 'INCREMENTAL' ? '增量' : '全量' }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="last_sync_value" label="水位" width="150" />
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }"><el-tag size="small" :type="row.status === 'ENABLED' ? 'success' : 'info'">{{ row.status === 'ENABLED' ? '上线' : '下线' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="last_sync_value" label="水位" width="140" />
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" link type="success" :loading="runningId === row.id" @click="run(row)">执行</el-button>
-            <el-button size="small" link type="primary" @click="previewSource(row)">预览源</el-button>
-            <el-button size="small" link type="primary" @click="runs(row)">历史</el-button>
-            <el-button size="small" link type="primary" @click="open(row)">编辑</el-button>
-            <el-button size="small" link type="danger" @click="del(row)">删除</el-button>
+            <div class="row-actions">
+              <el-button size="small" link type="success" :loading="runningId === row.id" @click="run(row)">执行</el-button>
+              <el-button size="small" link type="primary" @click="previewSource(row)">预览源</el-button>
+              <el-button size="small" link type="primary" @click="runs(row)">历史</el-button>
+              <el-button size="small" link type="primary" @click="copy(row)">复制</el-button>
+              <el-button size="small" link type="primary" @click="viewJson(row)">JSON</el-button>
+              <el-button v-if="row.status !== 'ENABLED'" size="small" link type="success" @click="online(row)">上线</el-button>
+              <el-button v-else size="small" link type="warning" @click="offline(row)">下线</el-button>
+              <el-button size="small" link type="primary" :disabled="row.status === 'ENABLED'" @click="open(row)">编辑</el-button>
+              <el-button size="small" link type="danger" :disabled="row.status === 'ENABLED'" @click="del(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
-      <div class="hint"><el-icon><InfoFilled /></el-icon> 全量=truncate+insert；增量=按业务键 PRIMARY KEY 表去重 upsert（首次自动建表，列类型按源推断）。</div>
+
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="filtered.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper"
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
+      <div class="hint"><el-icon><InfoFilled /></el-icon> 全量=truncate+insert；增量=按业务键 PRIMARY KEY 表去重 upsert（首次自动建表）；<b>上线状态编辑/删除置灰</b>；数据过滤(where)与增量水位 AND 组合。</div>
     </div>
 
-    <el-dialog v-model="dlg" :title="form.id ? '编辑任务' : '新建任务'" width="540px">
-      <el-form :model="form" label-width="84px">
+    <!-- 新建/编辑 -->
+    <el-dialog v-model="dlg" :title="form.id ? '编辑任务' : '新建任务'" width="580px">
+      <el-form :model="form" label-width="92px" size="default">
         <el-form-item label="任务名"><el-input v-model="form.name" /></el-form-item>
+        <el-divider content-position="left">源端配置</el-divider>
         <el-form-item label="源数据源">
           <el-select v-model="form.source_ds_id" style="width:100%" @change="onDs">
             <el-option v-for="d in dsList" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
@@ -52,12 +84,14 @@
         </el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="增量列"><el-input v-model="form.inc_column" placeholder="时间或自增列" /></el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="业务唯一键"><el-input v-model="form.biz_key" placeholder="去重主键（留空取首列）" /></el-form-item>
+        <el-form-item label="数据过滤"><el-input v-model="form.where_clause" type="textarea" :rows="2" placeholder="如 status=1 AND create_time>'2026-01-01'（不加 WHERE 关键字；增量时与水位 AND 组合）" /></el-form-item>
+        <el-divider content-position="left">目标端配置</el-divider>
         <el-form-item label="目标库"><el-input v-model="form.target_db" /></el-form-item>
-        <el-form-item label="目标表"><el-input v-model="form.target_table" placeholder="自动建表" /></el-form-item>
+        <el-form-item label="目标表"><el-input v-model="form.target_table" placeholder="自动建表（列类型按源推断）" /></el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="form.status">
-            <el-radio value="ENABLED">启用</el-radio>
-            <el-radio value="DISABLED">停用</el-radio>
+            <el-radio value="DISABLED">下线（可编辑）</el-radio>
+            <el-radio value="ENABLED">上线（锁定）</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
@@ -67,64 +101,94 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="previewDlg" :title="`源预览 - ${current?.name || ''}`" width="780px">
+    <!-- 源预览 -->
+    <el-dialog v-model="previewDlg" :title="`源预览 - ${current?.name || ''}`" width="800px">
       <el-table :data="previewRows" size="small" border max-height="440" v-loading="previewLoading">
         <el-table-column v-for="c in previewCols" :key="c" :prop="c" :label="c" min-width="120" show-overflow-tooltip />
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="runsDlg" :title="`执行历史 - ${current?.name || ''}`" width="780px">
-      <el-table :data="runRows" size="small" border max-height="440">
-        <el-table-column prop="start_time" label="开始" width="160" />
-        <el-table-column prop="end_time" label="结束" width="160" />
-        <el-table-column label="状态" width="90">
+    <!-- 执行历史 + 清除日志 -->
+    <el-dialog v-model="runsDlg" :title="`执行历史 - ${current?.name || ''}`" width="840px">
+      <div class="dl-toolbar" style="padding:8px 12px;margin-bottom:8px">
+        <span class="muted">清洗规则：</span>
+        <el-select v-model="clearRule" size="small" style="width:160px">
+          <el-option label="清除全部日志" value="all" />
+          <el-option label="仅清除失败日志" value="failed" />
+          <el-option label="清除 7 天前日志" value="before7d" />
+        </el-select>
+        <el-button size="small" type="danger" plain :loading="clearing" @click="clearRuns">清除日志</el-button>
+        <div class="toolbar-actions"><span class="muted">共 {{ runRows.length }} 条</span></div>
+      </div>
+      <el-table :data="runRows" size="small" border max-height="380">
+        <el-table-column prop="start_time" label="开始" width="155" />
+        <el-table-column prop="end_time" label="结束" width="155" />
+        <el-table-column prop="triggered_by" label="触发人" width="90" />
+        <el-table-column label="状态" width="80">
           <template #default="{ row }"><el-tag size="small" :type="row.status === 'SUCCESS' ? 'success' : 'danger'">{{ row.status }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="读/写" width="120">
+        <el-table-column label="读/写" width="110">
           <template #default="{ row }">{{ row.rows_read }} / {{ row.rows_written }}</template>
         </el-table-column>
-        <el-table-column prop="error_msg" label="错误" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="error_msg" label="错误" min-width="180" show-overflow-tooltip />
       </el-table>
+    </el-dialog>
+
+    <!-- JSON 查看 -->
+    <el-dialog v-model="jsonDlg" title="任务配置 JSON" width="640px">
+      <pre class="json-box">{{ jsonText }}</pre>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, InfoFilled } from '@element-plus/icons-vue'
+import { Plus, InfoFilled, Download } from '@element-plus/icons-vue'
 import { api, errMsg, type DataSourceRow, type OfflineJobRow } from '@/api'
 
 const jobs = ref<OfflineJobRow[]>([])
 const dsList = ref<DataSourceRow[]>([])
 const loading = ref(false)
-const dlg = ref(false)
-const saving = ref(false)
-const runningId = ref<number | null>(null)
-const form = reactive<any>({ id: null, name: '', source_ds_id: null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', status: 'ENABLED' })
+const dlg = ref(false); const saving = ref(false); const runningId = ref<number | null>(null)
+const form = reactive<any>({ id: null, name: '', source_ds_id: null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
 
-const previewDlg = ref(false)
-const previewLoading = ref(false)
-const previewCols = ref<string[]>([])
-const previewRows = ref<any[]>([])
-const runsDlg = ref(false)
-const runRows = ref<any[]>([])
+const dsMap = computed<Record<number, string>>(() => {
+  const m: Record<number, string> = {}
+  dsList.value.forEach(d => { m[d.id] = `${d.name}(${d.type})` })
+  return m
+})
+
+// 检索 + 分页（客户端）
+const kw = ref(''); const kwStrategy = ref(''); const kwStatus = ref('')
+const page = reactive({ page: 1, size: 10 })
+const filtered = computed(() => jobs.value.filter(j =>
+  (!kw.value || (j.name || '').toLowerCase().includes(kw.value.toLowerCase())) &&
+  (!kwStrategy.value || j.strategy === kwStrategy.value) &&
+  (!kwStatus.value || j.status === kwStatus.value)))
+const paged = computed(() => filtered.value.slice((page.page - 1) * page.size, page.page * page.size))
+function resetQuery() { kw.value = ''; kwStrategy.value = ''; kwStatus.value = ''; page.page = 1 }
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
+
+const previewDlg = ref(false); const previewLoading = ref(false); const previewCols = ref<string[]>([]); const previewRows = ref<any[]>([])
+const runsDlg = ref(false); const runRows = ref<any[]>([]); const clearing = ref(false); const clearRule = ref('all')
+const jsonDlg = ref(false); const jsonText = ref('')
 const current = ref<OfflineJobRow | null>(null)
 
 async function load() {
   loading.value = true
   try {
     const [j, d] = await Promise.all([api.daOfflineJobs(), api.daSources()])
-    jobs.value = j
-    dsList.value = d
+    jobs.value = j; dsList.value = d
   } catch (e) { ElMessage.error(errMsg(e, '加载失败')) } finally { loading.value = false }
 }
 
 function onDs() {}
 
 function open(row?: OfflineJobRow) {
-  Object.assign(form, { id: null, name: '', source_ds_id: dsList.value[0]?.id || null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', status: 'ENABLED' })
-  if (row) Object.assign(form, { id: row.id, name: row.name, source_ds_id: row.source_ds_id, source_table: row.source_table, target_db: row.target_db, target_table: row.target_table, strategy: row.strategy, inc_column: row.inc_column || '', biz_key: row.biz_key || '', status: row.status })
+  Object.assign(form, { id: null, name: '', source_ds_id: dsList.value[0]?.id || null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
+  if (row) Object.assign(form, { id: row.id, name: row.name, source_ds_id: row.source_ds_id, source_table: row.source_table, target_db: row.target_db, target_table: row.target_table, strategy: row.strategy, inc_column: row.inc_column || '', biz_key: row.biz_key || '', where_clause: (row as any).where_clause || '', status: row.status })
   dlg.value = true
 }
 
@@ -136,9 +200,16 @@ async function save() {
 }
 
 async function del(row: OfflineJobRow) {
-  await ElMessageBox.confirm(`确定删除任务 ${row.name}？`, '提示', { type: 'warning' })
+  try { await ElMessageBox.confirm(`确定删除任务 ${row.name}？将同时删除其历史。`, '提示', { type: 'warning' }) } catch { return }
   try { await api.daDeleteOfflineJob(row.id); ElMessage.success('已删除'); await load() } catch (e) { ElMessage.error(errMsg(e)) }
 }
+
+async function copy(row: OfflineJobRow) {
+  try { const r: any = await api.daOfflineCopy(row.id); ElMessage.success(`已复制为 ${r.name}`); await load() }
+  catch (e) { ElMessage.error(errMsg(e)) }
+}
+async function online(row: OfflineJobRow) { try { await api.daOfflineOnline(row.id); ElMessage.success('已上线（锁定）'); await load() } catch (e) { ElMessage.error(errMsg(e)) } }
+async function offline(row: OfflineJobRow) { try { await api.daOfflineOffline(row.id); ElMessage.success('已下线'); await load() } catch (e) { ElMessage.error(errMsg(e)) } }
 
 async function run(row: OfflineJobRow) {
   runningId.value = row.id
@@ -151,21 +222,28 @@ async function run(row: OfflineJobRow) {
 }
 
 async function previewSource(row: OfflineJobRow) {
-  current.value = row
-  previewDlg.value = true
-  previewLoading.value = true
+  current.value = row; previewDlg.value = true; previewLoading.value = true
   try {
     const r: any = await api.daOfflinePreview({ source_ds_id: row.source_ds_id, source_table: row.source_table, limit: 50 })
-    previewCols.value = r.columns || []
-    previewRows.value = r.rows || []
+    previewCols.value = r.columns || []; previewRows.value = r.rows || []
   } catch (e: any) { previewCols.value = []; previewRows.value = []; ElMessage.error(errMsg(e, '预览失败：检查源表名/驱动')) }
   finally { previewLoading.value = false }
 }
 
 async function runs(row: OfflineJobRow) {
-  current.value = row
-  runsDlg.value = true
+  current.value = row; runsDlg.value = true
   try { runRows.value = await api.daOfflineRuns(row.id) } catch (e: any) { runRows.value = []; ElMessage.error(errMsg(e)) }
+}
+async function clearRuns() {
+  if (!current.value) return
+  try { await ElMessageBox.confirm(`按规则清除该任务日志？`, '提示', { type: 'warning' }) } catch { return }
+  clearing.value = true
+  try { const r: any = await api.daOfflineClearRuns(current.value.id, clearRule.value); ElMessage.success(`已清除 ${r.deleted} 条`); runRows.value = await api.daOfflineRuns(current.value.id) }
+  catch (e: any) { ElMessage.error(errMsg(e)) } finally { clearing.value = false }
+}
+
+function viewJson(row: OfflineJobRow) {
+  jsonText.value = JSON.stringify(row, null, 2); jsonDlg.value = true
 }
 
 onMounted(load)
@@ -173,8 +251,11 @@ onMounted(load)
 
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
+.ct-left { display: inline-flex; align-items: center; }
+.head-right { display: flex; align-items: center; gap: 10px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .muted { color: var(--tech-text-muted); font-size: 12px; }
 .hint { margin-top: 12px; color: var(--tech-text-muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .hint b { color: var(--tech-primary); }
+.json-box { background: var(--el-fill-color-light); padding: 12px; border-radius: 6px; max-height: 460px; overflow: auto; font-size: 12px; white-space: pre-wrap; color: var(--tech-text); }
 </style>

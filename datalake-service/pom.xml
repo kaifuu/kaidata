@@ -38,6 +38,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- MyBatis-Plus (Spring Boot 3.x)：系统管理模块 ORM + 分页插件。
+             StarRocks 走 MySQL 协议，DbType.MYSQL 生成的 LIMIT offset,size 形式 StarRocks 兼容。 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>3.5.5</version>
+        </dependency>
+
         <!-- ============ 数据接入：开源 JDBC 驱动（默认引入，runtime） ============ -->
         <!-- 若某驱动在本机镜像拉不到，可注释对应条目降级为「占位适配器」，不影响构建 -->
         <dependency>

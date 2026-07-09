@@ -27,11 +27,13 @@ public class StreamIngestController {
     @Autowired private JdbcToKafkaRunner jdbcToKafka;
 
     @GetMapping("/job/list")
-    public List<Map<String, Object>> listJobs() {
+    public List<Map<String, Object>> listJobs(@RequestParam(required = false) Long catalogId) {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, name, type, source_ds_id, source_query, kafka_topic, " +
-                "target_db, target_table, columns_json, schedule_cron, status, create_time, update_time " +
-                "FROM meta.ing_stream_job ORDER BY id");
+        String sql = "SELECT id, name, type, source_ds_id, source_query, kafka_topic, " +
+                "target_db, target_table, columns_json, schedule_cron, catalog_id, status, create_time, update_time " +
+                "FROM meta.ing_stream_job";
+        if (catalogId != null) return jdbc.queryForList(sql + " WHERE catalog_id=? ORDER BY id", catalogId);
+        return jdbc.queryForList(sql + " ORDER BY id");
     }
 
     @PostMapping("/job")
@@ -41,11 +43,11 @@ public class StreamIngestController {
         Timestamp now = new Timestamp(id);
         jdbc.update("INSERT INTO meta.ing_stream_job" +
                         "(id, name, type, source_ds_id, source_query, kafka_topic, target_db, target_table, " +
-                        "columns_json, schedule_cron, status, props, create_by, create_time, update_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "columns_json, schedule_cron, catalog_id, status, props, create_by, create_time, update_time) " +
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), str(b.get("type")), lng(b.get("source_ds_id")), str(b.get("source_query")),
                 str(b.get("kafka_topic")), str(b.get("target_db")), str(b.get("target_table")),
-                str(b.get("columns_json")), str(b.get("schedule_cron")), "STOPPED", str(b.get("props")),
+                str(b.get("columns_json")), str(b.get("schedule_cron")), lng(b.get("catalog_id")), "STOPPED", str(b.get("props")),
                 currentUser(), now, now);
         return Map.of("success", true, "id", id);
     }
@@ -56,10 +58,10 @@ public class StreamIngestController {
         long id = lng(b.get("id"));
         Timestamp now = new Timestamp(System.currentTimeMillis());
         jdbc.update("UPDATE meta.ing_stream_job SET name=?, type=?, source_ds_id=?, source_query=?, kafka_topic=?, " +
-                        "target_db=?, target_table=?, columns_json=?, schedule_cron=?, props=?, update_time=? WHERE id=?",
+                        "target_db=?, target_table=?, columns_json=?, schedule_cron=?, catalog_id=?, props=?, update_time=? WHERE id=?",
                 str(b.get("name")), str(b.get("type")), lng(b.get("source_ds_id")), str(b.get("source_query")),
                 str(b.get("kafka_topic")), str(b.get("target_db")), str(b.get("target_table")),
-                str(b.get("columns_json")), str(b.get("schedule_cron")), str(b.get("props")), now, id);
+                str(b.get("columns_json")), str(b.get("schedule_cron")), lng(b.get("catalog_id")), str(b.get("props")), now, id);
         return Map.of("success", true);
     }
 

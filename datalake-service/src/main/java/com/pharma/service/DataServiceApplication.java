@@ -1,7 +1,9 @@
 package com.pharma.service;
 
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 数据服务层启动类
@@ -13,6 +15,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 运行在宿主机（JDK17），连接 StarRocks localhost:9030。
  */
 @SpringBootApplication
+@MapperScan("com.pharma.service.system.mapper")
+@EnableScheduling   // 供 CaptchaStore 定时清扫过期验证码
 public class DataServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(DataServiceApplication.class, args);

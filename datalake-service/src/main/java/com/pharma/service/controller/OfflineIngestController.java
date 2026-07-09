@@ -5,6 +5,7 @@ import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.DataSourceLoader;
 import com.pharma.service.access.ingest.IngestExecutor;
+import com.pharma.service.security.AccessDeniedException;
 import com.pharma.service.security.Authz;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -34,7 +35,7 @@ public class OfflineIngestController {
     public List<Map<String, Object>> listJobs() {
         Authz.require(Authz.SYS_ADMIN);
         return jdbc.queryForList("SELECT id, name, source_ds_id, source_table, target_db, target_table, " +
-                "strategy, inc_column, biz_key, last_sync_value, status, create_time, update_time " +
+                "strategy, inc_column, biz_key, last_sync_value, where_clause, status, create_time, update_time " +
                 "FROM meta.ing_offline_job ORDER BY id");
     }
 
@@ -45,13 +46,14 @@ public class OfflineIngestController {
         Timestamp now = new Timestamp(id);
         jdbc.update("INSERT INTO meta.ing_offline_job" +
                         "(id, name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
-                        "biz_key, last_sync_value, column_map, status, create_by, create_time, update_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "biz_key, last_sync_value, column_map, where_clause, status, create_by, create_time, update_time) " +
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")),
                 str(b.getOrDefault("target_db", "ods")), str(b.get("target_table")),
                 str(b.getOrDefault("strategy", "FULL")), str(b.get("inc_column")),
                 str(b.get("biz_key")), str(b.get("last_sync_value")), str(b.get("column_map")),
-                str(b.getOrDefault("status", "ENABLED")), currentUser(), now, now);
+                str(b.get("where_clause")),
+                str(b.getOrDefault("status", "DISABLED")), currentUser(), now, now);
         return Map.of("success", true, "id", id);
     }
 
@@ -59,22 +61,79 @@ public class OfflineIngestController {
     public Map<String, Object> updateJob(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         long id = lng(b.get("id"));
+        String curStatus = jdbc.queryForObject("SELECT status FROM meta.ing_offline_job WHERE id=?", String.class, id);
+        if ("ENABLED".equals(curStatus)) throw new AccessDeniedException("任务已上线，请先下线再编辑");
         Timestamp now = new Timestamp(System.currentTimeMillis());
         jdbc.update("UPDATE meta.ing_offline_job SET name=?, source_ds_id=?, source_table=?, target_db=?, " +
-                        "target_table=?, strategy=?, inc_column=?, biz_key=?, column_map=?, status=?, update_time=? WHERE id=?",
+                        "target_table=?, strategy=?, inc_column=?, biz_key=?, column_map=?, where_clause=?, status=?, update_time=? WHERE id=?",
                 str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")),
                 str(b.getOrDefault("target_db", "ods")), str(b.get("target_table")),
                 str(b.getOrDefault("strategy", "FULL")), str(b.get("inc_column")),
-                str(b.get("biz_key")), str(b.get("column_map")),
-                str(b.getOrDefault("status", "ENABLED")), now, id);
+                str(b.get("biz_key")), str(b.get("column_map")), str(b.get("where_clause")),
+                str(b.getOrDefault("status", "DISABLED")), now, id);
         return Map.of("success", true);
     }
 
     @DeleteMapping("/job")
     public Map<String, Object> deleteJob(@RequestParam long id) {
         Authz.require(Authz.SYS_ADMIN);
+        String st = jdbc.queryForObject("SELECT status FROM meta.ing_offline_job WHERE id=?", String.class, id);
+        if ("ENABLED".equals(st)) throw new AccessDeniedException("任务已上线，请先下线再删除");
         jdbc.update("DELETE FROM meta.ing_offline_run WHERE job_id=?", id);
         jdbc.update("DELETE FROM meta.ing_offline_job WHERE id=?", id);
+        return Map.of("success", true);
+    }
+
+    /** 复制任务：参数全部一致，名称在原名后递增数字（task→task1→task2），状态置下线。 */
+    @PostMapping("/job/copy")
+    public Map<String, Object> copyJob(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> src = jdbc.queryForMap(
+                "SELECT name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
+                        "biz_key, column_map, where_clause FROM meta.ing_offline_job WHERE id=?", id);
+        long newId = System.currentTimeMillis();
+        String newName = nextCopyName(str(src.get("name")));
+        Timestamp now = new Timestamp(newId);
+        jdbc.update("INSERT INTO meta.ing_offline_job" +
+                        "(id, name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
+                        "biz_key, last_sync_value, column_map, where_clause, status, create_by, create_time, update_time) " +
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                newId, newName, ((Number) src.get("source_ds_id")).longValue(), str(src.get("source_table")),
+                str(src.get("target_db")), str(src.get("target_table")), str(src.get("strategy")),
+                str(src.get("inc_column")), str(src.get("biz_key")), "", str(src.get("column_map")),
+                str(src.get("where_clause")), "DISABLED", currentUser(), now, now);
+        return Map.of("success", true, "id", newId, "name", newName);
+    }
+
+    /** 剥离尾部数字得 root，查 root% 的最大数字后缀，返回 root+(max+1)。 */
+    private String nextCopyName(String base) {
+        String root = base.replaceAll("[0-9]+$", "");
+        if (root.isEmpty()) root = base;
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT name FROM meta.ing_offline_job WHERE name LIKE '" + root.replace("'", "''") + "%'");
+        int max = 0;
+        for (Map<String, Object> r : rows) {
+            String n = str(r.get("name"));
+            if (n.startsWith(root) && n.length() > root.length()) {
+                try { max = Math.max(max, Integer.parseInt(n.substring(root.length()))); } catch (Exception ignored) {}
+            }
+        }
+        return root + (max + 1);
+    }
+
+    /** 上线（ENABLED=锁定，不可编删）。 */
+    @PostMapping("/job/online")
+    public Map<String, Object> online(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        jdbc.update("UPDATE meta.ing_offline_job SET status='ENABLED', update_time=? WHERE id=?", new Timestamp(System.currentTimeMillis()), id);
+        return Map.of("success", true);
+    }
+
+    /** 下线（DISABLED=可编删）。 */
+    @PostMapping("/job/offline")
+    public Map<String, Object> offline(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        jdbc.update("UPDATE meta.ing_offline_job SET status='DISABLED', update_time=? WHERE id=?", new Timestamp(System.currentTimeMillis()), id);
         return Map.of("success", true);
     }
 
@@ -114,7 +173,7 @@ public class OfflineIngestController {
         Authz.require(Authz.SYS_ADMIN);
         Map<String, Object> job = jdbc.queryForMap(
                 "SELECT id, name, source_ds_id, source_table, target_db, target_table, strategy, " +
-                        "inc_column, biz_key, last_sync_value FROM meta.ing_offline_job WHERE id=?", jobId);
+                        "inc_column, biz_key, last_sync_value, where_clause FROM meta.ing_offline_job WHERE id=?", jobId);
         long runId = System.currentTimeMillis();
         Timestamp start = new Timestamp(runId);
         String strategy = str(job.get("strategy"));
@@ -130,10 +189,14 @@ public class OfflineIngestController {
         DataSource pool = registry.getPool(ds);
 
         String sourceSql = "SELECT * FROM " + sourceTable;
+        List<String> conds = new ArrayList<>();
         if (incremental && !incCol.isEmpty()) {
             String last = str(job.get("last_sync_value")).replace("'", "''");
-            sourceSql += " WHERE " + incCol + " > '" + last + "'";
+            conds.add(incCol + " > '" + last + "'");
         }
+        String whereClause = str(job.get("where_clause"));
+        if (!whereClause.isEmpty()) conds.add("(" + whereClause + ")");
+        if (!conds.isEmpty()) sourceSql += " WHERE " + String.join(" AND ", conds);
 
         try {
             IngestExecutor.Result r = executor.execute(pool, sourceSql, targetDb, targetTable, incremental, bizKey);
@@ -165,6 +228,22 @@ public class OfflineIngestController {
         Authz.require(Authz.SYS_ADMIN);
         return jdbc.queryForList("SELECT id, job_id, start_time, end_time, status, rows_read, rows_written, " +
                 "error_msg, triggered_by FROM meta.ing_offline_run WHERE job_id=? ORDER BY id DESC LIMIT " + Math.min(limit, 500), jobId);
+    }
+
+    /** 清除日志（清洗规则：all/failed/before7d）。jobId 必传，防误清全表。 */
+    @DeleteMapping("/run")
+    public Map<String, Object> clearRuns(@RequestParam long jobId, @RequestParam(defaultValue = "all") String rule) {
+        Authz.require(Authz.SYS_ADMIN);
+        StringBuilder sql = new StringBuilder("DELETE FROM meta.ing_offline_run WHERE job_id=?");
+        List<Object> args = new ArrayList<>();
+        args.add(jobId);
+        if ("failed".equalsIgnoreCase(rule)) {
+            sql.append(" AND status<>'SUCCESS'");
+        } else if ("before7d".equalsIgnoreCase(rule)) {
+            sql.append(" AND start_time < DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        }
+        int n = jdbc.update(sql.toString(), args.toArray());
+        return Map.of("success", true, "deleted", n);
     }
 
     @GetMapping("/target/preview")

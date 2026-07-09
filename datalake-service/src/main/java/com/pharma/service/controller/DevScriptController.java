@@ -21,23 +21,23 @@ public class DevScriptController {
     @GetMapping("/list")
     public List<Map<String, Object>> list() {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, name, script_type, datasource_id, content, description, create_time FROM meta.dev_script ORDER BY id");
+        return jdbc.queryForList("SELECT id, name, script_type, datasource_id, catalog_id, content, description, create_time FROM meta.dev_script ORDER BY id");
     }
     @PostMapping
     public Map<String, Object> create(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
-        jdbc.update("INSERT INTO meta.dev_script(id, name, script_type, datasource_id, content, description, create_time) VALUES (?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.dev_script(id, name, script_type, datasource_id, catalog_id, content, description, create_time) VALUES (?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), str(b.getOrDefault("script_type", "SQL")), lng(b.get("datasource_id")),
-                str(b.get("content")), str(b.get("description")), new Timestamp(id));
+                lng(b.get("catalog_id")), str(b.get("content")), str(b.get("description")), new Timestamp(id));
         return Map.of("success", true, "id", id);
     }
     @PutMapping
     public Map<String, Object> update(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
-        jdbc.update("UPDATE meta.dev_script SET name=?, script_type=?, datasource_id=?, content=?, description=? WHERE id=?",
+        jdbc.update("UPDATE meta.dev_script SET name=?, script_type=?, datasource_id=?, catalog_id=?, content=?, description=? WHERE id=?",
                 str(b.get("name")), str(b.getOrDefault("script_type", "SQL")), lng(b.get("datasource_id")),
-                str(b.get("content")), str(b.get("description")), lng(b.get("id")));
+                lng(b.get("catalog_id")), str(b.get("content")), str(b.get("description")), lng(b.get("id")));
         return Map.of("success", true);
     }
     @DeleteMapping

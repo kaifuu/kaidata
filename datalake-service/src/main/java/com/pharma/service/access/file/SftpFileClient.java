@@ -51,9 +51,10 @@ public class SftpFileClient implements FileClient {
 
     @Override public List<Map<String, Object>> list(Map<String, Object> store, String path) {
         return with(store, ch -> {
+            String dir = StoreConfig.resolve(store, path);
             List<Map<String, Object>> out = new ArrayList<>();
             @SuppressWarnings("unchecked")
-            Vector<ChannelSftp.LsEntry> es = ch.ls(StoreConfig.resolve(store, path));
+            Vector<ChannelSftp.LsEntry> es = ch.ls(dir.isEmpty() ? "." : dir);
             for (ChannelSftp.LsEntry e : es) {
                 if (".".equals(e.getFilename()) || "..".equals(e.getFilename())) continue;
                 Map<String, Object> r = new LinkedHashMap<>();

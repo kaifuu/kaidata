@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import java.sql.Timestamp;
 import java.util.*;
 
-/** 数据模型 [SYS_ADMIN]：模型 + 模型表 + 模型字段。 */
+/** 数据模型 [SYS_ADMIN]：模型 + 模型表 + 模型字段（字段可关联数据元，落地数据标准）。 */
 @RestController
 @RequestMapping("/api/data-gov/model")
 @CrossOrigin(origins = "*")
@@ -75,22 +75,57 @@ public class DataModelController {
     @GetMapping("/field")
     public List<Map<String, Object>> listField(@RequestParam long tableId) {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, table_id, name, data_type, element_id, is_pk, nullable, comment FROM meta.gov_model_field WHERE table_id=? ORDER BY id", tableId);
+        return jdbc.queryForList(
+                "SELECT f.id, f.table_id, f.name, f.data_type, f.element_id, f.is_pk, f.nullable, f.comment, " +
+                "e.name AS element_name, e.code AS element_code " +
+                "FROM meta.gov_model_field f " +
+                "LEFT JOIN meta.gov_data_element e ON e.id = f.element_id " +
+                "WHERE f.table_id=? ORDER BY f.id", tableId);
     }
     @PostMapping("/field")
     public Map<String, Object> createField(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
+        long elementId = lng(b.get("element_id"));
+        String dataType = resolveType(elementId, str(b.get("data_type")));
         jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (?,?,?,?,?,?,?,?)",
-                id, lng(b.get("table_id")), str(b.get("name")), str(b.get("data_type")), lng(b.get("element_id")),
+                id, lng(b.get("table_id")), str(b.get("name")), dataType, elementId,
                 bool(b.get("is_pk")), bool(b.get("nullable")), str(b.get("comment")));
         return Map.of("success", true, "id", id);
+    }
+    @PutMapping("/field")
+    public Map<String, Object> updateField(@RequestBody Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        long elementId = lng(b.get("element_id"));
+        String dataType = resolveType(elementId, str(b.get("data_type")));
+        jdbc.update("UPDATE meta.gov_model_field SET name=?, data_type=?, element_id=?, is_pk=?, nullable=?, comment=? WHERE id=?",
+                str(b.get("name")), dataType, elementId, bool(b.get("is_pk")), bool(b.get("nullable")), str(b.get("comment")), lng(b.get("id")));
+        return Map.of("success", true);
     }
     @DeleteMapping("/field")
     public Map<String, Object> deleteField(@RequestParam long id) {
         Authz.require(Authz.SYS_ADMIN);
         jdbc.update("DELETE FROM meta.gov_model_field WHERE id=?", id);
         return Map.of("success", true);
+    }
+
+    /** 选了数据元但未显式给类型 → 从数据元带出（落地数据标准） */
+    private String resolveType(long elementId, String given) {
+        if (given != null && !given.isEmpty()) return given;
+        if (elementId <= 0) return "";
+        try {
+            Map<String, Object> el = jdbc.queryForMap(
+                    "SELECT data_type, length, precision_, scale_ FROM meta.gov_data_element WHERE id=?", elementId);
+            return buildTypeStr(str(el.get("data_type")), num(el.get("length")), num(el.get("precision_")), num(el.get("scale_")));
+        } catch (Exception e) { return ""; }
+    }
+
+    private static String buildTypeStr(String t, int len, int prec, int scale) {
+        if (t == null || t.isEmpty()) return "";
+        String u = t.toUpperCase();
+        if (u.equals("VARCHAR") || u.equals("CHAR") || u.equals("STRING")) return len > 0 ? u + "(" + len + ")" : u;
+        if (u.equals("DECIMAL") || u.equals("NUMERIC")) return u + "(" + (prec > 0 ? prec : 10) + "," + scale + ")";
+        return u;
     }
 
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }

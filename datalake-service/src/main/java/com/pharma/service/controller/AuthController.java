@@ -1,6 +1,8 @@
 package com.pharma.service.controller;
 
 import com.pharma.service.security.AuthContext;
+import com.pharma.service.security.CaptchaStore;
+import com.pharma.service.security.CaptchaUtil;
 import com.pharma.service.security.PasswordUtil;
 import com.pharma.service.security.TokenUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +28,23 @@ public class AuthController {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private CaptchaStore captchaStore;
+
+    /** 图形验证码：生成 4 位字符图（免鉴权），前端进入登录页即拉取 */
+    @GetMapping("/captcha")
+    public Map<String, String> captcha() {
+        CaptchaUtil.CaptchaImg c = CaptchaUtil.generate();
+        String id = captchaStore.create(c.code());
+        return Map.of("captchaId", id, "img", c.img());
+    }
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
+        // 验证码校验（查库之前）：失败即拒，挡住无效请求、减少库压力
+        if (!captchaStore.verify(body.get("captchaId"), body.get("captchaCode"))) {
+            return unauthorized("验证码错误或已过期");
+        }
         String username = body.get("username");
         String password = body.get("password");
         List<Map<String, Object>> rows = jdbc.queryForList(

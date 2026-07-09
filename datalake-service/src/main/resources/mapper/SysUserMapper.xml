@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.SysUserMapper">
+
+    <!-- 分页查用户：LEFT JOIN 富化租户/组织名（不取 password）。MP 注入 LIMIT 与 count。 -->
+    <select id="selectUserPage" resultType="com.pharma.service.system.entity.SysUser">
+        SELECT u.id, u.username, u.name, u.status, u.tenant_id, u.org_id, u.create_time,
+               t.name AS tenant_name,
+               o.name AS org_name
+        FROM meta.sys_user u
+        LEFT JOIN meta.sys_tenant t ON t.id = u.tenant_id
+        LEFT JOIN meta.sys_org    o ON o.id = u.org_id
+        <where>
+            <if test="q.username != null and q.username != ''">
+                AND u.username LIKE CONCAT('%', #{q.username}, '%')
+            </if>
+            <if test="q.name != null and q.name != ''">
+                AND u.name LIKE CONCAT('%', #{q.name}, '%')
+            </if>
+            <if test="q.tenantId != null"> AND u.tenant_id = #{q.tenantId} </if>
+            <if test="q.orgId != null"> AND u.org_id = #{q.orgId} </if>
+            <if test="q.status != null and q.status != ''"> AND u.status = #{q.status} </if>
+        </where>
+        ORDER BY u.id
+    </select>
+</mapper>

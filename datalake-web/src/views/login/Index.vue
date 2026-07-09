@@ -1,5 +1,7 @@
 <template>
   <div class="login">
+    <!-- 粒子连线背景（对标阿里云） -->
+    <ParticleBackground />
     <!-- 背景层：网格 + 扫描线 + 浮动光点 -->
     <div class="bg-grid" />
     <div class="bg-scan" />
@@ -58,6 +60,12 @@
         <el-form-item prop="password">
           <el-input v-model="form.password" type="password" show-password placeholder="密码" :prefix-icon="Lock" clearable />
         </el-form-item>
+        <el-form-item prop="captchaCode">
+          <div class="captcha-row">
+            <el-input v-model="form.captchaCode" placeholder="验证码" :prefix-icon="Picture" maxlength="4" clearable />
+            <img class="captcha-img" :src="captchaImg" alt="验证码" title="点击刷新" @click="refreshCaptcha" />
+          </div>
+        </el-form-item>
         <el-button class="enter" type="primary" :loading="loading" @click="onLogin">
           进 入 中 台 <el-icon class="el-icon--right"><Right /></el-icon>
         </el-button>
@@ -87,20 +95,32 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
-import { User, Lock, Right, Iphone } from '@element-plus/icons-vue'
+import { User, Lock, Right, Iphone, Picture } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
-import { api } from '@/api'
+import { api, errMsg } from '@/api'
 import { auth } from '@/auth'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import ParticleBackground from '@/components/ParticleBackground.vue'
 
 const router = useRouter()
 const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
-const form = reactive({ username: 'admin', password: 'admin123' })
+const form = reactive({ username: 'admin', password: 'admin123', captchaCode: '' })
 const rules = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+  captchaCode: [{ required: true, message: '请输入验证码', trigger: 'blur' }]
+}
+
+// 验证码：进入页 / 点击图 / 登录失败 均拉取；后端一次性消费，失败必刷新
+const captchaId = ref('')
+const captchaImg = ref('')
+async function refreshCaptcha() {
+  const d = await api.captcha()
+  captchaId.value = d.captchaId
+  captchaImg.value = d.img
+  form.captchaCode = ''
 }
 
 const tab = ref<'account' | 'qrcode'>('account')
@@ -110,12 +130,13 @@ async function onLogin() {
     if (!ok) return
     loading.value = true
     try {
-      const data = await api.login(form.username, form.password)
+      const data = await api.login(form.username, form.password, captchaId.value, form.captchaCode)
       auth.set(data.token, data.user, data.menus || [])
       ElMessage.success('登录成功')
       router.replace((route.query.redirect as string) || '/')
-    } catch {
-      ElMessage.error('账号或密码错误')
+    } catch (e) {
+      ElMessage.error(errMsg(e, '登录失败'))
+      refreshCaptcha()   // 后端已一次性消费旧码，失败必刷新
     } finally {
       loading.value = false
     }
@@ -149,6 +170,7 @@ function orb(n: number) {
 }
 
 onMounted(() => {
+  refreshCaptcha()
   genQR()
   qrTimer = window.setInterval(genQR, 60000)
   countdown = window.setInterval(() => { if (qrExpiry.value > 0) qrExpiry.value-- }, 1000)
@@ -216,14 +238,14 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
   background: var(--tech-panel);
   border: 1px solid var(--tech-panel-border);
   border-radius: 14px;
-  backdrop-filter: blur(12px);
-  box-shadow: var(--tech-shadow), 0 0 30px color-mix(in srgb, var(--tech-primary) 12%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: var(--tech-shadow), 0 0 34px color-mix(in srgb, var(--tech-primary) 20%, transparent), 0 8px 40px rgba(0, 0, 0, .25);
 }
 .card::before {
   content: ""; position: absolute; inset: -1px; border-radius: 14px; padding: 1px;
   background: linear-gradient(135deg, var(--tech-primary), transparent 40%, var(--tech-accent));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; opacity: .55;
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; opacity: .7;
 }
 .card-head {
   display: flex; align-items: center; gap: 8px; color: var(--tech-primary);
@@ -238,6 +260,16 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 .seg-btn.on { color: var(--tech-primary); font-weight: 600; }
 .seg-ink { position: absolute; z-index: 1; top: 3px; left: 3px; width: calc(50% - 3px); height: calc(100% - 6px); border-radius: 7px; background: var(--tech-bg-2); box-shadow: var(--tech-shadow); transition: transform .28s cubic-bezier(.4,0,.2,1); }
 .seg-ink.right { transform: translateX(100%); }
+
+/* 验证码行 */
+.captcha-row { display: flex; gap: 10px; align-items: center; width: 100%; }
+.captcha-row .el-input { flex: 1; }
+.captcha-img {
+  width: 112px; height: 40px; flex-shrink: 0; cursor: pointer; border-radius: 8px;
+  border: 1px solid var(--tech-panel-border); box-shadow: var(--tech-glow);
+  object-fit: cover; transition: filter .2s ease, transform .2s ease;
+}
+.captcha-img:hover { filter: brightness(1.18); transform: translateY(-1px); }
 
 .enter { width: 100%; letter-spacing: 4px; }
 .hint { margin-top: 14px; text-align: center; color: var(--tech-text-muted); font-size: 12px; }

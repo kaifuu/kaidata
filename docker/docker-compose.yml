@@ -70,6 +70,40 @@ services:
     volumes: [flink-jobs:/opt/flink/usrlib]
     mem_limit: 768m
 
+  # ---------- Flink SQL Gateway（离线 FlinkSQL/FlinkDag 作业提交入口，8083）----------
+  flink-sql-gateway:
+    image: flink:1.18-java17
+    container_name: pharma-flink-sql-gateway
+    ports: ["8083:8083"]
+    command:
+      - /bin/bash
+      - -c
+      - |
+        /opt/flink/bin/sql-gateway.sh start -Drest.address=flink-jm -Drest.port=8081 -Dsql-gateway.endpoint.rest.address=0.0.0.0 -Dsql-gateway.endpoint.rest.port=8083
+        sleep 15
+        echo '=== log dir ==='; ls /opt/flink/log/ 2>&1
+        echo '=== sql-gateway log ==='; tail -n 40 /opt/flink/log/sql-gateway-*.log 2>/dev/null || echo '(no sql-gateway log)'
+        sleep infinity
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jm
+        rest.address: flink-jm
+        rest.port: 8081
+        sql-gateway.endpoint.rest.address: 0.0.0.0
+        sql-gateway.endpoint.rest.port: 8083
+    depends_on: [flink-jm]
+    mem_limit: 512m
+
+  # ---------- Apache Hop Server（离线 Kettle/Hop 作业执行，8082→容器8080）----------
+  hop-server:
+    image: apache/hop:2.10.0
+    container_name: pharma-hop
+    ports: ["8082:8080"]
+    environment:
+      HOP_USER: cluster
+      HOP_PASS: cluster
+    mem_limit: 1g
+
   # ---------- 实时数仓 StarRocks（FE+BE allin1，MySQL 协议 9030）----------
   starrocks:
     image: starrocks/allin1-ubuntu:3.3.10

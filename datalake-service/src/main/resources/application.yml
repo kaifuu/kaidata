@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: datalake-service
+  jackson:
+    # 实体 camelCase ↔ 前端 snake_case（tenant_id↔tenantId / create_time↔createTime 等）
+    # 仅作用于 POJO 属性；对其它 controller 返回的 Map<String,Object> 的 key 无影响
+    property-naming-strategy: SNAKE_CASE
   datasource:
     # StarRocks/Doris MySQL 协议，宿主机访问映射的 9030
     url: jdbc:mysql://${STARROCKS_HOST:127.0.0.1}:${STARROCKS_PORT:9030}/?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8
@@ -29,3 +33,24 @@ pharma:
     pool:
       max-size: 5          # 每个外部数据源连接池上限
       idle-timeout-sec: 1800
+  engines:
+    # 离线开发 4 类作业的执行引擎地址（宿主机经映射端口访问；容器间用服务名）
+    flink:
+      sql-gateway: ${FLINK_SQL_GATEWAY:http://localhost:8083}   # FlinkSQL / FlinkDag 作业
+      rest: ${FLINK_REST:http://localhost:8081}                  # FlinkJar 作业
+    hop:
+      server: ${HOP_SERVER:http://localhost:8082}                # Kettle/Hop 作业
+      user: ${HOP_USER:cluster}
+      pass: ${HOP_PASS:cluster}
+    jar-dir: ${FLINK_JAR_DIR:data/flink-jars}   # FlinkJar 的 jar 本地存储目录
+
+# MyBatis-Plus：系统管理模块 ORM。复用上面 StarRocks 数据源（HikariCP），与 JdbcTemplate 共存
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.pharma.service.system.entity
+  configuration:
+    map-underscore-to-camel-case: true   # create_time → createTime
+    cache-enabled: false                 # 关二级缓存，避免与 JdbcTemplate 写不同步
+  global-config:
+    db-config:
+      id-type: INPUT                     # 沿用 System.currentTimeMillis()，不要雪花

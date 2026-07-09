@@ -14,12 +14,13 @@ public final class StoreConfig {
         try { return Integer.parseInt(String.valueOf(v).trim()); } catch (Exception e) { return def; }
     }
 
-    /** 拼接 base_path + path（去重复斜杠）。 */
+    /**
+     * 解析为相对登录根的路径（去首尾斜杠）。
+     * <p>约定：服务器已通过 chroot / local_root 把用户锁定到 base_path，
+     * 故 base_path 仅作前端展示，不参与路径拼接；客户端用相对路径访问登录根下的子项。
+     */
     public static String resolve(Map<String, Object> m, String path) {
-        String base = s(m, "base_path");
         String p = path == null ? "" : path;
-        if (base.isEmpty()) return p.startsWith("/") ? p : "/" + p;
-        if (p.isEmpty()) return base;
-        return base.replaceAll("/+$", "") + "/" + p.replaceAll("^/+", "");
+        return p.replaceAll("^/+", "").replaceAll("/+$", "");
     }
 }

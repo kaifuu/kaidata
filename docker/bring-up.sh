@@ -47,6 +47,24 @@ echo "    StarRocks 就绪（${i} 次探测）。"
 echo "==> [4/4] 执行 doris-ddl.sql（建数仓分层库）"
 docker exec -i pharma-starrocks mysql -h 127.0.0.1 -P 9030 -u root < init/doris-ddl.sql
 
+echo "==> 附加：Flink SQL Gateway 探测（8083，离线 FlinkSQL/FlinkDag 用；可选，失败不阻塞）"
+i=0
+until docker exec pharma-flink-sql-gateway curl -s http://localhost:8083/v3/info >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ $i -gt 20 ]; then echo "    SQL Gateway 未就绪（离线 FlinkSQL 作业暂不可用，其余作业不受影响）"; break; fi
+  sleep 3
+done
+if [ $i -le 20 ]; then echo "    SQL Gateway 就绪（${i} 次探测）"; fi
+
+echo "==> 附加：Apache Hop Server 探测（8082，离线 Kettle/Hop 用；可选，失败不阻塞）"
+i=0
+until docker exec pharma-hop curl -s http://localhost:8080/hop/status >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ $i -gt 20 ]; then echo "    Hop Server 未就绪（离线 Kettle/Hop 作业暂不可用，其余作业不受影响）"; break; fi
+  sleep 3
+done
+if [ $i -le 20 ]; then echo "    Hop Server 就绪（${i} 次探测）"; fi
+
 cat <<'EOF'
 
 ================ bring-up 完成 ================

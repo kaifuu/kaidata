@@ -36,19 +36,23 @@ export interface TenantRow { id: number; code: string; name: string; status: str
 export interface OrgRow { id: number; tenant_id: number; parent_id: number; code: string; name: string; sort: number; create_time?: string; tenant_name?: string; user_count?: number; children?: OrgRow[] }
 export interface LogRow { id: number; username: string; uri: string; method: string; params: string; result: string; ip: string; ts: string }
 
+/** 统一分页结果（与后端 PageResult 对齐，snake_case 不影响这些单词字段） */
+export interface PageResult<T> { records: T[]; total: number; page: number; size: number; pages: number }
+
 // ===== 数据接入 =====
-export interface DataSourceType { code: string; driverAvailable: boolean; jarHint?: string }
-export interface DataSourceRow { id: number; name: string; type: string; host: string; port: number; db_name: string; username: string; props?: string; status: string; tenant_id?: number; create_time?: string; update_time?: string }
-export interface FilestoreRow { id: number; name: string; type: string; host: string; port: number; username: string; base_path: string; props?: string; status: string; create_time?: string }
+export interface DataSourceType { code: string; driverAvailable: boolean; jarHint?: string; internal?: boolean }
+export interface DataSourceRow { id: number; name: string; type: string; host: string; port: number; db_name: string; username: string; props?: string; status: string; tenant_id?: number; create_time?: string; update_time?: string; internal?: boolean }
+export interface DatasourceUsage { inUse: boolean; modules: string[] }
+export interface FilestoreRow { id: number; name: string; type: string; host: string; port: number; username: string; password?: string; base_path: string; props?: string; status: string; create_time?: string }
 export interface IngestedFileRow { id: number; store_id: number; path: string; name: string; size: number; file_type: string; target_table: string; rows_written: number; ingested: boolean; create_time: string }
-export interface OfflineJobRow { id: number; name: string; source_ds_id: number; source_table: string; target_db: string; target_table: string; strategy: string; inc_column?: string; biz_key?: string; last_value?: string; column_map?: string; status: string; create_time?: string }
+export interface OfflineJobRow { id: number; name: string; source_ds_id: number; source_table: string; target_db: string; target_table: string; strategy: string; inc_column?: string; biz_key?: string; last_value?: string; column_map?: string; where_clause?: string; status: string; create_time?: string }
 export interface OfflineRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; rows_read: number; rows_written: number; error_msg?: string; triggered_by?: string }
 export interface StreamJobRow { id: number; name: string; type: string; source_ds_id?: number; source_query?: string; kafka_topic: string; target_db?: string; target_table?: string; columns_json?: string; schedule_cron?: string; status: string }
 export interface StreamRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; rows_in: number; rows_out: number; error_msg?: string }
 export interface RoutineLoadRow { Name: string; DbName: string; TableName: string; State: string; [k: string]: any }
 
 // ===== 数据探查 =====
-export interface ProfileJobRow { id: number; name: string; source_ds_id: number; target_db: string; first_create_table: boolean; alert_enabled: boolean; extra_columns?: string; cron?: string; status: string; create_time?:string }
+export interface ProfileJobRow { id: number; name: string; source_ds_id: number; target_db: string; first_create_table: boolean; alert_enabled: boolean; extra_columns?: string; cron?: string; status: string; create_by?: string; create_time?:string }
 export interface ProfileRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; tables_changed: number; tables_total: number; error_msg?: string; log_text?: string; triggered_by?: string }
 export interface ProfileSnapshotRow { id: number; job_id: number; table_name: string; version_n: number; run_id: number; created_time: string }
 export interface ProfileTableCfg { table_name: string; is_view: boolean; columns_config: string }
@@ -60,8 +64,9 @@ function save(path: string, body: any) {
 
 export const api = {
   // 认证
-  login: (username: string, password: string) =>
-    http.post<{ token: string; user: any; menus: MenuRow[] }>('/auth/login', { username, password }).then((r) => r.data),
+  login: (username: string, password: string, captchaId: string, captchaCode: string) =>
+    http.post<{ token: string; user: any; menus: MenuRow[] }>('/auth/login', { username, password, captchaId, captchaCode }).then((r) => r.data),
+  captcha: () => http.get<{ captchaId: string; img: string }>('/auth/captcha').then((r) => r.data),
   authMenus: () => http.get<MenuRow[]>('/auth/menus').then((r) => r.data),
   authInfo: () => http.get('/auth/info').then((r) => r.data),
   authLogs: (limit = 20) => http.get('/auth/logs', { params: { limit } }).then((r) => r.data),
@@ -70,22 +75,26 @@ export const api = {
     http.post('/auth/password', { oldPassword, newPassword }).then((r) => r.data),
 
   // ===== 系统管理：用户 [SYS_ADMIN] =====
-  sysUsers: () => http.get<UserRow[]>('/system/user').then((r) => r.data),
+  sysUsers: (params: { page?: number; size?: number; username?: string; name?: string; tenantId?: number; orgId?: number; status?: string } = {}) =>
+    http.get<PageResult<UserRow>>('/system/user', { params }).then((r) => r.data),
   sysSaveUser: (body: any) => save('/system/user', body),
   sysDeleteUser: (id: number) => http.delete('/system/user', { params: { id } }).then((r) => r.data),
 
   // ===== 组织 [SYS_ADMIN] =====
-  sysOrgs: (tenantId?: number) => http.get<OrgRow[]>('/system/org', { params: tenantId ? { tenantId } : {} }).then((r) => r.data),
+  sysOrgs: (params: { page?: number; size?: number; tenantId?: number; keyword?: string } = {}) =>
+    http.get<PageResult<OrgRow>>('/system/org', { params }).then((r) => r.data),
   sysSaveOrg: (body: any) => save('/system/org', body),
   sysDeleteOrg: (id: number) => http.delete('/system/org', { params: { id } }).then((r) => r.data),
 
   // ===== 租户 [SYS_ADMIN] =====
-  sysTenants: () => http.get<TenantRow[]>('/system/tenant').then((r) => r.data),
+  sysTenants: (params: { page?: number; size?: number; keyword?: string; status?: string } = {}) =>
+    http.get<PageResult<TenantRow>>('/system/tenant', { params }).then((r) => r.data),
   sysSaveTenant: (body: any) => save('/system/tenant', body),
   sysDeleteTenant: (id: number) => http.delete('/system/tenant', { params: { id } }).then((r) => r.data),
 
   // ===== 角色 / 授权 [SEC_ADMIN] =====
-  sysRoles: () => http.get<RoleFullRow[]>('/system/role').then((r) => r.data),
+  sysRoles: (params: { page?: number; size?: number; keyword?: string } = {}) =>
+    http.get<PageResult<RoleFullRow>>('/system/role', { params }).then((r) => r.data),
   sysSaveRole: (body: any) => save('/system/role', body),
   sysDeleteRole: (id: number) => http.delete('/system/role', { params: { id } }).then((r) => r.data),
   sysGrantMenus: (roleId: number, menuIds: number[]) => http.put('/system/role/menus', { roleId, menuIds }).then((r) => r.data),
@@ -98,13 +107,19 @@ export const api = {
   sysToggleMenu: (id: number) => http.post('/system/menu/toggle', null, { params: { id } }).then((r) => r.data),
 
   // ===== 日志 [AUDIT_ADMIN] =====
-  sysLogs: (params: { username?: string; result?: string; keyword?: string; limit?: number } = {}) =>
-    http.get<LogRow[]>('/system/log', { params }).then((r) => r.data),
+  sysLogs: (params: { page?: number; size?: number; username?: string; result?: string; keyword?: string } = {}) =>
+    http.get<PageResult<LogRow>>('/system/log', { params }).then((r) => r.data),
+
+  // ===== 下拉选项（全量，供表单选择 / 穿梭框；走分页接口取 records） =====
+  sysTenantOptions: () => http.get<PageResult<TenantRow>>('/system/tenant', { params: { size: 1000 } }).then((r) => r.data.records),
+  sysOrgOptions: (tenantId?: number) => http.get<PageResult<OrgRow>>('/system/org', { params: tenantId ? { tenantId, size: 1000 } : { size: 1000 } }).then((r) => r.data.records),
+  sysUserOptions: () => http.get<PageResult<UserRow>>('/system/user', { params: { size: 1000 } }).then((r) => r.data.records),
 
   // ===== 数据源管理 [SYS_ADMIN] =====
   daSourceTypes: () => http.get<DataSourceType[]>('/data-access/source/types').then((r) => r.data),
   daSources: () => http.get<DataSourceRow[]>('/data-access/source/list').then((r) => r.data),
   daSourceDetail: (id: number) => http.get<DataSourceRow>('/data-access/source/detail', { params: { id } }).then((r) => r.data),
+  daSourceUsages: (id: number) => http.get<DatasourceUsage>('/data-access/source/usages', { params: { id } }).then((r) => r.data),
   daSaveSource: (b: any) => save('/data-access/source', b),
   daDeleteSource: (id: number) => http.delete('/data-access/source', { params: { id } }).then((r) => r.data),
   daTestSource: (b: any) => http.post('/data-access/source/test', b).then((r) => r.data),
@@ -132,9 +147,13 @@ export const api = {
   daOfflineRun: (jobId: number) => http.post('/data-access/offline/run', null, { params: { jobId }, timeout: 120000 }).then((r) => r.data),
   daOfflineRuns: (jobId: number) => http.get<OfflineRunRow[]>('/data-access/offline/run/list', { params: { jobId } }).then((r) => r.data),
   daOfflineTargetPreview: (targetDb: string, targetTable: string) => http.get('/data-access/offline/target/preview', { params: { targetDb, targetTable } }).then((r) => r.data),
+  daOfflineCopy: (id: number) => http.post('/data-access/offline/job/copy', null, { params: { id } }).then((r) => r.data),
+  daOfflineOnline: (id: number) => http.post('/data-access/offline/job/online', null, { params: { id } }).then((r) => r.data),
+  daOfflineOffline: (id: number) => http.post('/data-access/offline/job/offline', null, { params: { id } }).then((r) => r.data),
+  daOfflineClearRuns: (jobId: number, rule: string) => http.delete('/data-access/offline/run', { params: { jobId, rule } }).then((r) => r.data),
 
   // ===== 实时数据接入 [SYS_ADMIN] =====
-  daStreamJobs: () => http.get<StreamJobRow[]>('/data-access/stream/job/list').then((r) => r.data),
+  daStreamJobs: (catalogId?: number) => http.get<StreamJobRow[]>('/data-access/stream/job/list', { params: catalogId ? { catalogId } : {} }).then((r) => r.data),
   daSaveStreamJob: (b: any) => save('/data-access/stream/job', b),
   daDeleteStreamJob: (id: number) => http.delete('/data-access/stream/job', { params: { id } }).then((r) => r.data),
   daStreamStart: (jobId: number) => http.post('/data-access/stream/start', null, { params: { jobId } }).then((r) => r.data),
@@ -158,17 +177,22 @@ export const api = {
   daProfileRecords: (jobId: number) => http.get<ProfileSnapshotRow[]>('/data-access/profile/record/list', { params: { jobId } }).then((r) => r.data),
   daProfileDiffs: (jobId: number, tableName: string) => http.get<any[]>('/data-access/profile/diff/list', { params: { jobId, tableName } }).then((r) => r.data),
   daProfileCompare: (jobId: number, tableName: string, v1: number, v2: number) => http.get<any>('/data-access/profile/diff/compare', { params: { jobId, tableName, v1, v2 } }).then((r) => r.data),
+  daProfileClearRuns: (jobId: number, rule: string) => http.delete('/data-access/profile/run', { params: { jobId, rule } }).then((r) => r.data),
+  daProfileTargetExistsBatch: (db: string, tables: string) => http.get<Record<string, boolean>>('/data-access/profile/target-exists-batch', { params: { db, tables } }).then((r) => r.data),
 
   // ===== 数据治理 [SYS_ADMIN] =====
   // 数据标准
-  govElements: () => http.get('/data-gov/std/element').then((r) => r.data),
+  govElements: (category?: string, status?: string, keyword?: string) => http.get('/data-gov/std/element', { params: { category, status, keyword } }).then((r) => r.data),
   govSaveElement: (b: any) => save('/data-gov/std/element', b),
   govDeleteElement: (id: number) => http.delete('/data-gov/std/element', { params: { id } }).then((r) => r.data),
-  govCodeSets: () => http.get('/data-gov/std/code-set').then((r) => r.data),
+  govElementRefs: (id: number) => http.get('/data-gov/std/element/refs', { params: { id } }).then((r) => r.data),
+  govCodeSets: (category?: string, keyword?: string) => http.get('/data-gov/std/code-set', { params: { category, keyword } }).then((r) => r.data),
   govSaveCodeSet: (b: any) => save('/data-gov/std/code-set', b),
   govDeleteCodeSet: (id: number) => http.delete('/data-gov/std/code-set', { params: { id } }).then((r) => r.data),
+  govCodeSetDetail: (id: number) => http.get('/data-gov/std/code-set/detail', { params: { id } }).then((r) => r.data),
+  govCodeSetRefs: (id: number) => http.get('/data-gov/std/code-set/refs', { params: { id } }).then((r) => r.data),
   govCodeItems: (setId: number) => http.get('/data-gov/std/code-item', { params: { setId } }).then((r) => r.data),
-  govSaveCodeItem: (b: any) => http.post('/data-gov/std/code-item', b).then((r) => r.data),
+  govSaveCodeItem: (b: any) => save('/data-gov/std/code-item', b),
   govDeleteCodeItem: (id: number) => http.delete('/data-gov/std/code-item', { params: { id } }).then((r) => r.data),
   // 数据模型
   govModels: (domain?: string) => http.get('/data-gov/model/list', { params: domain ? { domain } : {} }).then((r) => r.data),
@@ -178,7 +202,7 @@ export const api = {
   govSaveModelTable: (b: any) => http.post('/data-gov/model/table', b).then((r) => r.data),
   govDeleteModelTable: (id: number) => http.delete('/data-gov/model/table', { params: { id } }).then((r) => r.data),
   govModelFields: (tableId: number) => http.get('/data-gov/model/field', { params: { tableId } }).then((r) => r.data),
-  govSaveModelField: (b: any) => http.post('/data-gov/model/field', b).then((r) => r.data),
+  govSaveModelField: (b: any) => save('/data-gov/model/field', b),
   govDeleteModelField: (id: number) => http.delete('/data-gov/model/field', { params: { id } }).then((r) => r.data),
   // 数据仓库
   govLayers: () => http.get('/data-gov/wh/layer').then((r) => r.data),
@@ -203,6 +227,40 @@ export const api = {
   govMetaList: (params: { dsId?: number; kw?: string } = {}) => http.get('/data-gov/meta/list', { params }).then((r) => r.data),
   govMetaDetail: (id: number) => http.get('/data-gov/meta/detail', { params: { id } }).then((r) => r.data),
   govMetaSync: (dsId: number) => http.post('/data-gov/meta/sync', null, { params: { dsId }, timeout: 120000 }).then((r) => r.data),
+  // 元数据采集任务 + 采集日志
+  govMetaCollectJobs: () => http.get('/data-gov/meta/collect/job/list').then((r) => r.data),
+  govSaveMetaCollectJob: (b: any) => save('/data-gov/meta/collect/job', b),
+  govDeleteMetaCollectJob: (id: number) => http.delete('/data-gov/meta/collect/job', { params: { id } }).then((r) => r.data),
+  govMetaCollectRun: (jobId: number) => http.post('/data-gov/meta/collect/run', null, { params: { jobId }, timeout: 120000 }).then((r) => r.data),
+  govMetaCollectOnline: (jobId: number) => http.post('/data-gov/meta/collect/online', null, { params: { jobId } }).then((r) => r.data),
+  govMetaCollectOffline: (jobId: number) => http.post('/data-gov/meta/collect/offline', null, { params: { jobId } }).then((r) => r.data),
+  govMetaCollectRuns: (jobId: number) => http.get('/data-gov/meta/collect/run/list', { params: { jobId } }).then((r) => r.data),
+  govMetaCollectRunDetail: (id: number) => http.get('/data-gov/meta/collect/run/detail', { params: { id } }).then((r) => r.data),
+  govMetaCollectClearRuns: (jobId: number, rule: string) => http.delete('/data-gov/meta/collect/run', { params: { jobId, rule } }).then((r) => r.data),
+  // 元数据左树 / 补录 / 填充度 / 版本 / 字段映射 / 全文检索
+  govMetaTree: (dsId?: number) => http.get('/data-gov/meta/tree', { params: dsId ? { dsId } : {} }).then((r) => r.data),
+  govMetaSave: (b: any) => http.post('/data-gov/meta/save', b).then((r) => r.data),
+  govMetaFill: (metaId: number) => http.get('/data-gov/meta/fill', { params: { metaId } }).then((r) => r.data),
+  govMetaVersionList: (metaId: number) => http.get('/data-gov/meta/version/list', { params: { metaId } }).then((r) => r.data),
+  govMetaVersionCompare: (metaId: number, v1: number, v2: number) => http.get('/data-gov/meta/version/compare', { params: { metaId, v1, v2 } }).then((r) => r.data),
+  govMetaVersionApply: (metaId: number, versionN: number) => http.post('/data-gov/meta/version/apply', null, { params: { metaId, versionN } }).then((r) => r.data),
+  govMetaVersionForce: (metaId: number) => http.post('/data-gov/meta/version/force', null, { params: { metaId }, timeout: 60000 }).then((r) => r.data),
+  govMetaFieldmap: (metaId: number) => http.get('/data-gov/meta/fieldmap', { params: { metaId } }).then((r) => r.data),
+  govMetaSaveFieldmap: (b: any) => http.post('/data-gov/meta/fieldmap', b).then((r) => r.data),
+  govMetaDeleteFieldmap: (id: number) => http.delete('/data-gov/meta/fieldmap', { params: { id } }).then((r) => r.data),
+  govMetaSearch: (kw: string) => http.get('/data-gov/meta/search', { params: { kw } }).then((r) => r.data),
+  // 血缘 / 影响 / 全链
+  govMetaLineage: (dsId: number, schema: string, table: string) => http.get('/data-gov/meta/lineage', { params: { dsId, schema, table } }).then((r) => r.data),
+  govMetaImpact: (dsId: number, schema: string, table: string) => http.get('/data-gov/meta/impact', { params: { dsId, schema, table } }).then((r) => r.data),
+  govMetaFulllink: (dsId: number, expandFields: boolean) => http.get('/data-gov/meta/fulllink', { params: { dsId, expandFields } }).then((r) => r.data),
+  // 接口元数据 / 文件元数据补录
+  govMetaApiList: (kw?: string) => http.get('/data-gov/meta/api/list', { params: kw ? { kw } : {} }).then((r) => r.data),
+  govMetaApiDetail: (serviceId: number) => http.get('/data-gov/meta/api/detail', { params: { serviceId } }).then((r) => r.data),
+  govMetaApiSave: (b: any) => http.post('/data-gov/meta/api/save', b).then((r) => r.data),
+  govMetaFileList: (params: { storeId?: number; kw?: string } = {}) => http.get('/data-gov/meta/file/list', { params }).then((r) => r.data),
+  govMetaFileDetail: (id: number) => http.get('/data-gov/meta/file/detail', { params: { id } }).then((r) => r.data),
+  govMetaFileSave: (b: any) => http.post('/data-gov/meta/file/save', b).then((r) => r.data),
+  govMetaFileDelete: (id: number) => http.delete('/data-gov/meta/file', { params: { id } }).then((r) => r.data),
   // 数据标签
   govTags: (category?: string) => http.get('/data-gov/tag/list', { params: category ? { category } : {} }).then((r) => r.data),
   govSaveTag: (b: any) => save('/data-gov/tag', b),
@@ -244,6 +302,26 @@ export const api = {
   devWorkflowRuns: (workflowId: number) => http.get('/data-dev/workflow/run-list', { params: { workflowId } }).then((r) => r.data),
   devOnlineWorkflow: (id: number) => http.post('/data-dev/workflow/online', null, { params: { id } }).then((r) => r.data),
   devOfflineWorkflow: (id: number) => http.post('/data-dev/workflow/offline', null, { params: { id } }).then((r) => r.data),
+  // 数据开发重构：分类树 / 离线开发 / 任务日志
+  devCatalogTree: (moduleType: string) => http.get('/data-dev/catalog/tree', { params: { moduleType } }).then((r) => r.data),
+  devSaveCatalog: (b: any) => save('/data-dev/catalog', b),
+  devDeleteCatalog: (id: number) => http.delete('/data-dev/catalog', { params: { id } }).then((r) => r.data),
+  devOfflineTasks: (catalogId?: number, kw?: string, jobType?: string) => http.get('/data-dev/offline/task/list', { params: { catalogId, kw, jobType } }).then((r) => r.data),
+  devOfflineTaskDetail: (id: number) => http.get('/data-dev/offline/task/detail', { params: { id } }).then((r) => r.data),
+  devSaveOfflineTask: (b: any) => save('/data-dev/offline/task', b),
+  devDeleteOfflineTask: (id: number) => http.delete('/data-dev/offline/task', { params: { id } }).then((r) => r.data),
+  devRunOffline: (id: number) => http.post('/data-dev/offline/run', null, { params: { id }, timeout: 120000 }).then((r) => r.data),
+  devOfflineOnline: (id: number) => http.post('/data-dev/offline/online', null, { params: { id } }).then((r) => r.data),
+  devOfflineOffline: (id: number) => http.post('/data-dev/offline/offline', null, { params: { id } }).then((r) => r.data),
+  devOfflineRuns: (taskId?: number) => http.get('/data-dev/offline/run/list', { params: taskId ? { taskId } : {} }).then((r) => r.data),
+  devOfflineRunDetail: (id: number) => http.get('/data-dev/offline/run/detail', { params: { id } }).then((r) => r.data),
+  devOfflineClearRuns: (taskId: number, rule: string) => http.delete('/data-dev/offline/run', { params: { taskId, rule } }).then((r) => r.data),
+  devOfflineJarUpload: (file: File) => { const fd = new FormData(); fd.append('file', file); return http.post('/data-dev/offline/jar/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then((r) => r.data) },
+  devOfflineJarList: () => http.get('/data-dev/offline/jar/list').then((r) => r.data),
+  devTaskLogs: (params: { logType?: string; status?: string; kw?: string; start?: string; end?: string } = {}) => http.get('/data-dev/tasklog/list', { params }).then((r) => r.data),
+  devTaskLogDetail: (logType: string, id: number) => http.get('/data-dev/tasklog/detail', { params: { logType, id } }).then((r) => r.data),
+  devTaskLogDelete: (logType: string, id: number) => http.delete('/data-dev/tasklog/run', { params: { logType, id } }).then((r) => r.data),
+  devTaskLogClear: (logType?: string, rule: string = 'all') => http.delete('/data-dev/tasklog/clear', { params: { logType, rule } }).then((r) => r.data),
 
   // ===== 数据资产 [SYS_ADMIN] =====
   assetCatalogTree: () => http.get('/asset/catalog/tree').then((r) => r.data),

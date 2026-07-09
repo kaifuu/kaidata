@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.SysAuditLogMapper">
+
+    <select id="selectLogPage" resultType="com.pharma.service.system.entity.SysAuditLog">
+        SELECT id, username, uri, method, params, result, ip, ts, action
+        FROM meta.sys_audit_log
+        <where>
+            <if test="q.username != null and q.username != ''"> AND username = #{q.username} </if>
+            <if test="q.result != null and q.result != ''"> AND result = #{q.result} </if>
+            <if test="q.keyword != null and q.keyword != ''">
+                AND (uri LIKE CONCAT('%', #{q.keyword}, '%') OR params LIKE CONCAT('%', #{q.keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY ts DESC
+    </select>
+</mapper>

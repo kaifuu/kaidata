@@ -39,7 +39,7 @@
       </div>
       <div v-if="!currentStore" class="muted" style="padding:20px 0">请选择一个存储源点击「浏览」</div>
       <template v-else>
-        <div class="breadcrumb">路径: <el-link type="primary" @click="cd('')">root</el-link>
+        <div class="breadcrumb">路径: <el-link type="primary" @click="cd('')">{{ currentStore?.base_path || '/' }}</el-link>
           <template v-for="(seg, i) in pathSegs" :key="i"> / <el-link type="primary" @click="cd(pathUpto(i))">{{ seg }}</el-link></template>
         </div>
         <el-table :data="files" size="small" border v-loading="browsing" @row-dblclick="onDblClick">
@@ -74,7 +74,7 @@
         <el-form-item label="主机"><el-input v-model="storeForm.host" /></el-form-item>
         <el-form-item label="端口"><el-input-number v-model="storeForm.port" :min="0" :max="65535" controls-position="right" style="width:100%" /></el-form-item>
         <el-form-item label="账号"><el-input v-model="storeForm.username" /></el-form-item>
-        <el-form-item label="密码"><el-input v-model="storeForm.password" type="password" show-password :placeholder="storeForm.id ? '留空不修改' : ''" /></el-form-item>
+        <el-form-item label="密码"><el-input v-model="storeForm.password" type="password" show-password :placeholder="storeForm.id ? '清空则保持原密码不变' : '请输入密码'" /></el-form-item>
         <el-form-item label="根路径"><el-input v-model="storeForm.base_path" placeholder="/data 或留空" /></el-form-item>
         <el-form-item label="状态"><el-radio-group v-model="storeForm.status"><el-radio value="NORMAL">正常</el-radio><el-radio value="DISABLED">停用</el-radio></el-radio-group></el-form-item>
       </el-form>
@@ -144,7 +144,7 @@ async function load() {
 
 function openStore(row?: FilestoreRow) {
   Object.assign(storeForm, { id: null, name: '', type: 'ftp', host: '', port: 21, username: '', password: '', base_path: '', status: 'NORMAL' })
-  if (row) Object.assign(storeForm, { id: row.id, name: row.name, type: row.type, host: row.host, port: row.port, username: row.username, base_path: row.base_path, status: row.status, password: '' })
+  if (row) Object.assign(storeForm, { id: row.id, name: row.name, type: row.type, host: row.host, port: row.port, username: row.username, base_path: row.base_path, status: row.status, password: row.password ?? '' })
   storeDlg.value = true
 }
 async function saveStore() {

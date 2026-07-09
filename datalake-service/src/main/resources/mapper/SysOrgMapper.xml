@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.pharma.service.system.mapper.SysOrgMapper">
+
+    <select id="selectOrgPage" resultType="com.pharma.service.system.entity.SysOrg">
+        SELECT o.id, o.tenant_id, o.parent_id, o.code, o.name, o.sort, o.create_time,
+               t.name AS tenant_name
+        FROM meta.sys_org o
+        LEFT JOIN meta.sys_tenant t ON t.id = o.tenant_id
+        <where>
+            <if test="q.tenantId != null"> AND o.tenant_id = #{q.tenantId} </if>
+            <if test="q.keyword != null and q.keyword != ''">
+                AND (o.name LIKE CONCAT('%', #{q.keyword}, '%') OR o.code LIKE CONCAT('%', #{q.keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY o.tenant_id, o.sort, o.id
+    </select>
+
+    <!-- 人数聚合：仅对当前页组织 id 做（IN），返回 {orgId, cnt} -->
+    <select id="countUsersByOrgIds" resultType="java.util.Map">
+        SELECT org_id AS orgId, COUNT(*) AS cnt
+        FROM meta.sys_user
+        WHERE org_id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        GROUP BY org_id
+    </select>
+</mapper>

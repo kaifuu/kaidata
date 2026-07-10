@@ -3,10 +3,7 @@ package com.pharma.service.access.develop.job;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,7 +12,8 @@ import java.util.Map;
 /**
  * Flink 图形化作业（job_type=flink_dag）：把 DAG（source/operator/sink）翻译成 FlinkSQL，交 FlinkSqlExecutor 执行。
  * <p>拓扑排序后：source/sink 生成 CREATE TABLE...WITH(connector)；operator 生成 CREATE VIEW
- * （filter=WHERE / aggregate=GROUP BY / join / udf）；sink 末尾生成 INSERT INTO...SELECT。
+ * （filter=WHERE / aggregate=GROUP BY / select / sort=ORDER BY / value_map=CASE / calc=算术列 / dedup=DISTINCT / udf / join）；
+ * sink 末尾生成 INSERT INTO...SELECT。
  */
 @Component
 public class FlinkDagExecutor extends AbstractHttpExecutor {
@@ -33,7 +31,7 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
         List<Map<String, Object>> edges = (List<Map<String, Object>>) dag.getOrDefault("edges", Collections.emptyList());
         if (nodes.isEmpty()) throw new RuntimeException("DAG 没有节点");
 
-        List<Map<String, Object>> order = topoSort(nodes, edges);
+        List<Map<String, Object>> order = DagGraph.topoSort(nodes, edges);
         Map<String, String> alias = new HashMap<>();   // nodeId → flink 表/视图名
         StringBuilder sql = new StringBuilder();
 
@@ -51,7 +49,7 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
             if ("source".equals(type) || "sink".equals(type)) {
                 sql.append(buildCreateTable(name, kind, cfg)).append(";\n");
             } else if ("operator".equals(type)) {
-                String upstream = findUpstream(edges, id, alias);
+                String upstream = DagGraph.findUpstream(edges, id, alias);
                 sql.append(buildOperatorView(name, kind, cfg, upstream)).append(";\n");
             }
         }
@@ -59,7 +57,7 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
         for (Map<String, Object> node : nodes) {
             if (!"sink".equals(str(node.get("type")))) continue;
             String id = str(node.get("id"));
-            String upstream = findUpstream(edges, id, alias);
+            String upstream = DagGraph.findUpstream(edges, id, alias);
             if (upstream == null) continue;
             sql.append("INSERT INTO ").append(alias.get(id)).append(" SELECT * FROM ").append(upstream).append(";\n");
         }
@@ -71,7 +69,7 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
     }
 
     private String buildCreateTable(String name, String kind, Map<String, Object> cfg) {
-        String connector = "kafka".equalsIgnoreCase(kind) ? "kafka" : "jdbc";
+        String connector = "kafka".equalsIgnoreCase(kind) || "kafka_input".equalsIgnoreCase(kind) || "kafka_output".equalsIgnoreCase(kind) ? "kafka" : "jdbc";
         String tableName = str(cfg.get("tableName"));
         String topic = str(cfg.get("topic"));
         StringBuilder sb = new StringBuilder("CREATE TABLE ").append(name).append(" (");
@@ -92,52 +90,81 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
     private String buildOperatorView(String name, String kind, Map<String, Object> cfg, String upstream) {
         if (upstream == null) upstream = "flink_unknown";
         String k = kind == null ? "" : kind.toLowerCase();
-        if ("filter".equals(k)) {
-            return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE (" + str(cfg.get("expression")) + ")";
-        } else if ("aggregate".equals(k)) {
-            String groupKey = str(cfg.getOrDefault("groupKey", "*"));
-            String agg = str(cfg.getOrDefault("agg", "COUNT(*)"));
-            return "CREATE VIEW " + name + " AS SELECT " + groupKey + ", " + agg + " FROM " + upstream + " GROUP BY " + groupKey;
-        } else if ("udf".equals(k)) {
-            String udf = str(cfg.getOrDefault("udf", "identity"));
-            String col = str(cfg.getOrDefault("col", "*"));
-            return "CREATE VIEW " + name + " AS SELECT " + udf + "(" + col + ") FROM " + upstream;
-        }
-        // join 或未知：直通（完整双上游 JOIN 需扩展）
-        return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream;
-    }
-
-    private String findUpstream(List<Map<String, Object>> edges, String nodeId, Map<String, String> alias) {
-        for (Map<String, Object> e : edges) {
-            if (nodeId.equals(str(e.get("target")))) return alias.get(str(e.get("source")));
-        }
-        return null;
-    }
-
-    /** Kahn 拓扑排序 */
-    private List<Map<String, Object>> topoSort(List<Map<String, Object>> nodes, List<Map<String, Object>> edges) {
-        Map<String, Integer> inDeg = new HashMap<>();
-        Map<String, List<String>> adj = new HashMap<>();
-        for (Map<String, Object> n : nodes) inDeg.putIfAbsent(str(n.get("id")), 0);
-        for (Map<String, Object> e : edges) {
-            String s = str(e.get("source")), t = str(e.get("target"));
-            adj.computeIfAbsent(s, k -> new ArrayList<>()).add(t);
-            inDeg.merge(t, 1, (a, b) -> a + b);
-        }
-        Deque<String> q = new ArrayDeque<>();
-        for (Map.Entry<String, Integer> en : inDeg.entrySet()) if (en.getValue() == 0) q.add(en.getKey());
-        List<String> order = new ArrayList<>();
-        while (!q.isEmpty()) {
-            String cur = q.poll();
-            order.add(cur);
-            for (String nb : adj.getOrDefault(cur, Collections.emptyList())) {
-                if (inDeg.merge(nb, -1, (a, b) -> a + b) == 0) q.add(nb);
+        switch (k) {
+            case "filter":
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE (" + str(cfg.get("expression")) + ")";
+            case "aggregate": {
+                String groupKey = str(cfg.getOrDefault("groupKey", str(cfg.getOrDefault("groupKeys", ""))));
+                String agg = str(cfg.getOrDefault("agg", str(cfg.getOrDefault("aggExpr", "COUNT(*)"))));
+                if (groupKey.isEmpty()) groupKey = "*";
+                if (agg.isEmpty()) agg = "COUNT(*)";
+                return "CREATE VIEW " + name + " AS SELECT " + groupKey + ", " + agg + " FROM " + upstream
+                        + ("*".equals(groupKey) ? "" : " GROUP BY " + groupKey);
             }
+            case "select": {
+                List<String> fs = fieldList(cfg.get("fields"));
+                String cols = fs.isEmpty() ? "*" : String.join(", ", fs);
+                return "CREATE VIEW " + name + " AS SELECT " + cols + " FROM " + upstream;
+            }
+            case "sort": {
+                String orderBy = str(cfg.get("orderBy"));
+                int limit = intOr(cfg.get("limit"), 0);
+                String sql = "CREATE VIEW " + name + " AS SELECT * FROM " + upstream;
+                if (!orderBy.isEmpty()) sql += " ORDER BY " + orderBy;
+                if (limit > 0) sql += " LIMIT " + limit;
+                return sql;
+            }
+            case "value_map": {
+                String col = str(cfg.get("col"));
+                String caseExpr = buildCase(col, str(cfg.get("mapping")));
+                String alias = col.isEmpty() ? "mapped" : col + "_mapped";
+                return "CREATE VIEW " + name + " AS SELECT *, " + caseExpr + " AS " + alias + " FROM " + upstream;
+            }
+            case "calc": {
+                String exprs = str(cfg.get("exprs"));
+                if (exprs.isEmpty()) exprs = str(cfg.get("expression"));
+                return "CREATE VIEW " + name + " AS SELECT *" + (exprs.isEmpty() ? "" : ", " + exprs) + " FROM " + upstream;
+            }
+            case "dedup": {
+                List<String> fs = fieldList(cfg.get("fields"));
+                String cols = fs.isEmpty() ? "*" : String.join(", ", fs);
+                return "CREATE VIEW " + name + " AS SELECT DISTINCT " + cols + " FROM " + upstream;
+            }
+            case "udf": {
+                String udf = str(cfg.getOrDefault("udf", "identity"));
+                String col = str(cfg.getOrDefault("col", "*"));
+                return "CREATE VIEW " + name + " AS SELECT " + udf + "(" + col + ") FROM " + upstream;
+            }
+            default:
+                // join 或未知算子：未实现翻译（规划中算子运行时报错，避免静默直通误导）
+                throw new RuntimeException("算子[" + kind + "]尚未实现执行翻译");
         }
-        Map<String, Map<String, Object>> byId = new HashMap<>();
-        for (Map<String, Object> n : nodes) byId.put(str(n.get("id")), n);
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (String id : order) { Map<String, Object> n = byId.get(id); if (n != null) result.add(n); }
-        return result;
+    }
+
+    /** 由 mapping JSON（{"A":"X"}）生成 CASE WHEN ... THEN ... ELSE col END 表达式。 */
+    @SuppressWarnings("unchecked")
+    private String buildCase(String col, String mappingJson) {
+        StringBuilder sb = new StringBuilder("CASE");
+        String elseExpr = col.isEmpty() ? "NULL" : col;
+        if (!mappingJson.isEmpty()) {
+            try {
+                Map<String, Object> m = json.readValue(mappingJson, Map.class);
+                for (Map.Entry<String, Object> en : m.entrySet()) {
+                    sb.append(" WHEN ").append(col.isEmpty() ? "1" : quote(col)).append("=").append(quote(en.getKey()))
+                            .append(" THEN ").append(quote(String.valueOf(en.getValue())));
+                }
+            } catch (Exception ignored) { /* mapping 非法则退化为 ELSE */ }
+        }
+        sb.append(" ELSE ").append(elseExpr).append(" END");
+        return sb.toString();
+    }
+
+    private static String quote(String s) { return s == null || s.isEmpty() ? "''" : "'" + s.replace("'", "''") + "'"; }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> fieldList(Object o) {
+        if (o instanceof List) return (List<String>) o;
+        if (o instanceof String s && !s.isBlank()) return List.of(s.split("\\s*,\\s*"));
+        return Collections.emptyList();
     }
 }

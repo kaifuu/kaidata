@@ -102,7 +102,10 @@ services:
     environment:
       HOP_USER: cluster
       HOP_PASS: cluster
-    mem_limit: 1g
+    volumes:
+      - ./hop-jdbc/mysql-connector-j-8.3.0.jar:/opt/hop/lib/jdbc/mysql-connector-j-8.3.0.jar:ro
+      - ./hop-output:/opt/hop/output
+    mem_limit: 2g
 
   # ---------- 实时数仓 StarRocks（FE+BE allin1，MySQL 协议 9030）----------
   starrocks:

@@ -3,6 +3,7 @@ import { auth } from '@/auth'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/login/Index.vue'), meta: { public: true, title: '登录' } },
+  { path: '/dag-studio', name: 'DagStudio', component: () => import('@/views/data-dev/DagStudio.vue'), meta: { title: '图形化作业开发' } },
   {
     path: '/',
     component: () => import('@/layout/index.vue'),

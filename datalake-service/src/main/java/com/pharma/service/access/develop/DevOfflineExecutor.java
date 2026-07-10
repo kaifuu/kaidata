@@ -55,6 +55,7 @@ public class DevOfflineExecutor {
         } catch (Exception e) {
             status = "FAIL";
             errMsg = rootMsg(e);
+            if (errMsg.length() > 2000) errMsg = errMsg.substring(0, 2000);  // 截断，避免超 error_msg varchar(2048)
             log.append("失败: ").append(errMsg).append("\n");
         }
         log.append("耗时 ").append(System.currentTimeMillis() - start).append("ms");

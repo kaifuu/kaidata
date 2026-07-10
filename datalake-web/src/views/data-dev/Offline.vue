@@ -32,9 +32,10 @@
           <el-table-column label="状态" width="95">
             <template #default="{ row }"><el-switch :model-value="row.status === 'ONLINE'" @change="(v) => toggle(row, v)" inline-prompt active-text="上线" inactive-text="下线" /></template>
           </el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
+          <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
-              <el-button link size="small" type="primary" @click="openTaskDlg(row)">编辑</el-button>
+              <el-button link size="small" type="primary" @click="openTaskDlg(row)">{{ isDag(row.job_type) ? '设置' : '编辑' }}</el-button>
+              <el-button v-if="isDag(row.job_type)" link size="small" type="warning" @click="goStudio(row)">编排</el-button>
               <el-button link size="small" type="success" :loading="running === row.id" @click="runOnce(row)">执行</el-button>
               <el-button link size="small" @click="openLog(row)">日志</el-button>
               <el-button link size="small" type="danger" @click="delTask(row)">删除</el-button>
@@ -63,6 +64,7 @@
           <el-radio-group v-model="taskForm.job_type">
             <el-radio-button v-for="(lbl, k) in JOB_TYPE_LABEL" :key="k" :label="k">{{ lbl }}</el-radio-button>
           </el-radio-group>
+          <div class="hint" style="margin-top:4px">{{ JOB_TYPE_HINT[taskForm.job_type] }}</div>
         </el-form-item>
         <el-form-item label="周期(秒)"><el-input v-model="taskForm.cron" placeholder="如 300；留空=仅手动" /></el-form-item>
 
@@ -92,12 +94,18 @@
           <el-form-item label="并行度"><el-input-number v-model="taskForm.config.parallelism" :min="1" :max="64" /></el-form-item>
         </template>
 
-        <!-- Flink图形化 / Kettle-Hop：DAG 编辑器 -->
+        <!-- Flink图形化 / Kettle-Hop：元信息 + 跳转全屏编辑器 -->
         <template v-if="taskForm.job_type === 'flink_dag' || taskForm.job_type === 'kettle_hop'">
-          <el-form-item v-if="taskForm.job_type === 'kettle_hop'" label="Hop Workflow"><el-input v-model="taskForm.config.workflowName" placeholder="Hop Server 上的 workflow 名" /></el-form-item>
+          <el-form-item v-if="taskForm.job_type === 'kettle_hop'" label="执行数据源">
+            <el-select v-model="taskForm.datasource_id" filterable style="width:100%">
+              <el-option v-for="d in dsList" :key="d.id" :label="`${d.name}(${d.type})`" :value="d.id" />
+            </el-select>
+            <div class="hint">DAG 将翻译为 SQL 在此数据源（通常 StarRocks）执行</div>
+          </el-form-item>
           <el-form-item v-if="taskForm.job_type === 'flink_dag'" label="并行度"><el-input-number v-model="taskForm.config.parallelism" :min="1" :max="64" /></el-form-item>
           <el-form-item label="作业图">
-            <DagEditor v-model="taskForm.dagJson" :job-type="taskForm.job_type" />
+            <el-button type="primary" @click="openStudio">{{ taskForm.id ? '打开图形化编辑器' : '保存并打开编辑器' }}</el-button>
+            <span class="hint" style="margin-left:8px">{{ taskForm.dagJson ? '已编排，可继续编辑' : '尚未编排' }}</span>
           </el-form-item>
         </template>
       </el-form>
@@ -122,12 +130,21 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errMsg } from '@/api'
-import DagEditor from './DagEditor.vue'
 
+const router = useRouter()
 const MODULE = 'OFFLINE'
 const JOB_TYPE_LABEL: any = { jdbc_sql: 'JdbcSQL', flink_sql: 'FlinkSQL', flink_jar: 'FlinkJar', flink_dag: 'Flink图形化', kettle_hop: 'Kettle/Hop' }
+const JOB_TYPE_HINT: any = {
+  jdbc_sql: '在指定数据源上执行 SQL，适合批量 ETL',
+  flink_sql: '提交 FlinkSQL 到 Flink SQL Gateway，适合流式计算',
+  flink_jar: '上传并提交 Flink Jar 作业，适合复杂流处理',
+  flink_dag: '图形化编排 DAG，自动翻译 FlinkSQL，可视化流作业',
+  kettle_hop: '图形化编排 DAG，自动翻译 SQL，在数据源上执行'
+}
+function isDag(t: string) { return t === 'flink_dag' || t === 'kettle_hop' }
 function tagType(t: string): any { return ({ jdbc_sql: '', flink_sql: 'success', flink_jar: 'warning', flink_dag: 'info', kettle_hop: 'danger' } as any)[t] || '' }
 
 const treeData = ref<any[]>([])
@@ -183,6 +200,25 @@ async function saveTask() {
   const f = taskForm.value
   const payload: any = { id: f.id, name: f.name, catalog_id: f.catalog_id, datasource_id: f.datasource_id, job_type: f.job_type || 'jdbc_sql', sql_content: f.sql_content || '', dag_json: f.dagJson || '', config_json: JSON.stringify(f.config || {}), cron: f.cron || '', status: f.status || 'OFFLINE' }
   try { await api.devSaveOfflineTask(payload); ElMessage.success('已保存'); taskDlg.value = false; await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+
+// 图形化作业：保存元信息（新建拿 id）→ 跳转全屏编辑器
+async function openStudio() {
+  if (!taskForm.value.name) return ElMessage.warning('先填任务名')
+  const f = taskForm.value
+  const payload: any = { id: f.id, name: f.name, catalog_id: f.catalog_id, datasource_id: f.datasource_id, job_type: f.job_type, sql_content: f.sql_content || '', dag_json: f.dagJson || '', config_json: JSON.stringify(f.config || {}), cron: f.cron || '', status: f.status || 'OFFLINE' }
+  try {
+    const r: any = await api.devSaveOfflineTask(payload)
+    if (!f.id && r && r.id) taskForm.value.id = r.id       // 新建 → 后端返回 id
+    ElMessage.success('元信息已保存，跳转编辑器')
+    taskDlg.value = false
+    router.push(`/dag-studio?taskId=${taskForm.value.id}&jobType=${f.job_type}`)
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+
+// 已有 DAG 任务：从列表直接进全屏编辑器（不经 drawer）
+function goStudio(row: any) {
+  router.push(`/dag-studio?taskId=${row.id}&jobType=${row.job_type}`)
 }
 async function delTask(row: any) { try { await ElMessageBox.confirm(`删除任务 ${row.name}?`) } catch { return } try { await api.devDeleteOfflineTask(row.id); ElMessage.success('已删除'); await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function toggle(row: any, v: boolean) { try { v ? await api.devOfflineOnline(row.id) : await api.devOfflineOffline(row.id); ElMessage.success(v ? '已上线' : '已下线'); await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)); await loadTasks() } }

@@ -305,6 +305,24 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.dev_offline_task ADD COLUMN config_json VARCHAR(8192)");
         exec("ALTER TABLE meta.dev_offline_run ADD COLUMN engine_job_id VARCHAR(128)");
         if (!m13) kvSet("schema_ver", "13");
+
+        // ============ 数据服务升级：绑定已审核资产 + 描述/负责人/验收（schema_ver=14，增量） ============
+        boolean m14 = "14".equals(kv("schema_ver"));
+        exec("ALTER TABLE meta.data_service ADD COLUMN asset_id BIGINT");
+        exec("ALTER TABLE meta.data_service ADD COLUMN description VARCHAR(512)");
+        exec("ALTER TABLE meta.data_service ADD COLUMN owner VARCHAR(64)");
+        exec("ALTER TABLE meta.data_service ADD COLUMN verified BOOLEAN");
+        if (!m14) kvSet("schema_ver", "14");
+
+        // ============ 数据开放授权（基于已审核资产，schema_ver=15，增量） ============
+        boolean m15 = "15".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.data_open_grant (id BIGINT, name VARCHAR(128), asset_id BIGINT, open_type VARCHAR(16), app_key VARCHAR(64), app_secret VARCHAR(128), grantee VARCHAR(128), fields_json VARCHAR(4096), service_code VARCHAR(64), limit_count BIGINT, limit_qps INT, expire_time DATETIME, status VARCHAR(16), create_by VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m15) kvSet("schema_ver", "15");
+
+        // ============ 数据集订阅（消费方申请 + 审核，schema_ver=16，增量） ============
+        boolean m16 = "16".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.portal_subscribe (id BIGINT, username VARCHAR(64), asset_id BIGINT, meta_id BIGINT, table_name VARCHAR(255), purpose VARCHAR(1024), open_type VARCHAR(16), limit_count BIGINT, limit_qps INT, expire_time DATETIME, status VARCHAR(16), auditor VARCHAR(64), audit_comment VARCHAR(1024), audit_time DATETIME, grant_id BIGINT, app_key VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m16) kvSet("schema_ver", "16");
     }
 
     private void seedStd(String code, String name, int level, String desc) {
@@ -432,6 +450,8 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(55, 0, "数据集市", "/market", "Goods", "", "CATALOG", 13);
         menu(56, 55, "数据集", "/market/dataset", "Files", "market:dataset", "MENU", 1);
         menu(57, 55, "资源概览", "/market/overview", "DataAnalysis", "market:overview", "MENU", 2);
+        menu(63, 55, "我的订阅", "/market/my-subscribe", "ShoppingCart", "market:subscribe", "MENU", 3);
+        menu(64, 55, "订阅审核", "/market/subscribe-audit", "Checked", "market:subaudit", "MENU", 4);
 
         // 数据门户 → 数据总览（重命名，幂等 UPDATE）
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
@@ -474,7 +494,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         int[] dsvcMenus = {52, 53, 54};
         for (int m : dsvcMenus) grantMenu(1, m);
         // 数据集市菜单授予 SYS_ADMIN
-        int[] marketMenus = {55, 56, 57};
+        int[] marketMenus = {55, 56, 57, 63, 64};
         for (int m : marketMenus) grantMenu(1, m);
 
         // ---------- 用户（三员 + 超级演示号） ----------

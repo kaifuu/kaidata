@@ -63,6 +63,8 @@ const routes = [
       { path: 'dservice/stats', name: 'DsStats', component: () => import('@/views/dservice/Stats.vue'), meta: { title: '调用统计', icon: 'DataLine' } },
       // 数据集市
       { path: 'market/dataset', name: 'MarketDataset', component: () => import('@/views/market/Dataset.vue'), meta: { title: '数据集', icon: 'Files' } },
+      { path: 'market/my-subscribe', name: 'MarketMySubscribe', component: () => import('@/views/market/MySubscribe.vue'), meta: { title: '我的订阅', icon: 'ShoppingCart' } },
+      { path: 'market/subscribe-audit', name: 'MarketSubscribeAudit', component: () => import('@/views/market/SubscribeAudit.vue'), meta: { title: '订阅审核', icon: 'Checked' } },
       { path: 'market/overview', name: 'MarketOverview', component: () => import('@/views/market/Overview.vue'), meta: { title: '资源概览', icon: 'DataAnalysis' } }
     ]
   }

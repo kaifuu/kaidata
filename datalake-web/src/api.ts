@@ -382,9 +382,27 @@ export const api = {
   dsInvoke: (code: string, params: Record<string, any> = {}) => http.get(`/data-service/invoke/${code}`, { params }).then((r) => r.data),
   dsStats: () => http.get('/data-service/stats').then((r) => r.data),
   dsLogs: (serviceId?: number) => http.get('/data-service/log', { params: serviceId ? { serviceId } : {} }).then((r) => r.data),
+  dsVerify: (id: number) => http.post('/data-service/verify', null, { params: { id } }).then((r) => r.data),
+
+  // ===== 数据开放（基于已审核资产，appkey 授权 + 限流） =====
+  openGrants: () => http.get('/data-open/list').then((r) => r.data),
+  openGrantAssets: () => http.get('/data-open/assets').then((r) => r.data),
+  openSaveGrant: (b: any) => http.post('/data-open', b).then((r) => r.data),
+  openDeleteGrant: (id: number) => http.delete('/data-open', { params: { id } }).then((r) => r.data),
+  openEnable: (id: number) => http.post('/data-open/enable', null, { params: { id } }).then((r) => r.data),
+  openDisable: (id: number) => http.post('/data-open/disable', null, { params: { id } }).then((r) => r.data),
+  openRegenKey: (id: number) => http.post('/data-open/regen-key', null, { params: { id } }).then((r) => r.data),
 
   // ===== 数据集市（数据门户） =====
-  marketResources: (type?: string) => http.get('/market/resources', { params: type ? { type } : {} }).then((r) => r.data),
+  marketResources: (params: { type?: string; kw?: string; catalogId?: number; tagId?: number } = {}) => http.get('/market/resources', { params }).then((r) => r.data),
+  marketCatalogTree: () => http.get('/market/catalog-tree').then((r) => r.data),
+  marketTags: () => http.get('/market/tags').then((r) => r.data),
+  marketTableSchema: (assetId: number) => http.post('/market/table-schema', { assetId }).then((r) => r.data),
+  subApply: (b: any) => http.post('/market/subscribe/apply', b).then((r) => r.data),
+  subMine: () => http.get('/market/subscribe/mine').then((r) => r.data),
+  subAuditList: (status?: string) => http.get('/market/subscribe/audit-list', { params: status ? { status } : {} }).then((r) => r.data),
+  subApprove: (id: number, comment: string) => http.post('/market/subscribe/approve', { comment }, { params: { id } }).then((r) => r.data),
+  subReject: (id: number, comment: string) => http.post('/market/subscribe/reject', { comment }, { params: { id } }).then((r) => r.data),
   marketCart: () => http.get('/market/cart').then((r) => r.data),
   marketAddCart: (b: any) => http.post('/market/cart/add', b).then((r) => r.data),
   marketRemoveCart: (id: number) => http.delete('/market/cart/remove', { params: { id } }).then((r) => r.data),

@@ -21,11 +21,14 @@ public class DataServiceExecutor {
     public Map<String, Object> invoke(String code, Map<String, String> params, String caller, String ip) {
         Map<String, Object> svc;
         try {
-            svc = jdbc.queryForMap("SELECT id, code, sql_text, datasource_id, status FROM meta.data_service WHERE code=?", code);
+            svc = jdbc.queryForMap("SELECT s.id, s.code, s.sql_text, s.datasource_id, s.status, s.asset_id, a.status AS asset_status FROM meta.data_service s LEFT JOIN meta.asset a ON a.id=s.asset_id WHERE s.code=?", code);
         } catch (Exception e) {
             return err("服务不存在: " + code);
         }
         if (!"PUBLISHED".equals(str(svc.get("status")))) return err("服务未发布: " + code);
+        // 关联资产须仍为"通过"（资产被反审核/驳回后禁止调用；历史未绑资产的服务放行）
+        long assetId = lng(svc.get("asset_id"));
+        if (assetId > 0 && !"通过".equals(str(svc.get("asset_status")))) return err("关联资产未审核通过或已下架: " + code);
         String sql = str(svc.get("sql_text"));
         // {param} 替换：参数值白名单校验（防 SQL 注入）
         if (params != null) {

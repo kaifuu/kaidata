@@ -1,6 +1,7 @@
 package com.pharma.service.controller;
 
 import com.pharma.service.access.service.DataServiceExecutor;
+import com.pharma.service.security.AccessDeniedException;
 import com.pharma.service.security.Authz;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,26 +21,38 @@ public class DataServiceController {
     @Autowired private DataServiceExecutor executor;
 
     @GetMapping("/list")
-    public List<Map<String, Object>> list() {
+    public List<Map<String, Object>> list(@RequestParam(required = false) String status,
+                                          @RequestParam(required = false) String kw) {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, code, name, sql_text, datasource_id, method, params, path, auth, status, create_time FROM meta.data_service ORDER BY id");
+        StringBuilder sql = new StringBuilder("SELECT s.id, s.code, s.name, s.sql_text, s.datasource_id, s.method, s.params, " +
+                "s.path, s.auth, s.status, s.asset_id, s.description, s.owner, s.verified, s.create_time, " +
+                "a.name AS asset_name, a.status AS asset_status " +
+                "FROM meta.data_service s LEFT JOIN meta.asset a ON a.id=s.asset_id WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (status != null && !status.isEmpty()) { sql.append(" AND s.status=?"); args.add(status); }
+        if (kw != null && !kw.isEmpty()) { sql.append(" AND (s.code LIKE ? OR s.name LIKE ?)"); args.add("%" + kw + "%"); args.add("%" + kw + "%"); }
+        sql.append(" ORDER BY s.id");
+        return jdbc.queryForList(sql.toString(), args.toArray());
     }
     @PostMapping
     public Map<String, Object> create(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
-        jdbc.update("INSERT INTO meta.data_service(id, code, name, sql_text, datasource_id, method, params, path, auth, status, create_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.data_service(id, code, name, sql_text, datasource_id, method, params, path, auth, status, asset_id, description, owner, verified, create_time) " +
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("code")), str(b.get("name")), str(b.get("sql_text")), lng(b.get("datasource_id")),
                 str(b.getOrDefault("method", "GET")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")),
-                str(b.getOrDefault("status", "DRAFT")), new Timestamp(id));
+                str(b.getOrDefault("status", "DRAFT")), lng(b.get("asset_id")), str(b.get("description")), str(b.get("owner")),
+                bool(b.get("verified")), new Timestamp(id));
         return Map.of("success", true, "id", id);
     }
     @PutMapping
     public Map<String, Object> update(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
-        jdbc.update("UPDATE meta.data_service SET code=?, name=?, sql_text=?, datasource_id=?, method=?, params=?, path=?, auth=?, status=? WHERE id=?",
+        jdbc.update("UPDATE meta.data_service SET code=?, name=?, sql_text=?, datasource_id=?, method=?, params=?, path=?, auth=?, status=?, asset_id=?, description=?, owner=? WHERE id=?",
                 str(b.get("code")), str(b.get("name")), str(b.get("sql_text")), lng(b.get("datasource_id")),
-                str(b.get("method")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")), str(b.get("status")), lng(b.get("id")));
+                str(b.get("method")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")), str(b.get("status")),
+                lng(b.get("asset_id")), str(b.get("description")), str(b.get("owner")), lng(b.get("id")));
         return Map.of("success", true);
     }
     @DeleteMapping
@@ -50,9 +63,25 @@ public class DataServiceController {
         return Map.of("success", true);
     }
     @PostMapping("/publish")
-    public Map<String, Object> publish(@RequestParam long id) { Authz.require(Authz.SYS_ADMIN); jdbc.update("UPDATE meta.data_service SET status='PUBLISHED' WHERE id=?", id); return Map.of("success", true); }
+    public Map<String, Object> publish(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        Long assetId;
+        try { assetId = jdbc.queryForObject("SELECT asset_id FROM meta.data_service WHERE id=?", Long.class, id); }
+        catch (Exception e) { throw new AccessDeniedException("服务不存在"); }
+        if (assetId == null || assetId <= 0) throw new AccessDeniedException("未关联审核通过的资产，禁止发布");
+        String ast;
+        try { ast = jdbc.queryForObject("SELECT status FROM meta.asset WHERE id=?", String.class, assetId); }
+        catch (Exception e) { ast = ""; }
+        if (!"通过".equals(ast)) throw new AccessDeniedException("关联资产未审核通过（" + ast + "），禁止发布");
+        jdbc.update("UPDATE meta.data_service SET status='PUBLISHED' WHERE id=?", id);
+        return Map.of("success", true);
+    }
     @PostMapping("/unpublish")
     public Map<String, Object> unpublish(@RequestParam long id) { Authz.require(Authz.SYS_ADMIN); jdbc.update("UPDATE meta.data_service SET status='DRAFT' WHERE id=?", id); return Map.of("success", true); }
+
+    /** 标记服务验收通过（调试通过后人工确认）。 */
+    @PostMapping("/verify")
+    public Map<String, Object> verify(@RequestParam long id) { Authz.require(Authz.SYS_ADMIN); jdbc.update("UPDATE meta.data_service SET verified=true WHERE id=?", id); return Map.of("success", true); }
 
     /** 调用服务（需登录，AuthFilter 已校验）。query 参数即 SQL {param}。 */
     @GetMapping("/invoke/{code}")

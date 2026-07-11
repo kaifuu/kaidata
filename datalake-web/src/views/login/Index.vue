@@ -7,8 +7,8 @@
     <div class="bg-scan" />
     <div class="orbs"><span v-for="n in 6" :key="n" :style="orb(n)" /></div>
 
-    <!-- 主题切换 -->
-    <div class="top-tools"><ThemeToggle /></div>
+    <!-- 主题 / 语言切换 -->
+    <div class="top-tools"><ThemeToggle /><LangToggle /></div>
 
     <!-- 左侧品牌区 -->
     <div class="brand">
@@ -29,12 +29,12 @@
         </svg>
       </div>
       <div class="brand-name">kaidata</div>
-      <h1>数据中台</h1>
-      <p>现代湖仓 · Kafka → Flink → StarRocks → Spark</p>
+      <h1>{{ $t('app.name') }}</h1>
+      <p>{{ $t('app.slogan') }}</p>
       <ul class="brand-points">
-        <li><el-icon><Connection /></el-icon> 采 · 多源接入 / 实时入湖</li>
-        <li><el-icon><Cpu /></el-icon> 算 · 流批一体分层加工</li>
-        <li><el-icon><DataAnalysis /></el-icon> 服 · 统一数据资产服务</li>
+        <li><el-icon><Connection /></el-icon> {{ $t('app.feature1') }}</li>
+        <li><el-icon><Cpu /></el-icon> {{ $t('app.feature2') }}</li>
+        <li><el-icon><DataAnalysis /></el-icon> {{ $t('app.feature3') }}</li>
       </ul>
     </div>
 
@@ -42,34 +42,34 @@
     <div class="card">
       <div class="card-head">
         <span class="dot" />
-        <span>系统登录 / SYSTEM ACCESS</span>
+        <span>{{ $t('login.title') }} / {{ $t('login.titleEn') }}</span>
       </div>
 
       <!-- 登录方式切换 -->
       <div class="seg">
-        <button :class="['seg-btn', { on: tab === 'account' }]" @click="tab = 'account'">账号登录</button>
-        <button :class="['seg-btn', { on: tab === 'qrcode' }]" @click="tab = 'qrcode'">扫码登录</button>
+        <button :class="['seg-btn', { on: tab === 'account' }]" @click="tab = 'account'">{{ $t('login.tabAccount') }}</button>
+        <button :class="['seg-btn', { on: tab === 'qrcode' }]" @click="tab = 'qrcode'">{{ $t('login.tabQrcode') }}</button>
         <span class="seg-ink" :class="{ right: tab === 'qrcode' }" />
       </div>
 
       <!-- 账号登录 -->
       <el-form v-show="tab === 'account'" ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="onLogin">
         <el-form-item prop="username">
-          <el-input v-model="form.username" placeholder="账号" :prefix-icon="User" clearable />
+          <el-input v-model="form.username" :placeholder="$t('login.usernamePlaceholder')" :prefix-icon="User" clearable />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" show-password placeholder="密码" :prefix-icon="Lock" clearable />
+          <el-input v-model="form.password" type="password" show-password :placeholder="$t('login.passwordPlaceholder')" :prefix-icon="Lock" clearable />
         </el-form-item>
         <el-form-item prop="captchaCode">
           <div class="captcha-row">
-            <el-input v-model="form.captchaCode" placeholder="验证码" :prefix-icon="Picture" maxlength="4" clearable />
-            <img class="captcha-img" :src="captchaImg" alt="验证码" title="点击刷新" @click="refreshCaptcha" />
+            <el-input v-model="form.captchaCode" :placeholder="$t('login.captchaPlaceholder')" :prefix-icon="Picture" maxlength="4" clearable />
+            <img class="captcha-img" :src="captchaImg" :alt="$t('login.captcha')" :title="$t('login.refreshCaptcha')" @click="refreshCaptcha" />
           </div>
         </el-form-item>
         <el-button class="enter" type="primary" :loading="loading" @click="onLogin">
-          进 入 中 台 <el-icon class="el-icon--right"><Right /></el-icon>
+          {{ $t('login.enter') }} <el-icon class="el-icon--right"><Right /></el-icon>
         </el-button>
-        <div class="hint">演示账号 <b>admin</b> / <b>admin123</b></div>
+        <div class="hint">{{ $t('login.demoPrefix') }} <b>admin</b> / <b>admin123</b></div>
       </el-form>
 
       <!-- 扫码登录 -->
@@ -77,41 +77,44 @@
         <div class="qr-box">
           <img v-if="qrSrc" :src="qrSrc" alt="登录二维码" class="qr-img" />
           <div class="qr-mask" :class="{ show: qrExpiry <= 0 }">
-            <span>二维码已失效</span>
-            <el-button size="small" type="primary" @click="genQR">点击刷新</el-button>
+            <span>{{ $t('login.qrExpired') }}</span>
+            <el-button size="small" type="primary" @click="genQR">{{ $t('login.qrRefresh') }}</el-button>
           </div>
           <span class="qr-corner tl" /><span class="qr-corner tr" /><span class="qr-corner bl" /><span class="qr-corner br" />
         </div>
-        <div class="qr-tip"><el-icon><Iphone /></el-icon> 请使用 <b>kaidata App</b> 扫码登录</div>
-        <div class="qr-sub">二维码 {{ qrExpiry }}s 后自动刷新</div>
+        <div class="qr-tip"><el-icon><Iphone /></el-icon> {{ $t('login.qrTipPre') }} <b>{{ $t('login.qrAppName') }}</b> {{ $t('login.qrTipPost') }}</div>
+        <div class="qr-sub">{{ $t('login.qrSub', { sec: qrExpiry }) }}</div>
       </div>
     </div>
 
-    <div class="footer">© 2026 kaidata · 数据中台 DATA MIDDLE PLATFORM</div>
+    <div class="footer">{{ $t('login.footer') }}{{ $t('app.name') }} {{ $t('app.nameEn') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { User, Lock, Right, Iphone, Picture } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { api, errMsg } from '@/api'
 import { auth } from '@/auth'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import LangToggle from '@/components/LangToggle.vue'
 import ParticleBackground from '@/components/ParticleBackground.vue'
 
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive({ username: 'admin', password: 'admin123', captchaCode: '' })
-const rules = {
-  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-  captchaCode: [{ required: true, message: '请输入验证码', trigger: 'blur' }]
-}
+const rules = computed(() => ({
+  username: [{ required: true, message: t('login.usernameRequired'), trigger: 'blur' }],
+  password: [{ required: true, message: t('login.passwordRequired'), trigger: 'blur' }],
+  captchaCode: [{ required: true, message: t('login.captchaRequired'), trigger: 'blur' }]
+}))
 
 // 验证码：进入页 / 点击图 / 登录失败 均拉取；后端一次性消费，失败必刷新
 const captchaId = ref('')
@@ -132,10 +135,10 @@ async function onLogin() {
     try {
       const data = await api.login(form.username, form.password, captchaId.value, form.captchaCode)
       auth.set(data.token, data.user, data.menus || [])
-      ElMessage.success('登录成功')
+      ElMessage.success(t('login.success'))
       router.replace((route.query.redirect as string) || '/')
     } catch (e) {
-      ElMessage.error(errMsg(e, '登录失败'))
+      ElMessage.error(errMsg(e, t('login.failed')))
       refreshCaptcha()   // 后端已一次性消费旧码，失败必刷新
     } finally {
       loading.value = false
@@ -210,7 +213,7 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 }
 @keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(40px, -30px); } }
 
-.top-tools { position: absolute; top: 20px; right: 24px; z-index: 5; }
+.top-tools { position: absolute; top: 20px; right: 24px; z-index: 5; display: flex; gap: 8px; }
 
 /* 品牌 */
 .brand { position: relative; z-index: 2; color: var(--tech-text); max-width: 420px; }

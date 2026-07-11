@@ -62,7 +62,9 @@ else
   # jar 不存在 或 src/pom 比 jar 新 → 重新构建
   if [ ! -f "$JAR" ] || find "$ROOT/datalake-service/src" "$ROOT/datalake-service/pom.xml" -newer "$JAR" 2>/dev/null | grep -q .; then
     echo "    · 源码有变更或 jar 缺失，重新构建（mvn -DskipTests package）..."
-    (cd "$ROOT/datalake-service" && mvn -q -DskipTests package)
+    # MSYS_NO_PATHCONV=1（本脚本为 java 路径而设）会让 mvn 找不到 classworlds 启动类，
+    # 故在构建子 shell 内临时取消；java -jar 仍靠 cygpath 处理路径，不受影响。
+    (cd "$ROOT/datalake-service" && unset MSYS_NO_PATHCONV && mvn -q -DskipTests package)
   else
     echo "    · jar 最新，跳过构建"
   fi

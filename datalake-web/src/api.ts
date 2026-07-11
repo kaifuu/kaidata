@@ -1,13 +1,15 @@
 import axios from 'axios'
 import { auth } from './auth'
+import { locale, t as i18nT } from './locale'
 
 // 统一请求：经 vite 代理 /api → 服务层(8090) → StarRocks 数仓 / meta 元数据库
 export const http = axios.create({ baseURL: '/api', timeout: 15000 })
 
-// 请求拦截：自动携带令牌（除登录外所有接口都需鉴权）
+// 请求拦截：自动携带令牌（除登录外所有接口都需鉴权）+ Accept-Language（后端据此返回对应语言消息）
 http.interceptors.request.use((cfg) => {
-  const t = auth.token()
-  if (t) cfg.headers.Authorization = 'Bearer ' + t
+  const tok = auth.token()
+  if (tok) cfg.headers.Authorization = 'Bearer ' + tok
+  cfg.headers['Accept-Language'] = locale.value
   return cfg
 })
 
@@ -23,8 +25,8 @@ http.interceptors.response.use(
   }
 )
 
-// 403 统一提示：调用处 catch 后可调
-export function errMsg(e: any, def = '操作失败') {
+// 403 统一提示：调用处 catch 后可调（def 默认按当前语言给出"操作失败"）
+export function errMsg(e: any, def = i18nT('common.error')) {
   const msg = e?.response?.data?.message
   return msg || def
 }
@@ -334,6 +336,9 @@ export const api = {
   assetApprove: (id: number, comment: string) => http.post('/asset/approve', { comment }, { params: { id } }).then((r) => r.data),
   assetReject: (id: number, comment: string) => http.post('/asset/reject', { comment }, { params: { id } }).then((r) => r.data),
   assetAudit: (assetId: number) => http.get('/asset/audit', { params: { assetId } }).then((r) => r.data),
+  assetOffline: (id: number, comment = '') => http.post('/asset/offline', { comment }, { params: { id } }).then((r) => r.data),
+  assetOnline: (id: number, comment = '') => http.post('/asset/online', { comment }, { params: { id } }).then((r) => r.data),
+  assetUnbind: (id: number, comment = '') => http.post('/asset/unbind', { comment }, { params: { id } }).then((r) => r.data),
   assetSourceTables: (dsId?: number) => http.get('/asset/source-tables', { params: dsId ? { dsId } : {} }).then((r) => r.data),
   assetSourceColumns: (metaTableId: number) => http.get('/asset/source-columns', { params: { metaTableId } }).then((r) => r.data),
 

@@ -4,7 +4,7 @@
       <div class="logo">
         <el-icon class="logo-ico"><DataLine /></el-icon>
         <div class="logo-txt">
-          <div class="t1">数据中台</div>
+          <div class="t1">{{ $t('app.name') }}</div>
           <div class="t2">KAIDATA</div>
         </div>
       </div>
@@ -13,21 +13,21 @@
           <el-sub-menu v-if="m.children && m.children.length" :key="'sub-' + m.id" :index="m.path || ('cat-' + m.id)">
             <template #title>
               <el-icon><component :is="m.icon || 'Menu'" /></el-icon>
-              <span>{{ m.name }}</span>
+              <span>{{ groupLabel(m) }}</span>
             </template>
             <el-menu-item v-for="c in m.children" :key="c.id" :index="c.path">
               <el-icon><component :is="c.icon || 'Menu'" /></el-icon>
-              <span>{{ c.name }}</span>
+              <span>{{ leafLabel(c) }}</span>
             </el-menu-item>
           </el-sub-menu>
           <el-menu-item v-else :key="m.id" :index="m.path">
             <el-icon><component :is="m.icon || 'Menu'" /></el-icon>
-            <span>{{ m.name }}</span>
+            <span>{{ leafLabel(m) }}</span>
           </el-menu-item>
         </template>
       </el-menu>
       <div class="aside-foot">
-        <div class="led" /><span>湖仓运行中</span>
+        <div class="led" /><span>{{ $t('layout.lakehouseRunning') }}</span>
       </div>
     </el-aside>
 
@@ -35,24 +35,25 @@
       <el-header class="header">
         <div class="crumb">
           <el-icon class="crumb-ico"><Cpu /></el-icon>
-          <span class="title">{{ route.meta.title }}</span>
+          <span class="title">{{ pageTitle }}</span>
         </div>
         <div class="header-right">
           <ThemeToggle />
+          <LangToggle />
           <TodoBell />
           <span class="clock">{{ now }}</span>
           <el-dropdown @command="onCmd">
             <div class="user">
               <el-icon><UserFilled /></el-icon>
-              <span>{{ user?.name || '未登录' }}</span>
+              <span>{{ user?.name || $t('layout.notLoggedIn') }}</span>
               <el-tag size="small" effect="dark">{{ user?.role || '' }}</el-tag>
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile"><el-icon><User /></el-icon> 个人资料</el-dropdown-item>
-                <el-dropdown-item command="password"><el-icon><Lock /></el-icon> 修改密码</el-dropdown-item>
-                <el-dropdown-item command="logs"><el-icon><Document /></el-icon> 我的操作</el-dropdown-item>
-                <el-dropdown-item divided command="logout"><el-icon><SwitchButton /></el-icon> 退出登录</el-dropdown-item>
+                <el-dropdown-item command="profile"><el-icon><User /></el-icon> {{ $t('layout.profile') }}</el-dropdown-item>
+                <el-dropdown-item command="password"><el-icon><Lock /></el-icon> {{ $t('layout.password') }}</el-dropdown-item>
+                <el-dropdown-item command="logs"><el-icon><Document /></el-icon> {{ $t('layout.logs') }}</el-dropdown-item>
+                <el-dropdown-item divided command="logout"><el-icon><SwitchButton /></el-icon> {{ $t('layout.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -68,13 +69,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { auth } from '@/auth'
 import { api, type MenuRow } from '@/api'
+import { locale, menuKey } from '@/locale'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import LangToggle from '@/components/LangToggle.vue'
 import TodoBell from '@/components/TodoBell.vue'
 import PasswordDialog from '@/components/PasswordDialog.vue'
 import ProfileDialog from '@/components/ProfileDialog.vue'
 
+const { t, te } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const user = computed(() => auth.user())
@@ -91,9 +96,25 @@ const menuTree = computed(() => {
   })).sort((a, b) => (a.sort || 0) - (b.sort || 0))
 })
 
+// 菜单文案：叶子按 menu.<path>、父级按 menuGroup.<子项 path 首段>；字典缺失时回退后端 name
+function leafLabel(m: MenuRow) {
+  const k = 'menu.' + menuKey(m.path)
+  return te(k) ? t(k) : m.name
+}
+function groupLabel(m: any) {
+  const prefix = menuKey(m.children?.[0]?.path).split('/')[0]
+  const k = 'menuGroup.' + prefix
+  return prefix && te(k) ? t(k) : m.name
+}
+// 面包屑标题：优先菜单字典，回退 route.meta.title
+const pageTitle = computed(() => {
+  const k = 'menu.' + menuKey(route.path)
+  return te(k) ? t(k) : ((route.meta.title as string) || '')
+})
+
 const now = ref('')
 let timer: number
-function tick() { now.value = new Date().toLocaleString('zh-CN', { hour12: false }) }
+function tick() { now.value = new Date().toLocaleString(locale.value === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false }) }
 onMounted(async () => {
   tick()
   timer = window.setInterval(tick, 1000)

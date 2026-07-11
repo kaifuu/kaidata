@@ -3,6 +3,7 @@ package com.pharma.service.controller;
 import com.pharma.service.security.AuthContext;
 import com.pharma.service.security.CaptchaStore;
 import com.pharma.service.security.CaptchaUtil;
+import com.pharma.service.security.I18nUtil;
 import com.pharma.service.security.PasswordUtil;
 import com.pharma.service.security.TokenUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,16 +44,16 @@ public class AuthController {
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
         // 验证码校验（查库之前）：失败即拒，挡住无效请求、减少库压力
         if (!captchaStore.verify(body.get("captchaId"), body.get("captchaCode"))) {
-            return unauthorized("验证码错误或已过期");
+            return unauthorized(I18nUtil.message("auth.captcha.error"));
         }
         String username = body.get("username");
         String password = body.get("password");
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT id, username, password, name, status FROM meta.sys_user WHERE username=?", username);
-        if (rows.isEmpty()) return unauthorized("账号或密码错误");
+        if (rows.isEmpty()) return unauthorized(I18nUtil.message("auth.login.failed"));
         Map<String, Object> u = rows.get(0);
-        if (!"NORMAL".equals(String.valueOf(u.get("status")))) return unauthorized("账号已停用");
-        if (!PasswordUtil.matches(password, String.valueOf(u.get("password")))) return unauthorized("账号或密码错误");
+        if (!"NORMAL".equals(String.valueOf(u.get("status")))) return unauthorized(I18nUtil.message("auth.login.disabled"));
+        if (!PasswordUtil.matches(password, String.valueOf(u.get("password")))) return unauthorized(I18nUtil.message("auth.login.failed"));
 
         long uid = ((Number) u.get("id")).longValue();
         List<String> codes = roleCodesOf(uid);
@@ -79,7 +80,7 @@ public class AuthController {
                         "LEFT JOIN meta.sys_tenant t ON t.id = u.tenant_id " +
                         "LEFT JOIN meta.sys_org o ON o.id = u.org_id " +
                         "WHERE u.username = ?", username);
-        if (rows.isEmpty()) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "用户不存在"));
+        if (rows.isEmpty()) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", I18nUtil.message("auth.user.notFound")));
         Map<String, Object> u = rows.get(0);
         long uid = ((Number) u.get("id")).longValue();
         List<String> roles = roleCodesOf(uid);
@@ -101,13 +102,13 @@ public class AuthController {
         String oldPwd = body.get("oldPassword");
         String newPwd = body.get("newPassword");
         if (oldPwd == null || newPwd == null || newPwd.length() < 6)
-            return ResponseEntity.badRequest().body(Map.of("message", "新密码不少于 6 位"));
+            return ResponseEntity.badRequest().body(Map.of("message", I18nUtil.message("auth.password.tooShort")));
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT password FROM meta.sys_user WHERE username = ?", AuthContext.username());
-        if (rows.isEmpty()) return unauthorized("用户不存在");
+        if (rows.isEmpty()) return unauthorized(I18nUtil.message("auth.user.notFound"));
         String hashed = String.valueOf(rows.get(0).get("password"));
         if (!PasswordUtil.matches(oldPwd, hashed))
-            return ResponseEntity.badRequest().body(Map.of("message", "原密码错误"));
+            return ResponseEntity.badRequest().body(Map.of("message", I18nUtil.message("auth.password.oldWrong")));
         jdbc.update("UPDATE meta.sys_user SET password = ? WHERE username = ?",
                 PasswordUtil.hash(newPwd), AuthContext.username());
         return ResponseEntity.ok(Map.of("success", true));

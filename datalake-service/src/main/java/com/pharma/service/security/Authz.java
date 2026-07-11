@@ -26,7 +26,7 @@ public final class Authz {
     /** 当前用户持有 required 中任一角色则放行，否则抛 403。 */
     public static void require(String... required) {
         if (!any(required)) {
-            throw new AccessDeniedException("无权限：需要角色 " + String.join(" / ", required));
+            throw AccessDeniedException.of("error.access.denied", (Object) String.join(" / ", required));
         }
     }
 

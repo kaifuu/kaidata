@@ -2,20 +2,20 @@
   <el-popover placement="bottom-end" :width="280" trigger="click" popper-class="todo-pop">
     <template #reference>
       <el-badge :value="total" :hidden="total === 0" :max="99">
-        <button class="todo-btn" aria-label="我的待办">
+        <button class="todo-btn" :aria-label="$t('layout.todo')">
           <el-icon :size="18"><Bell /></el-icon>
         </button>
       </el-badge>
     </template>
     <div class="todo-body">
-      <div class="todo-title">我的待办</div>
-      <div class="todo-item" v-for="t in items" :key="t.key" @click="go(t.path)">
-        <span class="todo-ico" :style="{ background: t.soft, color: t.on }"><el-icon><component :is="t.icon" /></el-icon></span>
-        <span class="todo-name">{{ t.name }}</span>
-        <el-tag v-if="t.count > 0" type="danger" size="small" effect="dark" round>{{ t.count }}</el-tag>
-        <span v-else class="todo-zero">暂无</span>
+      <div class="todo-title">{{ $t('layout.todo') }}</div>
+      <div class="todo-item" v-for="it in items" :key="it.key" @click="go(it.path)">
+        <span class="todo-ico" :style="{ background: it.soft, color: it.on }"><el-icon><component :is="it.icon" /></el-icon></span>
+        <span class="todo-name">{{ it.name }}</span>
+        <el-tag v-if="it.count > 0" type="danger" size="small" effect="dark" round>{{ it.count }}</el-tag>
+        <span v-else class="todo-zero">{{ $t('layout.todoNone') }}</span>
       </div>
-      <div class="todo-foot">点击进入对应页面处理</div>
+      <div class="todo-foot">{{ $t('layout.todoFoot') }}</div>
     </div>
   </el-popover>
 </template>
@@ -23,16 +23,18 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Bell } from '@element-plus/icons-vue'
 import { api } from '@/api'
 
+const { t } = useI18n()
 const router = useRouter()
 const todo = ref({ alerts: 0, assets: 0, quality: 0 })
 
 const items = computed(() => [
-  { key: 'alerts', name: '未处理告警', count: todo.value.alerts, icon: 'Warning', path: '/security/alert', soft: 'color-mix(in srgb, var(--tech-danger) 12%, transparent)', on: 'var(--tech-danger)' },
-  { key: 'assets', name: '待审资产', count: todo.value.assets, icon: 'Box', path: '/asset/audit', soft: 'color-mix(in srgb, var(--tech-warn) 12%, transparent)', on: 'var(--tech-warn)' },
-  { key: 'quality', name: '质量异常', count: todo.value.quality, icon: 'WarnTriangleFilled', path: '/data-gov/quality', soft: 'color-mix(in srgb, var(--tech-primary) 12%, transparent)', on: 'var(--tech-primary)' }
+  { key: 'alerts', name: t('layout.todoAlerts'), count: todo.value.alerts, icon: 'Warning', path: '/security/alert', soft: 'color-mix(in srgb, var(--tech-danger) 12%, transparent)', on: 'var(--tech-danger)' },
+  { key: 'assets', name: t('layout.todoAssets'), count: todo.value.assets, icon: 'Box', path: '/asset/audit', soft: 'color-mix(in srgb, var(--tech-warn) 12%, transparent)', on: 'var(--tech-warn)' },
+  { key: 'quality', name: t('layout.todoQuality'), count: todo.value.quality, icon: 'WarnTriangleFilled', path: '/data-gov/quality', soft: 'color-mix(in srgb, var(--tech-primary) 12%, transparent)', on: 'var(--tech-primary)' }
 ])
 const total = computed(() => todo.value.alerts + todo.value.assets + todo.value.quality)
 

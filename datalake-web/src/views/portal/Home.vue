@@ -2,13 +2,13 @@
   <div class="overview">
     <!-- KPI 卡片：浅色 DIFY 极简 / 暗色霓虹科技 + 数字滚动 -->
     <div class="kpi-grid">
-      <div class="kpi-card" v-for="k in kpis" :key="k.label">
+      <div class="kpi-card" v-for="k in kpis" :key="k.key">
         <span class="corner tl" /><span class="corner br" />
         <div class="kpi-icon" :style="chipStyle(k)">
           <el-icon :size="22"><component :is="k.icon" /></el-icon>
         </div>
         <div class="kpi-info">
-          <div class="kpi-val">{{ display[k.label] ?? 0 }}</div>
+          <div class="kpi-val">{{ display[k.key] ?? 0 }}</div>
           <div class="kpi-lab">{{ k.label }}</div>
         </div>
       </div>
@@ -17,36 +17,38 @@
     <!-- 图表区 -->
     <div class="chart-row">
       <div class="dl-card chart-card">
-        <div class="ct"><el-icon><Connection /></el-icon> 数据源类型分布<span class="ct-sub">DATA SOURCES</span></div>
+        <div class="ct"><el-icon><Connection /></el-icon> {{ $t('home.chart.dsType') }}<span class="ct-sub">DATA SOURCES</span></div>
         <v-chart :option="dsTypeOption" :theme="chartTheme" autoresize class="chart" />
       </div>
       <div class="dl-card chart-card">
-        <div class="ct"><el-icon><List /></el-icon> 各域任务数<span class="ct-sub">TASKS</span></div>
+        <div class="ct"><el-icon><List /></el-icon> {{ $t('home.chart.tasks') }}<span class="ct-sub">TASKS</span></div>
         <v-chart :option="taskDomainOption" :theme="chartTheme" autoresize class="chart" />
       </div>
     </div>
     <div class="chart-row">
       <div class="dl-card chart-card">
-        <div class="ct"><el-icon><CircleCheck /></el-icon> 任务执行成功率<span class="ct-sub">SUCCESS RATE</span></div>
+        <div class="ct"><el-icon><CircleCheck /></el-icon> {{ $t('home.chart.success') }}<span class="ct-sub">SUCCESS RATE</span></div>
         <v-chart :option="successOption" :theme="chartTheme" autoresize class="chart" />
       </div>
       <div class="dl-card chart-card">
-        <div class="ct"><el-icon><Box /></el-icon> 资产状态分布<span class="ct-sub">ASSETS</span></div>
+        <div class="ct"><el-icon><Box /></el-icon> {{ $t('home.chart.assets') }}<span class="ct-sub">ASSETS</span></div>
         <v-chart :option="assetOption" :theme="chartTheme" autoresize class="chart" />
       </div>
     </div>
 
-    <div class="flow-hint"><el-icon><InfoFilled /></el-icon> 数据中台总览 · 全域运行态势（每 15s 刷新）</div>
+    <div class="flow-hint"><el-icon><InfoFilled /></el-icon> {{ $t('home.footer') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Connection, List, CircleCheck, Box, InfoFilled } from '@element-plus/icons-vue'
 import { VChart } from '@/echarts'
 import { api } from '@/api'
 import { theme } from '@/theme'
 
+const { t } = useI18n()
 const chartTheme = theme.chartTheme
 const isDark = theme.isDark
 const ov = ref<any>({})
@@ -81,12 +83,12 @@ const fill = (i: number) => {
 }
 
 const kpis = computed(() => [
-  { label: '数据源', value: ov.value.datasources ?? 0, icon: 'Connection', color: '#1557ef', grad: 'linear-gradient(135deg,#00e0ff,#2f6bff)' },
-  { label: '元数据表', value: ov.value.metaTables ?? 0, icon: 'Files', color: '#7c5cff', grad: 'linear-gradient(135deg,#7c5cff,#00e0ff)' },
-  { label: '数据资产', value: ov.value.assets ?? 0, icon: 'Box', color: '#16b364', grad: 'linear-gradient(135deg,#2ee6a6,#00e0ff)' },
-  { label: '任务总数', value: taskTotal.value, icon: 'List', color: '#f79009', grad: 'linear-gradient(135deg,#ffb020,#ff4d6d)' },
-  { label: '工作流', value: ov.value.workflows ?? 0, icon: 'Connection', color: '#4f46e5', grad: 'linear-gradient(135deg,#2f6bff,#7c5cff)' },
-  { label: '服务调用', value: dsCalls.value, icon: 'Promotion', color: '#0ba5ec', grad: 'linear-gradient(135deg,#00e0ff,#2ee6a6)' }
+  { key: 'datasource', label: t('home.kpi.datasource'), value: ov.value.datasources ?? 0, icon: 'Connection', color: '#1557ef', grad: 'linear-gradient(135deg,#00e0ff,#2f6bff)' },
+  { key: 'metaTables', label: t('home.kpi.metaTables'), value: ov.value.metaTables ?? 0, icon: 'Files', color: '#7c5cff', grad: 'linear-gradient(135deg,#7c5cff,#00e0ff)' },
+  { key: 'assets', label: t('home.kpi.assets'), value: ov.value.assets ?? 0, icon: 'Box', color: '#16b364', grad: 'linear-gradient(135deg,#2ee6a6,#00e0ff)' },
+  { key: 'taskTotal', label: t('home.kpi.taskTotal'), value: taskTotal.value, icon: 'List', color: '#f79009', grad: 'linear-gradient(135deg,#ffb020,#ff4d6d)' },
+  { key: 'workflows', label: t('home.kpi.workflows'), value: ov.value.workflows ?? 0, icon: 'Connection', color: '#4f46e5', grad: 'linear-gradient(135deg,#2f6bff,#7c5cff)' },
+  { key: 'serviceCalls', label: t('home.kpi.serviceCalls'), value: dsCalls.value, icon: 'Promotion', color: '#0ba5ec', grad: 'linear-gradient(135deg,#00e0ff,#2ee6a6)' }
 ])
 
 // KPI 图标 CSS 变量（浅色柔和淡底主色 / 暗色渐变，由 .kpi-icon 样式消费）
@@ -94,20 +96,20 @@ const chipStyle = (k: { color: string; grad: string }): Record<string, string> =
   '--chip': k.color, '--chip-grad': k.grad
 })
 
-// 数字滚动（ease-out）
+// 数字滚动（ease-out）—— display 按 KPI 稳定 key 索引（与文案解耦，切语言不重滚）
 const display = reactive<Record<string, number>>({})
-function roll(label: string, to: number) {
-  const start = display[label] ?? 0
-  if (start === to) { display[label] = to; return }
+function roll(key: string, to: number) {
+  const start = display[key] ?? 0
+  if (start === to) { display[key] = to; return }
   const t0 = performance.now(); const dur = 800
   const step = (t: number) => {
     const p = Math.min((t - t0) / dur, 1)
-    display[label] = Math.round(start + (to - start) * (1 - Math.pow(1 - p, 3)))
+    display[key] = Math.round(start + (to - start) * (1 - Math.pow(1 - p, 3)))
     if (p < 1) requestAnimationFrame(step)
   }
   requestAnimationFrame(step)
 }
-watch(kpis, (ks) => ks.forEach((k) => roll(k.label, k.value)), { deep: true, immediate: true })
+watch(kpis, (ks) => ks.forEach((k) => roll(k.key, k.value)), { deep: true, immediate: true })
 
 // 数据源类型分布（精致环图 + 中心总数）
 const dsTypeOption = computed(() => {
@@ -118,7 +120,7 @@ const dsTypeOption = computed(() => {
     legend: { bottom: 4, textStyle: { color: c.muted }, itemWidth: 10, itemHeight: 10 },
     graphic: [
       { type: 'text', left: 'center', top: '40%', style: { text: String(total), fill: c.ink, font: 'bold 30px system-ui, sans-serif', textAlign: 'center' } },
-      { type: 'text', left: 'center', top: '52%', style: { text: '数据源', fill: c.muted, font: '12px system-ui, sans-serif', textAlign: 'center' } }
+      { type: 'text', left: 'center', top: '52%', style: { text: t('home.ringCenter'), fill: c.muted, font: '12px system-ui, sans-serif', textAlign: 'center' } }
     ],
     series: [{
       type: 'pie', radius: ['52%', '72%'], center: ['50%', '46%'],
@@ -133,7 +135,7 @@ const dsTypeOption = computed(() => {
 // 各域任务数（圆角柱 · 浅色纯色 / 暗色渐变发光）
 const taskDomainOption = computed(() => {
   const c = C.value
-  const domains = ['探查', '质量', '工作流', '接出', '开发', '离线']
+  const domains = [t('home.domain.profile'), t('home.domain.quality'), t('home.domain.workflow'), t('home.domain.export'), t('home.domain.script'), t('home.domain.offline')]
   const keyMap = ['profile', 'quality', 'workflow', 'export', 'script', 'offline']
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: isDark.value ? 'rgba(0,224,255,0.08)' : 'rgba(21,87,239,0.06)' } } },

@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: datalake-service
+  messages:
+    basename: messages
   jackson:
     # 实体 camelCase ↔ 前端 snake_case（tenant_id↔tenantId / create_time↔createTime 等）
     # 仅作用于 POJO 属性；对其它 controller 返回的 Map<String,Object> 的 key 无影响

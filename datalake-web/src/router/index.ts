@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { auth } from '@/auth'
+import { t, menuKey } from '@/locale'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/login/Index.vue'), meta: { public: true, title: '登录' } },
@@ -79,5 +80,11 @@ router.beforeEach((to) => {
   return true
 })
 
-router.afterEach((to) => { document.title = `${to.meta.title || ''} - 数据中台` })
+router.afterEach((to) => {
+  // 标题：优先取菜单字典（按路由 path），取不到则回退 meta.title；后缀取 app.name
+  const key = 'menu.' + menuKey(to.path)
+  const resolved = t(key)
+  const title = resolved !== key ? resolved : ((to.meta.title as string) || '')
+  document.title = `${title} - ${t('app.name')}`
+})
 export default router

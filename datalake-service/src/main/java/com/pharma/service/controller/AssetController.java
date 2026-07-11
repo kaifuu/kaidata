@@ -1,6 +1,7 @@
 package com.pharma.service.controller;
 
 import com.pharma.service.security.Authz;
+import com.pharma.service.security.AccessDeniedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -117,6 +118,41 @@ public class AssetController {
         Authz.require(Authz.SYS_ADMIN);
         return transition(id, "驳回", "驳回", b == null ? "" : str(b.get("comment")));
     }
+
+    // ===== 上下线 / 解绑：资产挂载后的生命周期管理 =====
+    // 设计要点：运行时调用(DataServiceExecutor)、新发布服务、新建开放授权、集市可见列表均为
+    // status='通过' 的正向白名单。因此「下线」(status 改为非「通过」)后，上述链路自动阻断/隐藏，
+    // 无需级联改 data_service / data_open_grant；记录保留，重新「上线」即恢复可用。
+    /** 下线：通过 → 下线。 */
+    @PostMapping("/offline")
+    public Map<String, Object> offline(@RequestParam long id, @RequestBody(required = false) Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        String cur = currentStatus(id);
+        if (!"通过".equals(cur)) throw new AccessDeniedException("仅「通过」状态的资产可下线（当前：" + cur + "）");
+        return transition(id, "下线", "下线", b == null ? "" : str(b.get("comment")));
+    }
+
+    /** 上线：下线 → 通过（重新上架；此前保留的授权/服务恢复可用）。 */
+    @PostMapping("/online")
+    public Map<String, Object> online(@RequestParam long id, @RequestBody(required = false) Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        String cur = currentStatus(id);
+        if (!"下线".equals(cur)) throw new AccessDeniedException("仅「下线」状态的资产可重新上线（当前：" + cur + "）");
+        return transition(id, "通过", "上线", b == null ? "" : str(b.get("comment")));
+    }
+
+    /** 解绑：清空挂载来源（source_type/source_id）。仅 下线/草稿/驳回 态可解绑，保护在途/在用资产。 */
+    @PostMapping("/unbind")
+    public Map<String, Object> unbind(@RequestParam long id, @RequestBody(required = false) Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        String cur = currentStatus(id);
+        if ("通过".equals(cur) || "待审".equals(cur)) throw new AccessDeniedException("资产处于「" + cur + "」状态，请先下线/撤回再解绑来源");
+        jdbc.update("UPDATE meta.asset SET source_type='', source_id=0 WHERE id=?", id);
+        jdbc.update("INSERT INTO meta.asset_audit(id, asset_id, action, comment, auditor, audit_time) VALUES (?,?,?,?,?,?)",
+                System.currentTimeMillis(), id, "解绑", b == null ? "" : str(b.get("comment")), currentUser(), new Timestamp(System.currentTimeMillis()));
+        return Map.of("success", true);
+    }
+
     private Map<String, Object> transition(long id, String status, String action, String comment) {
         jdbc.update("UPDATE meta.asset SET status=? WHERE id=?", status, id);
         jdbc.update("INSERT INTO meta.asset_audit(id, asset_id, action, comment, auditor, audit_time) VALUES (?,?,?,?,?,?)",
@@ -147,6 +183,9 @@ public class AssetController {
     }
 
     // -------- 助手 --------
+    private String currentStatus(long id) {
+        return str(jdbc.queryForObject("SELECT status FROM meta.asset WHERE id=?", String.class, id));
+    }
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
     private static long lng(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).longValue(); try { return Long.parseLong(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
     private static int num(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).intValue(); try { return Integer.parseInt(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }

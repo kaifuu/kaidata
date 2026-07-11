@@ -52,7 +52,7 @@ const rows = ref<any[]>([]); const loading = ref(false)
 const allRows = ref<any[]>([]); const loadingAll = ref(false)
 const cmtDlg = ref(false); const cmtTitle = ref(''); const cmt = ref(''); const pendingAction = ref<'approve'|'reject'>('approve'); const curId = ref(0)
 const histDlg = ref(false); const cur = ref<any>(null); const hist = ref<any[]>([])
-const stType = (s: string): any => ({ 通过: 'success', 待审: 'warning', 驳回: 'danger', 草稿: 'info' } as any)[s] || ''
+const stType = (s: string): any => ({ 通过: 'success', 待审: 'warning', 驳回: 'danger', 草稿: 'info', 下线: 'info' } as any)[s] || ''
 async function loadPending() { loading.value = true; try { rows.value = await api.assetList({ status: '待审' }) } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 async function loadAll() { loadingAll.value = true; try { allRows.value = await api.assetList() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loadingAll.value = false } }
 function doApprove(row: any) { curId.value = row.id; pendingAction.value = 'approve'; cmtTitle.value = '通过审核'; cmt.value = ''; cmtDlg.value = true }

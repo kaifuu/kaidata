@@ -26,3 +26,9 @@ logs/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 文档交付物（产品白皮书 / 用户手册等，本地生成，不纳入版本管理）
+docs/
+
+# 运行产物
+docker/hop-output/

@@ -24,7 +24,7 @@
         <div v-else class="hint">按类型展示全部{{ assetType === 'api' ? '接口' : '文件' }}资产。</div>
       </el-col>
       <el-col :span="19">
-        <el-table :data="rows" size="small" stripe border v-loading="loading" highlight-current-row @row-click="openDetail">
+        <el-table :data="pagedRows" size="small" stripe border v-loading="loading" highlight-current-row @row-click="openDetail">
           <template v-if="assetType === 'table'">
             <el-table-column prop="table_name" label="表名" min-width="170" />
             <el-table-column prop="cn_name" label="中文名" min-width="120" />
@@ -45,6 +45,12 @@
             <el-table-column label="填充度" width="80"><template #default="{ row }">{{ row.fill_percent || 0 }}%</template></el-table-column>
           </template>
         </el-table>
+        <el-pagination style="margin-top:10px;justify-content:flex-end"
+          :current-page="page" :page-size="pageSize" :page-sizes="[20, 50, 100, 200]"
+          :total="rows.length" size="small" background
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="v => (page = v)"
+          @size-change="v => { pageSize = v; page = 1 }" />
       </el-col>
     </el-row>
 
@@ -181,6 +187,8 @@ const kw = ref('')
 const loading = ref(false)
 const rows = ref<any[]>([])
 const catalog = ref<any[]>([])
+const page = ref(1)
+const pageSize = ref(20)
 
 // 详情
 const detailDlg = ref(false)
@@ -203,6 +211,11 @@ const standards = ref<any[]>([])
 const subjects = ref<any[]>([])
 const subjectOpts = computed(() => { const out: any[] = []; for (const n of subjects.value) { out.push(n); if (n.children) for (const c of n.children) out.push(c) } return out })
 
+const pagedRows = computed(() => {
+  const s = (page.value - 1) * pageSize.value
+  return rows.value.slice(s, s + pageSize.value)
+})
+
 const detailTitle = computed(() => {
   if (assetType.value === 'table') return `表 · ${detail.value.table_name || ''}`
   if (assetType.value === 'api') return `接口 · ${svc.value.name || ''}`
@@ -219,6 +232,7 @@ const graphOption = computed(() => {
 
 async function loadList() {
   loading.value = true
+  page.value = 1
   try {
     if (assetType.value === 'table') rows.value = await api.govMetaList({})
     else if (assetType.value === 'api') rows.value = await api.govMetaApiList()

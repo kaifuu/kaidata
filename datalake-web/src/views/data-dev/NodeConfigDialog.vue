@@ -5,7 +5,7 @@
       <div class="cfg-row cfg-info">
         <span class="info-tag">{{ groupLabel }}</span>
         <span class="info-kind">{{ node?.data?.kind }}</span>
-        <span v-if="planned" class="planned-tag">规划中（运行将失败）</span>
+        <span v-if="planned" class="planned-tag">当前引擎不支持（运行将失败）</span>
       </div>
       <div v-for="f in fields" :key="f.key" class="cfg-row">
         <label>{{ f.label }}</label>
@@ -69,10 +69,10 @@ function onSave() { emit('save', cfg.value); emit('update:modelValue', false) }
 <style scoped>
 .cfg-form { max-height: 60vh; overflow-y: auto; padding-right: 4px; }
 .cfg-row { margin-bottom: 14px; }
-.cfg-row label { display: block; font-size: 12px; color: #8295ad; margin-bottom: 5px; }
-.cfg-info { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 16px; }
-.info-tag { font-size: 11px; color: #cfdcec; background: rgba(64,158,255,0.12); padding: 2px 8px; border-radius: 8px; }
-.info-kind { font-size: 11px; color: #5d7088; font-family: ui-monospace, Menlo, monospace; }
-.planned-tag { font-size: 11px; color: #e6a23c; border: 1px solid #e6a23c44; padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+.cfg-row label { display: block; font-size: 12px; color: var(--tech-text-muted); margin-bottom: 5px; }
+.cfg-info { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--tech-panel-border); margin-bottom: 16px; }
+.info-tag { font-size: 11px; color: var(--tech-text); background: color-mix(in srgb, var(--tech-primary) 14%, transparent); padding: 2px 8px; border-radius: 8px; }
+.info-kind { font-size: 11px; color: var(--tech-text-muted); font-family: ui-monospace, Menlo, monospace; }
+.planned-tag { font-size: 11px; color: var(--tech-warn); border: 1px solid color-mix(in srgb, var(--tech-warn) 40%, transparent); padding: 1px 6px; border-radius: 4px; margin-left: auto; }
 .mono :deep(textarea) { font-family: ui-monospace, Menlo, Consolas, monospace; }
 </style>

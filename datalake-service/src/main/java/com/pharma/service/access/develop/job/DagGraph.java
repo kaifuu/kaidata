@@ -56,5 +56,17 @@ public final class DagGraph {
         return null;
     }
 
+    /** 找 nodeId 的所有直接上游映射名（按入边顺序）；供 join 等多输入算子使用。 */
+    public static List<String> findUpstreams(List<Map<String, Object>> edges, String nodeId, Map<String, String> alias) {
+        List<String> ups = new ArrayList<>();
+        for (Map<String, Object> e : edges) {
+            if (nodeId.equals(str(e.get("target")))) {
+                String srcId = str(e.get("source"));
+                ups.add(alias == null ? srcId : alias.get(srcId));
+            }
+        }
+        return ups;
+    }
+
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
 }

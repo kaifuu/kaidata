@@ -24,7 +24,7 @@
       <span>节点: {{ stats.nodes }}</span>
       <span>连线: {{ stats.edges }}</span>
       <span :class="validity.ok ? 'ok' : 'err'">
-        {{ validity.errors.length ? validity.errors[0] : (stats.nodes ? (validity.warnings.length ? `校验通过·${validity.warnings.length}规划中` : '校验通过') : '未编排') }}
+        {{ validity.errors.length ? validity.errors[0] : (stats.nodes ? '校验通过' : '未编排') }}
       </span>
       <span class="engine-hint">{{ engineHint }}</span>
       <span v-if="dirty" class="dirty">*未保存</span>
@@ -119,9 +119,7 @@ function onValidate() {
   if (!dagRef.value) return
   validity.value = dagRef.value.validate()
   if (validity.value.ok) {
-    validity.value.warnings.length
-      ? ElMessage.warning(`校验通过，但含 ${validity.value.warnings.length} 个规划中算子（运行将失败）`)
-      : ElMessage.success('校验通过')
+    ElMessage.success('校验通过')
   } else {
     ElMessage.warning(validity.value.errors.join('; '))
   }
@@ -178,13 +176,13 @@ async function clearRuns(rule: string) {
 </script>
 
 <style scoped>
-.studio-root { display: flex; flex-direction: column; height: 100vh; background: #0a111c; overflow: hidden; }
+.studio-root { display: flex; flex-direction: column; height: 100vh; background: var(--tech-bg-2); overflow: hidden; }
 
 .studio-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 12px; height: 44px; flex-shrink: 0;
-  background: linear-gradient(180deg, rgba(20,30,46,0.95), rgba(14,22,34,0.95));
-  border-bottom: 1px solid var(--tech-panel-border, #2a3a52);
+  background: var(--tech-panel);
+  border-bottom: 1px solid var(--tech-panel-border);
 }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 8px; }
 
@@ -194,15 +192,15 @@ async function clearRuns(rule: string) {
 .studio-statusbar {
   display: flex; align-items: center; gap: 16px;
   padding: 0 12px; height: 28px; flex-shrink: 0;
-  font-size: 12px; color: #8295ad;
-  background: rgba(14,22,34,0.95);
-  border-top: 1px solid var(--tech-panel-border, #2a3a52);
+  font-size: 12px; color: var(--tech-text-muted);
+  background: var(--tech-panel);
+  border-top: 1px solid var(--tech-panel-border);
 }
-.studio-statusbar .ok { color: #67c23a; }
-.studio-statusbar .err { color: #f56c6c; }
-.studio-statusbar .dirty { color: #e6a23c; }
+.studio-statusbar .ok { color: var(--tech-success); }
+.studio-statusbar .err { color: var(--tech-danger); }
+.studio-statusbar .dirty { color: var(--tech-warn); }
 .studio-statusbar .engine-hint { margin-left: auto; }
 
-.log-box { background: rgba(0,0,0,0.3); color: #9fe; padding: 10px; margin-top: 10px;
-  font-size: 12px; white-space: pre-wrap; max-height: 300px; overflow: auto; border-radius: 4px; }
+.log-box { background: var(--tech-bg); color: var(--tech-text-muted); padding: 10px; margin-top: 10px;
+  font-size: 12px; white-space: pre-wrap; max-height: 300px; overflow: auto; border-radius: 4px; border: 1px solid var(--tech-panel-border); }
 </style>

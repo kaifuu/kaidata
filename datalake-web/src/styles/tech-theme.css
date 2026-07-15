@@ -18,15 +18,15 @@
   --tech-warn: #f79009;
   --tech-danger: #f04438;
 
-  /* 中性色 */
-  --tech-bg: #f5f7fa;
+  /* 中性色（浅色对比度强化：页底更灰让白卡片浮起、边框/次级文字加深、阴影加重 → 浅色下层次与可读性提升） */
+  --tech-bg: #eef1f6;
   --tech-bg-2: #ffffff;
   --tech-panel: #ffffff;
-  --tech-panel-border: #e9ebf0;
+  --tech-panel-border: #d9dee7;
   --tech-text: #101828;
-  --tech-text-muted: #667085;
+  --tech-text-muted: #51607a;
   --tech-glow: none;
-  --tech-shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --tech-shadow: 0 2px 6px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.05);
   --tech-grid: rgba(21, 87, 239, 0.05);
 
   /* 覆盖 Element Plus 主色为 DIFY 蓝 */
@@ -41,15 +41,15 @@
   --el-color-warning: #f79009;
   --el-color-danger: #f04438;
   --el-bg-color: #ffffff;
-  --el-bg-color-page: #f5f7fa;
+  --el-bg-color-page: #eef1f6;
   --el-bg-color-overlay: #ffffff;
   --el-text-color-primary: #101828;
   --el-text-color-regular: #475467;
-  --el-border-color: #e9ebf0;
-  --el-border-color-light: #eef0f4;
+  --el-border-color: #d9dee7;
+  --el-border-color-light: #e3e7ee;
   --el-fill-color-blank: #ffffff;
-  --el-fill-color: #f5f7fa;
-  --el-fill-color-light: #f7f9fc;
+  --el-fill-color: #eceff5;
+  --el-fill-color-light: #e9edf4;
   --el-box-shadow-light: 0 1px 3px rgba(16, 24, 40, 0.08);
 }
 
@@ -141,7 +141,21 @@ html.dark body::before {
   border-radius: 10px 0 0 0;
   opacity: 0.85;
 }
-html.dark .dl-card { backdrop-filter: blur(8px); }
+/* 暗色玻璃拟态：backdrop-filter 放到 ::after，而非 .dl-card 自身。
+   原因：带 backdrop-filter 的元素会成为后代 position:fixed 元素的包含块，而
+   el-dialog 默认不 teleport（EP2.6 appendToBody=false）留在 .dl-card 内，导致
+   暗色下 el-dialog 被困在卡片尺寸内、再被 main 的 overflow 裁剪 → 浮窗展示不全。
+   移到 ::after 后 .dl-card 不再是包含块，fixed 重新相对视口，dialog 正常覆盖全屏。 */
+html.dark .dl-card { isolation: isolate; }
+html.dark .dl-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  backdrop-filter: blur(8px);
+  z-index: -1;
+  pointer-events: none;
+}
 html.dark .dl-card::before { opacity: 1; }
 
 .metric-value { font-size: 28px; font-weight: 600; color: var(--tech-primary); text-shadow: var(--tech-glow); }
@@ -172,14 +186,17 @@ html.dark .el-table__border-left-patch { background-color: transparent !importan
 .el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--tech-primary) inset !important; }
 html.dark .el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--tech-primary) inset, 0 0 10px rgba(0, 224, 255, 0.35) !important; }
 
-/* ---------- 主按钮：浅色扁平实色 / 暗色霓虹渐变 ---------- */
-.el-button--primary { border: none; background: var(--tech-primary); transition: filter 0.2s ease, box-shadow 0.2s ease; }
-.el-button--primary:hover { filter: brightness(1.08); }
-html.dark .el-button--primary {
+/* ---------- 主按钮：浅色扁平实色 / 暗色霓虹渐变 ----------
+   只作用于"默认实心"主按钮。plain(描边)/link(文字)/text(文本) 三种变体必须排除：
+   它们本应是"透明底 + 主色字"，若被覆盖成实心底，就变成"实底主色 + 主色字"，
+   文字与底色同色而不可见（仅悬停 EP 翻白字时才看得见）。 */
+.el-button--primary:not(.is-plain):not(.is-link):not(.is-text) { border: none; background: var(--tech-primary); transition: filter 0.2s ease, box-shadow 0.2s ease; }
+.el-button--primary:not(.is-plain):not(.is-link):not(.is-text):hover { filter: brightness(1.08); }
+html.dark .el-button--primary:not(.is-plain):not(.is-link):not(.is-text) {
   background: linear-gradient(90deg, var(--tech-primary), var(--tech-primary-2));
   box-shadow: 0 0 14px rgba(0, 224, 255, 0.4);
 }
-html.dark .el-button--primary:hover { filter: brightness(1.12); }
+html.dark .el-button--primary:not(.is-plain):not(.is-link):not(.is-text):hover { filter: brightness(1.12); }
 
 /* ---------- 标签 / 进度条 ---------- */
 .el-tag { border-color: color-mix(in srgb, var(--tech-primary) 30%, transparent); }

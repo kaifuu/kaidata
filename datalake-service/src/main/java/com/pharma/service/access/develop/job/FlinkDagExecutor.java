@@ -47,10 +47,15 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
             Map<String, Object> cfg = (Map<String, Object>) data.getOrDefault("config", Map.of());
 
             if ("source".equals(type) || "sink".equals(type)) {
+                // Flink 连接器仅支持 table / kafka 系列；文件/REST/insert_update 等无对应连接器，显式报错，
+                // 与前端 support 矩阵（KETTLE_ONLY）对齐——避免生成 table-name 为空的废表静默失败。
+                if (!isFlinkSupportedEndpoint(kind))
+                    throw new RuntimeException("算子[" + kind + "]的 Flink 连接器尚未实现（FlinkSQL 仅支持 table / kafka_input / kafka_output）");
                 sql.append(buildCreateTable(name, kind, cfg)).append(";\n");
             } else if ("operator".equals(type)) {
                 String upstream = DagGraph.findUpstream(edges, id, alias);
-                sql.append(buildOperatorView(name, kind, cfg, upstream)).append(";\n");
+                List<String> upstreams = DagGraph.findUpstreams(edges, id, alias);
+                sql.append(buildOperatorView(name, kind, cfg, upstream, upstreams)).append(";\n");
             }
         }
         // sink 的 INSERT INTO ... SELECT * FROM 上游
@@ -66,6 +71,13 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
         Map<String, Object> translated = new LinkedHashMap<>(task);
         translated.put("sql_content", sql.toString());
         return sqlExecutor.execute(taskId, translated, log);
+    }
+
+    /** Flink 真正支持的 source/sink kind：table（jdbc）+ kafka 系列。其余（csv/excel/json/xml/text/rest/generate/insert_update）无连接器。 */
+    private static boolean isFlinkSupportedEndpoint(String kind) {
+        if (kind == null) return false;
+        String k = kind.toLowerCase();
+        return "table".equals(k) || "kafka".equals(k) || "kafka_input".equals(k) || "kafka_output".equals(k);
     }
 
     private String buildCreateTable(String name, String kind, Map<String, Object> cfg) {
@@ -87,7 +99,7 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
         return sb.toString();
     }
 
-    private String buildOperatorView(String name, String kind, Map<String, Object> cfg, String upstream) {
+    private String buildOperatorView(String name, String kind, Map<String, Object> cfg, String upstream, List<String> upstreams) {
         if (upstream == null) upstream = "flink_unknown";
         String k = kind == null ? "" : kind.toLowerCase();
         switch (k) {
@@ -135,9 +147,115 @@ public class FlinkDagExecutor extends AbstractHttpExecutor {
                 String col = str(cfg.getOrDefault("col", "*"));
                 return "CREATE VIEW " + name + " AS SELECT " + udf + "(" + col + ") FROM " + upstream;
             }
+            // —— 记录集连接（双上游）——
+            case "join": {
+                String left = !upstreams.isEmpty() ? upstreams.get(0) : upstream;
+                String right = upstreams.size() > 1 ? upstreams.get(1) : left;
+                String jt = str(cfg.getOrDefault("joinType", "INNER")).toUpperCase();
+                if (jt.isEmpty()) jt = "INNER";
+                String on = str(cfg.get("onExpr"));
+                if (on.isEmpty()) on = "1=1";
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + left + " " + jt + " JOIN " + right + " ON " + on;
+            }
+            // —— 字符串处理 ——
+            case "string_replace": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT *, REPLACE(" + col + ", " + quote(str(cfg.get("from")))
+                        + ", " + quote(str(cfg.get("to"))) + ") AS " + col + "_repl FROM " + upstream;
+            }
+            case "string_ops": {
+                String col = str(cfg.get("col")); String rule = str(cfg.get("expression"));
+                if (rule.isEmpty()) rule = col.isEmpty() ? "data" : col;
+                return "CREATE VIEW " + name + " AS SELECT *, " + rule + " AS " + (col.isEmpty() ? "data" : col) + "_ops FROM " + upstream;
+            }
+            case "split_field": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                String delim = str(cfg.getOrDefault("delimiter", ","));
+                return "CREATE VIEW " + name + " AS SELECT *, SPLIT_INDEX(" + col + ", " + quote(delim)
+                        + ", 0) AS " + col + "_split FROM " + upstream;
+            }
+            case "string_to_date": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                String fmt = str(cfg.getOrDefault("format", "yyyy-MM-dd"));
+                return "CREATE VIEW " + name + " AS SELECT *, TO_TIMESTAMP(" + col + ", " + quote(fmt)
+                        + ") AS " + col + "_dt FROM " + upstream;
+            }
+            case "exec_sql": {
+                String s = str(cfg.get("expression"));
+                String up = s.toUpperCase();
+                String body = (up.contains(" FROM ") || up.startsWith("SELECT"))
+                        ? s : "SELECT " + (s.isEmpty() ? "*" : s) + " FROM " + upstream;
+                return "CREATE VIEW " + name + " AS " + body;
+            }
+            // —— 数据清洗（校验类：WHERE 过滤）——
+            case "num_range": {
+                String col = str(cfg.get("col")); String rule = str(cfg.get("expression"));
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE ("
+                        + (rule.isEmpty() ? (col.isEmpty() ? "data" : col) + " IS NOT NULL" : rule) + ")";
+            }
+            case "null_check": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                String def = str(cfg.get("defaultVal"));
+                return def.isEmpty()
+                        ? "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE " + col + " IS NOT NULL"
+                        : "CREATE VIEW " + name + " AS SELECT *, COALESCE(" + col + ", " + quote(def) + ") AS " + col + "_filled FROM " + upstream;
+            }
+            case "dup_check": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE " + col
+                        + " IN (SELECT " + col + " FROM " + upstream + " GROUP BY " + col + " HAVING COUNT(*) > 1)";
+            }
+            case "url_check": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE " + col
+                        + " RLIKE " + quote("https?://[^\\s]+");
+            }
+            case "id_check": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE " + col
+                        + " RLIKE " + quote("^[1-9]\\d{5}(?:19|20)\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]$");
+            }
+            case "regex_check": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                String pat = str(cfg.get("pattern")); if (pat.isEmpty()) pat = ".*";
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE " + col + " RLIKE " + quote(pat);
+            }
+            case "data_validate": {
+                String rule = str(cfg.get("expression"));
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " WHERE (" + (rule.isEmpty() ? "1=1" : rule) + ")";
+            }
+            // —— 脱敏处理 ——
+            case "mask_partial": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                int head = intOr(cfg.get("keepHead"), 0), tail = intOr(cfg.get("keepTail"), 0);
+                String expr = "CONCAT(SUBSTRING(" + col + ",1," + head + "),'****',SUBSTRING(" + col
+                        + ",GREATEST(LENGTH(" + col + ")-" + (tail - 1) + ",1)," + tail + "))";
+                return "CREATE VIEW " + name + " AS SELECT *, " + expr + " AS " + col + "_masked FROM " + upstream;
+            }
+            case "mask_delete": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT *, NULL AS " + col + "_masked FROM " + upstream;
+            }
+            // —— 统计 / 采样 / 流程 ——
+            case "univariate": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                return "CREATE VIEW " + name + " AS SELECT COUNT(*) AS cnt, AVG(" + col + ") AS avg_val, MIN("
+                        + col + ") AS min_val, MAX(" + col + ") AS max_val, STDDEV_POP(" + col + ") AS stddev_val FROM " + upstream;
+            }
+            case "sampling": {
+                int size = intOr(cfg.get("size"), 100);
+                return "CREATE VIEW " + name + " AS SELECT * FROM " + upstream + " ORDER BY RAND() LIMIT " + size;
+            }
+            case "switch_case": {
+                String col = str(cfg.get("col")); if (col.isEmpty()) col = "data";
+                String rule = str(cfg.get("expression"));
+                String branch = rule.isEmpty() ? col : rule;
+                return "CREATE VIEW " + name + " AS SELECT *, CASE WHEN " + col + " IS NOT NULL THEN " + branch + " END AS branch FROM " + upstream;
+            }
             default:
-                // join 或未知算子：未实现翻译（规划中算子运行时报错，避免静默直通误导）
-                throw new RuntimeException("算子[" + kind + "]尚未实现执行翻译");
+                // js_code/java_code（任意代码）、rest_client（HTTP）、encrypt（AES/DES）、mask_random（随机）、stream_lookup（维表）：
+                // 纯 FlinkSQL 无法表达，保留"规划中"
+                throw new RuntimeException("算子[" + kind + "]尚未实现执行翻译（纯 FlinkSQL 无法表达：JS/Java代码、REST、加解密、随机、流查询）");
         }
     }
 

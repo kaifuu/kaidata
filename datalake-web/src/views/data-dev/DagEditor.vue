@@ -1,41 +1,54 @@
 <template>
   <div class="dag-wrap">
-    <!-- 左：节点面板（按 group 分组，拖到画布） -->
+    <!-- 左：节点面板（搜索 + 可折叠分组，拖到画布） -->
     <div class="dag-panel">
       <div class="dag-panel-title">
         <span>节点面板</span>
         <span class="dag-panel-sub">拖到画布</span>
       </div>
-      <div v-for="g in groups" :key="g" class="dag-cat">
-        <div class="dag-cat-title"><i class="cat-dot" :style="{ background: GROUP_COLOR[g] }"></i>{{ GROUP_LABEL[g] }}</div>
-        <div v-for="d in nodesOf(g)" :key="d.kind" class="dag-node-tpl" draggable="true"
-             @dragstart="onDragStart($event, d)" @dragend="onDragEnd">
-          <span class="tpl-icon" :style="{ background: GROUP_COLOR[g] + '22', color: GROUP_COLOR[g] }">{{ d.icon }}</span>
-          <span class="tpl-label">{{ d.label }}</span>
-          <span v-if="d.planned" class="tpl-badge">规划中</span>
+      <el-input v-model="search" size="small" placeholder="搜索节点…" clearable class="dag-search">
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <div v-for="g in visibleGroups" :key="g" class="dag-cat">
+        <div class="dag-cat-title" @click="toggleGroup(g)">
+          <i class="cat-dot" :style="{ background: GROUP_VAR[g] }"></i>
+          <span class="dag-cat-name">{{ GROUP_LABEL[g] }}</span>
+          <el-icon class="chevron" :class="{ open: !collapsed.has(g) }"><ArrowRight /></el-icon>
+        </div>
+        <div v-show="!collapsed.has(g)" class="dag-cat-body">
+          <div v-for="d in filteredNodesOf(g)" :key="d.kind" class="dag-node-tpl" draggable="true"
+               @dragstart="onDragStart($event, d)" @dragend="onDragEnd">
+            <span class="tpl-icon" :style="{ '--accent': GROUP_VAR[g] }"><StepIcon :icon="d.icon" :group="d.group" :kind="d.kind" :size="14" /></span>
+            <span class="tpl-label">{{ d.label }}</span>
+          </div>
         </div>
       </div>
+      <div v-if="!visibleGroups.length" class="dag-empty-tpl">无匹配节点</div>
       <div class="dag-tip">① 拖节点到画布　② 拖节点上下锚点连线　③ 双击节点编辑属性</div>
     </div>
 
     <!-- 中：画布 -->
     <div class="dag-canvas" @drop="onDrop" @dragover="onDragOver" @dragenter.prevent>
       <VueFlow :id="flowId" :fit-view-on-init="true" :delete-key-code="['Backspace','Delete']" :min-zoom="0.3" :max-zoom="2"
+               :default-edge-options="defaultEdgeOpts"
                @connect="onConnect" @node-click="onNodeClick" @pane-click="onPaneClick"
                @node-double-click="onNodeDoubleClick" @node-drag-stop="scheduleEmit" @nodes-change="onGraphChange" @edges-change="onGraphChange">
-        <Background :gap="18" :size="1.2" pattern-color="#2c3e55" />
+        <Background :gap="18" :size="1.2" :pattern-color="gridColor" />
         <Controls position="bottom-right" />
-        <MiniMap :node-color="miniColor" mask-color="rgba(8,14,22,0.7)" />
+        <MiniMap :node-color="miniColor" :mask-color="miniMask" />
         <template #node-step="{ data, selected: sel }">
-          <div class="step-node" :class="['cat-' + data.type, { 'step-sel': sel }]">
-            <Handle type="target" :position="Position.Top" />
-            <div class="step-head">
-              <span class="step-icon">{{ iconFor(data) }}</span>
-              <span class="step-label">{{ data.label }}</span>
-              <span v-if="plannedOf(data)" class="step-planned">规划中</span>
+          <div class="step-node" :class="['cat-' + data.type, { sel, planned: plannedOf(data) }]">
+            <Handle type="target" :position="Position.Top" class="hop-in" />
+            <div class="step-header">
+              <StepIcon :icon="iconFor(data)" :kind="data.kind" :group="groupOf(data)" :size="16" class="step-h-icon" />
+              <span class="step-title">{{ data.label }}</span>
+              <span v-if="plannedOf(data)" class="step-flag">引擎不支持</span>
             </div>
-            <div class="step-kind"><span class="kind-tag">{{ GROUP_LABEL[groupOf(data)] || data.type }}</span> · {{ data.kind }}</div>
-            <Handle type="source" :position="Position.Bottom" />
+            <div class="step-body">
+              <span class="step-cat-tag">{{ GROUP_LABEL[groupOf(data)] || data.type }}</span>
+              <span class="step-summary">{{ summaryOf(data) }}</span>
+            </div>
+            <Handle type="source" :position="Position.Bottom" class="hop-out" />
           </div>
         </template>
       </VueFlow>
@@ -49,7 +62,7 @@
       <template v-else>
         <div class="prop-row"><label>节点名称</label><el-input v-model="selected.data.label" size="small" @input="scheduleEmit" /></div>
         <div class="prop-row"><label>类别</label>
-          <div class="prop-cat"><i class="cat-dot" :style="{ background: CAT_COLOR[selected.data.type] }"></i>{{ GROUP_LABEL[groupOf(selected.data)] || selected.data.type }} · {{ selected.data.kind }}</div>
+          <div class="prop-cat"><i class="cat-dot" :style="{ background: GROUP_VAR[groupOf(selected.data)] || 'var(--tech-text-muted)' }"></i>{{ GROUP_LABEL[groupOf(selected.data)] || selected.data.type }} · {{ selected.data.kind }}</div>
         </div>
         <!-- complex 节点：右侧只给入口，详细配置走双击 dialog -->
         <div v-if="selectedDef?.complex" class="prop-complex">
@@ -86,12 +99,16 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import { VueFlow, useVueFlow, Handle, Position } from '@vue-flow/core'
+import { VueFlow, useVueFlow, Handle, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
+import { Search, ArrowRight } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { theme } from '@/theme'
 import NodeConfigDialog from './NodeConfigDialog.vue'
+import StepIcon from './StepIcon.vue'
+import { resolveIcon } from './dag-icons'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
@@ -104,10 +121,16 @@ type Field = {
   placeholder?: string; rows?: number
   options?: FieldOpt[]; selectMode?: 'table' | 'columns'; mappingType?: 'auto' | 'key'
 }
+// 引擎支持矩阵：缺省 = 两端都支持。
+//   KETTLE_ONLY = 纯 FlinkSQL 表达不了（JS/Java 代码、加解密、随机、REST、文件 IO、维表）
+//   FLINK_ONLY  = KettleXmlBuilder 未实现该 kind（udf）
+type EngineSupport = { flink: boolean; kettle: boolean }
+const KETTLE_ONLY: EngineSupport = { flink: false, kettle: true }
+const FLINK_ONLY: EngineSupport = { flink: true, kettle: false }
 type NodeDef = {
   kind: string; category: 'source' | 'operator' | 'sink'; group: string
   label: string; icon: string; fields: Field[]
-  planned?: boolean; complex?: boolean
+  complex?: boolean; support?: EngineSupport   // 缺省 = 两端都支持
 }
 
 const props = defineProps<{ modelValue?: string; jobType?: string }>()
@@ -118,9 +141,9 @@ const GROUP_LABEL: Record<string, string> = {
   input: '输入', transform: '数据转换', cleanse: '数据清洗', mask: '脱敏处理',
   query: '查询', stats: '统计', flow: '流程', output: '输出',
 }
-const GROUP_COLOR: Record<string, string> = {
-  input: '#67c23a', transform: '#409eff', cleanse: '#e6a23c', mask: '#f56c6c',
-  query: '#909399', stats: '#9b59b6', flow: '#1abc9c', output: '#d4830a',
+const GROUP_VAR: Record<string, string> = {
+  input: 'var(--tech-success)', transform: 'var(--tech-primary)', cleanse: 'var(--tech-warn)', mask: 'var(--tech-danger)',
+  query: 'var(--tech-text-muted)', stats: 'var(--tech-accent)', flow: 'var(--tech-primary-2)', output: 'var(--tech-warn)',
 }
 // 画布节点按 category 三色着色（后端语义）
 const CAT_COLOR: Record<string, string> = { source: '#67c23a', operator: '#409eff', sink: '#e6a23c' }
@@ -158,107 +181,141 @@ const CORE_OPS: NodeDef[] = [
   { kind: 'sort', category: 'operator', group: 'transform', label: '排序', icon: '↕️', fields: [F.orderBy(), F.limit()] },
   { kind: 'aggregate', category: 'operator', group: 'stats', label: '分组聚合', icon: 'Σ', fields: [F.groupKeys(), F.aggExpr()] },
 ]
-// 规划中算子（后端未实现翻译，运行报错）
-const PLANNED_OPS: NodeDef[] = [
-  { kind: 'join', category: 'operator', group: 'transform', label: '记录集连接', icon: '🔗', planned: true, complex: true, fields: [F.joinType(), F.onExpr()] },
-  { kind: 'string_replace', category: 'operator', group: 'transform', label: '字符串替换', icon: '🔁', planned: true, fields: [F.col(), { key: 'from', label: '查找', type: 'text' }, { key: 'to', label: '替换为', type: 'text' }] },
-  { kind: 'string_ops', category: 'operator', group: 'transform', label: '字符串操作', icon: '🔤', planned: true, fields: [F.col(), F.rule()] },
-  { kind: 'split_field', category: 'operator', group: 'transform', label: '拆分字段', icon: '✂️', planned: true, fields: [F.col(), { key: 'delimiter', label: '分隔符', type: 'text', placeholder: ',' }] },
-  { kind: 'string_to_date', category: 'operator', group: 'transform', label: '字符串转日期', icon: '📅', planned: true, fields: [F.col(), { key: 'format', label: '格式', type: 'text', placeholder: 'yyyy-MM-dd' }] },
-  { kind: 'js_code', category: 'operator', group: 'transform', label: 'JavaScript代码', icon: '📜', planned: true, fields: [{ key: 'expression', label: 'JS脚本', type: 'textarea', rows: 4 }] },
-  { kind: 'java_code', category: 'operator', group: 'transform', label: 'Java代码', icon: '☕', planned: true, fields: [{ key: 'expression', label: 'Java代码', type: 'textarea', rows: 4 }] },
-  { kind: 'exec_sql', category: 'operator', group: 'transform', label: '执行SQL脚本', icon: '🗄️', planned: true, fields: [{ key: 'expression', label: 'SQL', type: 'textarea', rows: 4 }] },
-  { kind: 'num_range', category: 'operator', group: 'cleanse', label: '数值范围判断', icon: '🔢', planned: true, fields: [F.col(), F.rule()] },
-  { kind: 'null_check', category: 'operator', group: 'cleanse', label: '空值判断', icon: '❓', planned: true, fields: [F.col(), { key: 'defaultVal', label: '默认值', type: 'text' }] },
-  { kind: 'dup_check', category: 'operator', group: 'cleanse', label: '重复判断', icon: '🔍', planned: true, fields: [F.col()] },
-  { kind: 'url_check', category: 'operator', group: 'cleanse', label: 'URL检验', icon: '🔗', planned: true, fields: [F.col()] },
-  { kind: 'id_check', category: 'operator', group: 'cleanse', label: '身份证检验', icon: '🪪', planned: true, fields: [F.col()] },
-  { kind: 'regex_check', category: 'operator', group: 'cleanse', label: '正则检验', icon: '📐', planned: true, fields: [F.col(), { key: 'pattern', label: '正则', type: 'text' }] },
-  { kind: 'data_validate', category: 'operator', group: 'cleanse', label: '数据校验', icon: '✅', planned: true, fields: [F.col(), F.rule()] },
-  { kind: 'mask_partial', category: 'operator', group: 'mask', label: '部分遮盖', icon: '🫥', planned: true, fields: [F.col(), { key: 'keepHead', label: '保留前N位', type: 'number' }, { key: 'keepTail', label: '保留后N位', type: 'number' }] },
-  { kind: 'mask_delete', category: 'operator', group: 'mask', label: '删除遮盖', icon: '🚫', planned: true, fields: [F.col()] },
-  { kind: 'mask_random', category: 'operator', group: 'mask', label: '随机遮盖', icon: '🎲', planned: true, fields: [F.col()] },
-  { kind: 'encrypt', category: 'operator', group: 'mask', label: '加解密', icon: '🔐', planned: true, fields: [F.col(), { key: 'encType', label: '加密类型', type: 'select', options: [{ label: 'AES', value: 'AES' }, { label: 'DES', value: 'DES' }] }] },
-  { kind: 'rest_client', category: 'operator', group: 'query', label: 'REST Client', icon: '🌐', planned: true, fields: [{ key: 'url', label: 'URL', type: 'text' }, { key: 'method', label: '方法', type: 'select', options: [{ label: 'GET', value: 'GET' }, { label: 'POST', value: 'POST' }] }] },
-  { kind: 'stream_lookup', category: 'operator', group: 'query', label: '流查询', icon: '🔎', planned: true, fields: [F.col(), F.onExpr()] },
-  { kind: 'univariate', category: 'operator', group: 'stats', label: '单变量统计', icon: '📊', planned: true, fields: [F.col()] },
-  { kind: 'sampling', category: 'operator', group: 'stats', label: '数据采样', icon: '🎯', planned: true, fields: [{ key: 'size', label: '取样数', type: 'number' }] },
-  { kind: 'switch_case', category: 'operator', group: 'flow', label: 'Switch case', icon: '🔀', planned: true, fields: [F.col(), F.rule()] },
+// 已实现 FlinkSQL 翻译的转换算子（flink_dag 可用，不再标"规划中"）
+const IMPL_OPS: NodeDef[] = [
+  { kind: 'join', category: 'operator', group: 'transform', label: '记录集连接', icon: '🔗', complex: true, fields: [F.joinType(), F.onExpr()] },
+  { kind: 'string_replace', category: 'operator', group: 'transform', label: '字符串替换', icon: '🔁', fields: [F.col(), { key: 'from', label: '查找', type: 'text' }, { key: 'to', label: '替换为', type: 'text' }] },
+  { kind: 'string_ops', category: 'operator', group: 'transform', label: '字符串操作', icon: '🔤', fields: [F.col(), F.rule()] },
+  { kind: 'split_field', category: 'operator', group: 'transform', label: '拆分字段', icon: '✂️', fields: [F.col(), { key: 'delimiter', label: '分隔符', type: 'text', placeholder: ',' }] },
+  { kind: 'string_to_date', category: 'operator', group: 'transform', label: '字符串转日期', icon: '📅', fields: [F.col(), { key: 'format', label: '格式', type: 'text', placeholder: 'yyyy-MM-dd' }] },
+  { kind: 'exec_sql', category: 'operator', group: 'transform', label: '执行SQL脚本', icon: '🗄️', fields: [{ key: 'expression', label: 'SQL', type: 'textarea', rows: 4 }] },
+  { kind: 'num_range', category: 'operator', group: 'cleanse', label: '数值范围判断', icon: '🔢', fields: [F.col(), F.rule()] },
+  { kind: 'null_check', category: 'operator', group: 'cleanse', label: '空值判断', icon: '❓', fields: [F.col(), { key: 'defaultVal', label: '默认值', type: 'text' }] },
+  { kind: 'dup_check', category: 'operator', group: 'cleanse', label: '重复判断', icon: '🔍', fields: [F.col()] },
+  { kind: 'url_check', category: 'operator', group: 'cleanse', label: 'URL检验', icon: '🔗', fields: [F.col()] },
+  { kind: 'id_check', category: 'operator', group: 'cleanse', label: '身份证检验', icon: '🪪', fields: [F.col()] },
+  { kind: 'regex_check', category: 'operator', group: 'cleanse', label: '正则检验', icon: '📐', fields: [F.col(), { key: 'pattern', label: '正则', type: 'text' }] },
+  { kind: 'data_validate', category: 'operator', group: 'cleanse', label: '数据校验', icon: '✅', fields: [F.col(), F.rule()] },
+  { kind: 'mask_partial', category: 'operator', group: 'mask', label: '部分遮盖', icon: '🫥', fields: [F.col(), { key: 'keepHead', label: '保留前N位', type: 'number' }, { key: 'keepTail', label: '保留后N位', type: 'number' }] },
+  { kind: 'mask_delete', category: 'operator', group: 'mask', label: '删除遮盖', icon: '🚫', fields: [F.col()] },
+  { kind: 'univariate', category: 'operator', group: 'stats', label: '单变量统计', icon: '📊', fields: [F.col()] },
+  { kind: 'sampling', category: 'operator', group: 'stats', label: '数据采样', icon: '🎯', fields: [{ key: 'size', label: '取样数', type: 'number' }] },
+  { kind: 'switch_case', category: 'operator', group: 'flow', label: 'Switch case', icon: '🔀', fields: [F.col(), F.rule()] },
+]
+// 仅 Kettle/Hop 支持的算子（纯 FlinkSQL 表达不了：任意代码执行 / HTTP / 加解密 / 随机 / 维表）—— support: KETTLE_ONLY
+const KETTLE_ONLY_OPS: NodeDef[] = [
+  { kind: 'js_code', category: 'operator', group: 'transform', label: 'JavaScript代码', icon: '📜', support: KETTLE_ONLY, fields: [{ key: 'expression', label: 'JS脚本', type: 'textarea', rows: 4 }] },
+  { kind: 'java_code', category: 'operator', group: 'transform', label: 'Java代码', icon: '☕', support: KETTLE_ONLY, fields: [{ key: 'expression', label: 'Java代码', type: 'textarea', rows: 4 }] },
+  { kind: 'mask_random', category: 'operator', group: 'mask', label: '随机遮盖', icon: '🎲', support: KETTLE_ONLY, fields: [F.col()] },
+  { kind: 'encrypt', category: 'operator', group: 'mask', label: '加解密', icon: '🔐', support: KETTLE_ONLY, fields: [F.col(), { key: 'encType', label: '加密类型', type: 'select', options: [{ label: 'AES', value: 'AES' }, { label: 'DES', value: 'DES' }] }] },
+  { kind: 'rest_client', category: 'operator', group: 'query', label: 'REST Client', icon: '🌐', support: KETTLE_ONLY, fields: [{ key: 'url', label: 'URL', type: 'text' }, { key: 'method', label: '方法', type: 'select', options: [{ label: 'GET', value: 'GET' }, { label: 'POST', value: 'POST' }] }] },
+  { kind: 'stream_lookup', category: 'operator', group: 'query', label: '流查询', icon: '🔎', support: KETTLE_ONLY, fields: [F.col(), F.onExpr()] },
 ]
 
-// 表输入节点（complex，数据源驱动）
+// 表输入节点（complex，数据源驱动；两端均支持）
 const tableInput = (kind: string): NodeDef => ({
-  kind, category: 'source', group: 'input', label: '表输入', icon: '📥', complex: true, planned: false,
+  kind, category: 'source', group: 'input', label: '表输入', icon: '📥', complex: true,
   fields: [sourceTable('columns'), F.limit(), { key: 'allowLazyConversion', label: '允许简易转换', type: 'switch' }, { key: 'incremental', label: '增量获取', type: 'switch' }, { key: 'incrementalField', label: '增量字段', type: 'text', placeholder: '时间类型字段' }, sqlEditor()],
 })
-// 表输出节点（complex）
+// 表输出节点（complex；两端均支持）
 const tableOutput = (kind: string): NodeDef => ({
-  kind, category: 'sink', group: 'output', label: '表输出', icon: '📤', complex: true, planned: false,
+  kind, category: 'sink', group: 'output', label: '表输出', icon: '📤', complex: true,
   fields: [sourceTable('table'), fieldMapping()],
 })
-// 插入/更新（planned, complex）
+// 插入/更新（仅 Kettle；Flink 无 upsert 语义翻译）
 const INSERT_UPDATE: NodeDef = {
-  kind: 'insert_update', category: 'sink', group: 'output', label: '插入/更新', icon: '💾', planned: true, complex: true,
+  kind: 'insert_update', category: 'sink', group: 'output', label: '插入/更新', icon: '💾', support: KETTLE_ONLY, complex: true,
   fields: [sourceTable('table'), keyMapping(), { key: 'updateFields', label: '更新字段', type: 'fieldsTable', mappingType: 'auto' }],
 }
 
-const CATALOG: Record<string, NodeDef[]> = {
-  flink_dag: [
-    tableInput('table'),
-    { kind: 'kafka', category: 'source', group: 'input', label: 'Kafka消费', icon: '📨', planned: false, fields: [F.topic(), F.fields()] },
-    { kind: 'csv_input', category: 'source', group: 'input', label: 'CSV文件输入', icon: '📄', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
-    { kind: 'excel_input', category: 'source', group: 'input', label: 'Excel文件输入', icon: '📊', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
-    { kind: 'json_input', category: 'source', group: 'input', label: 'Json输入', icon: '📋', planned: true, fields: [F.fields()] },
-    { kind: 'generate_rows', category: 'source', group: 'input', label: '生成记录', icon: '⚙️', planned: true, fields: [F.fields()] },
-    { kind: 'rest_input', category: 'source', group: 'input', label: 'REST Client输入', icon: '🌐', planned: true, fields: [{ key: 'url', label: 'URL', type: 'text' }] },
-    { kind: 'xml_input', category: 'source', group: 'input', label: 'XML文件输入', icon: '📄', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
-    { kind: 'text_input', category: 'source', group: 'input', label: '文本文件输入', icon: '📝', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
-    ...CORE_OPS,
-    { kind: 'udf', category: 'operator', group: 'transform', label: 'UDF函数', icon: '🔧', planned: false, fields: [{ key: 'udf', label: '函数名', type: 'text', placeholder: 'identity' }, F.col()] },
-    ...PLANNED_OPS,
-    tableOutput('table'),
-    { kind: 'kafka', category: 'sink', group: 'output', label: 'Kafka输出', icon: '📨', planned: false, fields: [F.topic()] },
-    { kind: 'excel_output', category: 'sink', group: 'output', label: 'Excel输出', icon: '📋', planned: true, fields: [{ key: 'path', label: '输出路径', type: 'text' }] },
-    INSERT_UPDATE,
-    { kind: 'json_output', category: 'sink', group: 'output', label: 'Json输出', icon: '📋', planned: true, fields: [F.fields()] },
-  ],
-  kettle_hop: [
-    tableInput('table_input'),
-    { kind: 'csv_input', category: 'source', group: 'input', label: 'CSV文件输入', icon: '📄', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
-    { kind: 'excel_input', category: 'source', group: 'input', label: 'Excel文件输入', icon: '📊', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
-    { kind: 'kafka_input', category: 'source', group: 'input', label: 'Kafka消费', icon: '📨', planned: true, fields: [F.topic(), F.fields()] },
-    { kind: 'json_input', category: 'source', group: 'input', label: 'Json输入', icon: '📋', planned: true, fields: [F.fields()] },
-    { kind: 'generate_rows', category: 'source', group: 'input', label: '生成记录', icon: '⚙️', planned: true, fields: [F.fields()] },
-    { kind: 'rest_input', category: 'source', group: 'input', label: 'REST Client输入', icon: '🌐', planned: true, fields: [{ key: 'url', label: 'URL', type: 'text' }] },
-    { kind: 'xml_input', category: 'source', group: 'input', label: 'XML文件输入', icon: '📄', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
-    { kind: 'text_input', category: 'source', group: 'input', label: '文本文件输入', icon: '📝', planned: true, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
-    ...CORE_OPS,
-    ...PLANNED_OPS,
-    tableOutput('table_output'),
-    { kind: 'kafka_output', category: 'sink', group: 'output', label: 'Kafka输出', icon: '📨', planned: true, fields: [F.topic()] },
-    { kind: 'excel_output', category: 'sink', group: 'output', label: 'Excel输出', icon: '📋', planned: true, fields: [{ key: 'path', label: '输出路径', type: 'text' }] },
-    INSERT_UPDATE,
-    { kind: 'json_output', category: 'sink', group: 'output', label: 'Json输出', icon: '📋', planned: true, fields: [F.fields()] },
-  ],
-}
+// 全量算子目录（flink_dag / kettle_hop 共用同一面板，按 support 矩阵 + 当前引擎过滤）。
+// 注意：DAG 引擎绑定、不可跨引擎移植——同名 kind 在两端语义可能不同（如 join 排序要求、aggregate 实现）；
+//       共用仅限编排 UX。kind 统一为 table / kafka_input / kafka_output（两端后端均兼容）。
+const SHARED_OPS: NodeDef[] = [
+  // —— 输入 ——
+  tableInput('table'),
+  { kind: 'kafka_input', category: 'source', group: 'input', label: 'Kafka消费', icon: '📨', fields: [F.topic(), F.fields()] },
+  { kind: 'csv_input', category: 'source', group: 'input', label: 'CSV文件输入', icon: '📄', support: KETTLE_ONLY, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
+  { kind: 'excel_input', category: 'source', group: 'input', label: 'Excel文件输入', icon: '📊', support: KETTLE_ONLY, fields: [{ key: 'path', label: '文件路径', type: 'text' }, F.fields()] },
+  { kind: 'json_input', category: 'source', group: 'input', label: 'Json输入', icon: '📋', support: KETTLE_ONLY, fields: [F.fields()] },
+  { kind: 'generate_rows', category: 'source', group: 'input', label: '生成记录', icon: '⚙️', support: KETTLE_ONLY, fields: [F.fields()] },
+  { kind: 'rest_input', category: 'source', group: 'input', label: 'REST Client输入', icon: '🌐', support: KETTLE_ONLY, fields: [{ key: 'url', label: 'URL', type: 'text' }] },
+  { kind: 'xml_input', category: 'source', group: 'input', label: 'XML文件输入', icon: '📄', support: KETTLE_ONLY, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
+  { kind: 'text_input', category: 'source', group: 'input', label: '文本文件输入', icon: '📝', support: KETTLE_ONLY, fields: [{ key: 'path', label: '文件路径', type: 'text' }] },
+  // —— 转换 / 清洗 / 脱敏 / 查询 / 统计 / 流程 ——
+  ...CORE_OPS,
+  ...IMPL_OPS,
+  { kind: 'udf', category: 'operator', group: 'transform', label: 'UDF函数', icon: '🔧', support: FLINK_ONLY, fields: [{ key: 'udf', label: '函数名', type: 'text', placeholder: 'identity' }, F.col()] },
+  ...KETTLE_ONLY_OPS,
+  // —— 输出 ——
+  tableOutput('table'),
+  { kind: 'kafka_output', category: 'sink', group: 'output', label: 'Kafka输出', icon: '📨', fields: [F.topic()] },
+  { kind: 'excel_output', category: 'sink', group: 'output', label: 'Excel输出', icon: '📋', support: KETTLE_ONLY, fields: [{ key: 'path', label: '输出路径', type: 'text' }] },
+  INSERT_UPDATE,
+  { kind: 'json_output', category: 'sink', group: 'output', label: 'Json输出', icon: '📋', support: KETTLE_ONLY, fields: [F.fields()] },
+]
 
-const defs = computed<NodeDef[]>(() => {
-  const list = CATALOG[props.jobType || 'flink_dag'] || []
-  // kettle_hop 走 Hop 引擎执行（KettleHopExecutor），所有算子都能跑，去掉"规划中"徽标
-  return props.jobType === 'kettle_hop' ? list.map((d) => ({ ...d, planned: false })) : list
-})
+// 当前执行引擎：'flink' | 'kettle'
+const engine = computed<'flink' | 'kettle'>(() => (props.jobType || 'flink_dag') === 'flink_dag' ? 'flink' : 'kettle')
+// 算子是否支持指定引擎（缺省 support = 两端都支持）
+function supportedOn(def: NodeDef, eng: 'flink' | 'kettle' = engine.value): boolean { return def.support?.[eng] ?? true }
+// 全量目录（含两端专属算子），供画布节点 defOf 解析；面板渲染走 paletteDefs 按引擎过滤
+const defs = computed<NodeDef[]>(() => SHARED_OPS)
+// 面板可见算子：仅当前引擎支持的（不支持的算子不出现在左面板，也无法新增）
+const paletteDefs = computed<NodeDef[]>(() => defs.value.filter((d) => supportedOn(d)))
+// 分组也按引擎过滤：某组在当前引擎下无任何可用算子时整组隐藏（如 flink 下的"查询"组）
 const groups = computed(() => {
   const seen: string[] = []
-  for (const d of defs.value) if (!seen.includes(d.group)) seen.push(d.group)
+  for (const d of paletteDefs.value) if (!seen.includes(d.group)) seen.push(d.group)
   return seen
 })
-function nodesOf(g: string) { return defs.value.filter((d) => d.group === g) }
+function nodesOf(g: string) { return paletteDefs.value.filter((d) => d.group === g) }
 function defOf(category: string, kind: string) { return defs.value.find((d) => d.category === category && d.kind === kind) }
 function fieldsOf(node: any): Field[] { return defOf(node.data.type, node.data.kind)?.fields || [] }
-function iconFor(data: any) { return defOf(data.type, data.kind)?.icon || (data.type === 'source' ? '📥' : data.type === 'sink' ? '📤' : '⚙️') }
+function iconFor(data: any): string { const def = defOf(data.type, data.kind); return resolveIcon(def?.icon, def?.group, data.kind) }
 function groupOf(data: any) { return defOf(data.type, data.kind)?.group || '' }
-function plannedOf(data: any) { return defOf(data.type, data.kind)?.planned }
+// 当前引擎是否不支持该画布节点（仅旧数据/跨引擎数据会出现：面板已按引擎过滤，新增不出来）
+function plannedOf(data: any) { const def = defOf(data.type, data.kind); return def ? !supportedOn(def) : false }
 function miniColor(n: any) { return CAT_COLOR[n.data?.type] || '#6b7d96' }
+
+// hop 连线：smoothstep 折线 + 末端箭头（经 vue-flow parseEdge 自动合并到重载边，serialize 不变）
+const defaultEdgeOpts = { type: 'smoothstep', animated: true, markerEnd: MarkerType.ArrowClosed }
+const gridColor = computed(() => (theme.isDark.value ? 'rgba(0,224,255,0.07)' : 'rgba(21,87,239,0.08)'))
+const miniMask = computed(() => (theme.isDark.value ? 'rgba(6,12,28,0.7)' : 'rgba(21,87,239,0.07)'))
+
+// hop 类型着色：按 source 节点 category 运行时推导（class 字段 serialize 时自动剔除，不污染 dag_json）
+function hopClass(e: any): string {
+  let src: string | undefined
+  try { src = (toObject().nodes || []).find((n: any) => n.id === e.source)?.data?.type } catch { /* */ }
+  return src === 'sink' ? 'hop-error' : 'hop-data'
+}
+
+// 节点配置摘要（Kettle step body 元信息）
+function summaryOf(data: any): string {
+  const c = data?.config
+  if (c?.tableName) return c.tableName
+  if (Array.isArray(c?.fields) && c.fields.length) return `${c.fields.length} 字段`
+  if (c?.topic) return c.topic
+  return data?.kind || ''
+}
+
+// 左面板：搜索 + 折叠（记忆到 localStorage，按 jobType 隔离）
+const search = ref('')
+const COLLAPSE_KEY = 'dag_collapsed_' + (props.jobType || 'flink_dag')
+const collapsed = ref<Set<string>>(new Set<string>(((JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]')) as string[]) || []))
+function toggleGroup(g: string) {
+  const s = new Set(collapsed.value)
+  if (s.has(g)) s.delete(g); else s.add(g)
+  collapsed.value = s
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s]))
+}
+function matchSearch(d: NodeDef): boolean {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return true
+  return d.label.toLowerCase().includes(q) || d.kind.toLowerCase().includes(q)
+}
+const visibleGroups = computed(() => groups.value.filter((g) => nodesOf(g).some((d) => matchSearch(d))))
+function filteredNodesOf(g: string) { return nodesOf(g).filter((d) => matchSearch(d)) }
 function defaultConfig(def: NodeDef): Record<string, any> {
   const c: Record<string, any> = {}
   for (const f of def.fields) {
@@ -310,7 +367,7 @@ watch(() => props.modelValue, (v) => {
       id: n.id, type: 'step', position: n.position || { x: 0, y: 0 },
       data: { label: n.data?.label ?? n.kind ?? '节点', type: n.data?.type ?? n.type ?? 'operator', kind: n.data?.kind ?? '', config: n.data?.config ?? {} },
     })))
-    setEdges((dag.edges || []).map((e: any) => ({ id: e.id, source: e.source, target: e.target })))
+    setEdges((dag.edges || []).map((e: any) => ({ id: e.id, source: e.source, target: e.target, class: hopClass(e) })))
   } catch { /* ignore */ }
   nextTick(() => { suppress = false; lastEmitted = serialize() })
   empty.value = nodeCount() === 0
@@ -355,7 +412,7 @@ function onConnect(params: any) {
   if (params.source === params.target) return        // 防自环
   const exist = toObject().edges?.some((e: any) => e.source === params.source && e.target === params.target)
   if (exist) return                                   // 防重复边
-  addEdges({ ...params, animated: true })
+  addEdges({ ...params, ...defaultEdgeOpts, class: hopClass(params) })
 }
 function onNodeClick({ node }: any) { selected.value = node }
 function onNodeDoubleClick({ node }: any) {
@@ -414,7 +471,7 @@ function validate(): { ok: boolean; errors: string[]; warnings: string[] } {
   for (const n of nodes) {
     const def = defOf(n.data?.type, n.data?.kind)
     if (!def) continue
-    if (def.planned) warnings.push(`节点[${n.data?.label}]为规划中算子[${def.kind}]，运行将失败`)
+    if (!supportedOn(def)) errors.push(`节点[${n.data?.label}]算子[${def.kind}]不支持当前引擎（${engine.value === 'flink' ? 'FlinkSQL' : 'Kettle/Hop'}），请删除或更换`)
     for (const f of def.fields) {
       if (f.type === 'sourceTable') {
         if (!n.data?.config?.tableName) errors.push(`节点[${n.data?.label}]未选择表`)
@@ -455,62 +512,77 @@ defineExpose({ validate, serialize })
 </script>
 
 <style scoped>
-.dag-wrap { display: flex; gap: 8px; height: 100%; min-height: 420px; border: 1px solid var(--tech-panel-border, #2a3a52); border-radius: 8px; overflow: hidden; background: #0a111c; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
+.dag-wrap { display: flex; gap: 8px; height: 100%; min-height: 420px; border: 1px solid var(--tech-panel-border); border-radius: 8px; overflow: hidden; background: var(--tech-bg-2); box-shadow: var(--tech-shadow); }
 
 /* 左面板 */
-.dag-panel { width: 168px; flex-shrink: 0; background: linear-gradient(180deg, rgba(20,30,46,0.95), rgba(14,22,34,0.95)); padding: 10px; overflow-y: auto; border-right: 1px solid rgba(255,255,255,0.05); }
-.dag-panel-title { display: flex; align-items: baseline; justify-content: space-between; font-size: 12px; color: #c8d4e3; font-weight: 700; margin-bottom: 10px; letter-spacing: .5px; }
-.dag-panel-sub { font-size: 10px; color: #5d7088; font-weight: 400; }
-.dag-cat { margin-bottom: 10px; }
-.dag-cat-title { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8295ad; margin: 2px 0 6px; font-weight: 600; }
-.cat-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.dag-node-tpl { display: flex; align-items: center; gap: 7px; padding: 7px 9px; margin-bottom: 6px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 6px; cursor: grab; font-size: 12px; color: #cfdcec; transition: transform .12s, border-color .12s, background .12s; }
-.dag-node-tpl:hover { transform: translateY(-1px); border-color: rgba(64,158,255,0.6); background: rgba(64,158,255,0.08); }
+.dag-panel { width: 176px; flex-shrink: 0; background: var(--tech-panel); padding: 10px; overflow-y: auto; border-right: 1px solid var(--tech-panel-border); }
+.dag-panel-title { display: flex; align-items: baseline; justify-content: space-between; font-size: 12px; color: var(--tech-text); font-weight: 700; margin-bottom: 8px; letter-spacing: .5px; }
+.dag-panel-sub { font-size: 10px; color: var(--tech-text-muted); font-weight: 400; }
+.dag-search { margin-bottom: 8px; }
+.dag-cat { margin-bottom: 6px; }
+.dag-cat-title { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--tech-text-muted); margin: 2px 0 4px; font-weight: 600; cursor: pointer; user-select: none; padding: 2px 0; border-radius: 4px; }
+.dag-cat-title:hover { color: var(--tech-text); }
+.dag-cat-name { flex: 1; }
+.cat-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.chevron { font-size: 10px; color: var(--tech-text-muted); transition: transform .15s; }
+.chevron.open { transform: rotate(90deg); }
+.dag-cat-body { padding-left: 2px; }
+.dag-node-tpl { display: flex; align-items: center; gap: 7px; padding: 6px 8px; margin-bottom: 4px; background: var(--el-fill-color-light); border: 1px solid var(--tech-panel-border); border-radius: 6px; cursor: grab; font-size: 12px; color: var(--tech-text); transition: transform .12s, border-color .12s, background .12s; }
+.dag-node-tpl:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--tech-primary) 45%, transparent); background: color-mix(in srgb, var(--tech-primary) 8%, var(--el-fill-color-light)); }
 .dag-node-tpl:active { cursor: grabbing; }
-.tpl-icon { width: 22px; height: 22px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+.tpl-icon { width: 22px; height: 22px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--accent, var(--tech-text-muted)); background: color-mix(in srgb, var(--accent, var(--tech-text-muted)) 16%, transparent); }
 .tpl-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tpl-badge { font-size: 9px; color: #e6a23c; border: 1px solid #e6a23c44; padding: 0 4px; border-radius: 3px; margin-left: auto; line-height: 1.4; flex-shrink: 0; }
-.dag-tip { color: #5d7088; font-size: 11px; line-height: 1.6; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.07); }
+.tpl-badge { font-size: 9px; color: var(--tech-warn); border: 1px solid color-mix(in srgb, var(--tech-warn) 40%, transparent); padding: 0 4px; border-radius: 3px; margin-left: auto; line-height: 1.4; flex-shrink: 0; }
+.dag-empty-tpl { color: var(--tech-text-muted); font-size: 11px; text-align: center; padding: 16px 4px; }
+.dag-tip { color: var(--tech-text-muted); font-size: 11px; line-height: 1.6; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--tech-panel-border); }
 
 /* 画布 */
-.dag-canvas { flex: 1; position: relative; background: radial-gradient(ellipse at center, #131e2e 0%, #0a111c 80%); }
-.dag-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #3d4e66; font-size: 13px; pointer-events: none; letter-spacing: 1px; }
+.dag-canvas { flex: 1; position: relative; background: var(--tech-bg); }
+.dag-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--tech-text-muted); font-size: 13px; pointer-events: none; letter-spacing: 1px; opacity: .5; }
 
 /* 右属性面板 */
-.dag-prop { width: 270px; flex-shrink: 0; background: linear-gradient(180deg, rgba(20,30,46,0.95), rgba(14,22,34,0.95)); padding: 10px; overflow-y: auto; border-left: 1px solid rgba(255,255,255,0.05); }
-.dag-prop-empty { color: #5d7088; font-size: 12px; padding: 20px 4px; text-align: center; }
+.dag-prop { width: 272px; flex-shrink: 0; background: var(--tech-panel); padding: 10px; overflow-y: auto; border-left: 1px solid var(--tech-panel-border); }
+.dag-prop-empty { color: var(--tech-text-muted); font-size: 12px; padding: 20px 4px; text-align: center; }
 .prop-row { margin-bottom: 11px; }
-.prop-row label { display: block; font-size: 11px; color: #8295ad; margin-bottom: 4px; }
-.prop-cat { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #cfdcec; }
-.prop-complex { background: rgba(64,158,255,0.06); border: 1px dashed rgba(64,158,255,0.4); border-radius: 6px; padding: 12px; margin-bottom: 12px; text-align: center; }
-.prop-complex-hint { color: #5d7088; font-size: 11px; margin-top: 6px; }
-.prop-complex-info { display: flex; justify-content: center; gap: 10px; margin-top: 8px; font-size: 11px; color: #8295ad; }
+.prop-row label { display: block; font-size: 11px; color: var(--tech-text-muted); margin-bottom: 4px; }
+.prop-cat { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tech-text); }
+.prop-complex { background: color-mix(in srgb, var(--tech-primary) 7%, transparent); border: 1px dashed color-mix(in srgb, var(--tech-primary) 40%, transparent); border-radius: 6px; padding: 12px; margin-bottom: 12px; text-align: center; }
+.prop-complex-hint { color: var(--tech-text-muted); font-size: 11px; margin-top: 6px; }
+.prop-complex-info { display: flex; justify-content: center; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--tech-text-muted); }
 .mono :deep(textarea) { font-family: ui-monospace, Menlo, Consolas, monospace; }
 .num { width: 100%; }
 
-/* 自定义节点 */
-.step-node { min-width: 124px; background: linear-gradient(180deg, #23344f 0%, #1a2738 100%); border: 1px solid #2f4263; border-left: 4px solid #6b7d96; border-radius: 7px; box-shadow: 0 4px 14px rgba(0,0,0,0.5); transition: box-shadow .15s, transform .12s; font-size: 12px; color: #e3edf9; }
-.step-node:hover { transform: translateY(-1px); }
-.step-node.cat-source { border-left-color: #67c23a; }
-.step-node.cat-operator { border-left-color: #409eff; }
-.step-node.cat-sink { border-left-color: #e6a23c; }
-.step-node.step-sel { box-shadow: 0 0 0 2px #409eff, 0 8px 22px rgba(64,158,255,0.45); }
-.step-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px 4px; }
-.step-icon { font-size: 15px; line-height: 1; }
-.step-label { font-weight: 600; color: #eef4fb; white-space: nowrap; }
-.step-planned { font-size: 9px; color: #e6a23c; border: 1px solid #e6a23c44; padding: 0 4px; border-radius: 3px; margin-left: auto; }
-.step-kind { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #7d92ad; padding: 3px 10px 8px; }
-.kind-tag { background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 8px; }
+/* 自定义节点（Kettle step 卡片：顶部彩色 header + body + 显式 hop 锚点） */
+.step-node { --step-accent: var(--tech-text-muted); min-width: 152px; border-radius: 8px; overflow: hidden; background: var(--tech-panel); border: 1px solid var(--tech-panel-border); box-shadow: var(--tech-shadow); color: var(--tech-text); font-size: 12px; transition: box-shadow .15s, transform .12s, border-color .15s; }
+.step-node.cat-source { --step-accent: var(--tech-success); }
+.step-node.cat-operator { --step-accent: var(--tech-primary); }
+.step-node.cat-sink { --step-accent: var(--tech-warn); }
+.step-node:hover { transform: translateY(-1px); border-color: var(--step-accent); }
+.step-node.sel { box-shadow: 0 0 0 2px var(--step-accent), var(--tech-shadow); }
+.step-node.planned { opacity: .92; }
+.step-header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: color-mix(in srgb, var(--step-accent) 14%, var(--tech-panel)); border-left: 3px solid var(--step-accent); }
+.step-h-icon { color: var(--step-accent); flex-shrink: 0; }
+.step-title { font-weight: 600; color: var(--tech-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.step-flag { font-size: 9px; color: var(--tech-warn); border: 1px solid color-mix(in srgb, var(--tech-warn) 40%, transparent); padding: 0 4px; border-radius: 3px; flex-shrink: 0; }
+.step-body { display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px; }
+.step-cat-tag { font-size: 10px; color: var(--step-accent); background: color-mix(in srgb, var(--step-accent) 14%, transparent); padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.step-summary { font-size: 10px; color: var(--tech-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 连接点 / 连线 */
-.dag-canvas :deep(.vue-flow__handle) { width: 9px; height: 9px; background: #5b7050; border: 2px solid #0a111c; }
-.dag-canvas :deep(.vue-flow__handle.source) { background: #409eff; }
-.dag-canvas :deep(.vue-flow__handle.target) { background: #67c23a; }
-.dag-canvas :deep(.vue-flow__edge-path) { stroke: #3d5474; stroke-width: 2; }
-.dag-canvas :deep(.vue-flow__edge.selected .vue-flow__edge-path),
-.dag-canvas :deep(.vue-flow__edge:hover .vue-flow__edge-path) { stroke: #409eff; }
+/* 连接点 / hop 连线 */
+.dag-canvas :deep(.vue-flow__handle) { width: 10px; height: 10px; border: 2px solid var(--tech-panel); }
+.dag-canvas :deep(.vue-flow__handle.hop-in) { background: var(--tech-success); }
+.dag-canvas :deep(.vue-flow__handle.hop-out) { background: var(--tech-primary); }
+.dag-canvas :deep(.vue-flow__edge-path) { stroke: var(--tech-primary); stroke-width: 2; }
+.dag-canvas :deep(.vue-flow__edge.hop-error .vue-flow__edge-path) { stroke: var(--tech-danger); }
+.dag-canvas :deep(.vue-flow__edge:hover .vue-flow__edge-path),
+.dag-canvas :deep(.vue-flow__edge.selected .vue-flow__edge-path) { stroke: var(--tech-accent); stroke-width: 2.5; }
 .dag-canvas :deep(.vue-flow__edge.animated .vue-flow__edge-path) { stroke-dasharray: 6 4; animation: dash 1s linear infinite; }
 @keyframes dash { to { stroke-dashoffset: -10; } }
-.dag-canvas :deep(.vue-flow__controls) { box-shadow: 0 2px 8px rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; }
-.dag-canvas :deep(.vue-flow__minimap) { border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+
+/* vue-flow 内置组件：双主题适配（浅色下不黑成一团） */
+.dag-canvas :deep(.vue-flow__controls) { box-shadow: var(--tech-shadow); border-radius: 6px; overflow: hidden; border: 1px solid var(--tech-panel-border); }
+.dag-canvas :deep(.vue-flow__controls-button) { background: var(--tech-panel); border-bottom: 1px solid var(--tech-panel-border); color: var(--tech-text-muted); fill: var(--tech-text-muted); }
+.dag-canvas :deep(.vue-flow__controls-button:hover) { background: var(--el-fill-color); }
+.dag-canvas :deep(.vue-flow__controls-button svg) { fill: var(--tech-text-muted); }
+.dag-canvas :deep(.vue-flow__minimap) { border-radius: 6px; overflow: hidden; background: var(--tech-panel); border: 1px solid var(--tech-panel-border); }
 </style>

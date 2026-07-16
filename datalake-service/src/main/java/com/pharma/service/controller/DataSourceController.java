@@ -173,7 +173,9 @@ public class DataSourceController {
             r.put("indices", ((ElasticsearchAdapter) a).listIndices(ds));
             return r;
         }
-        return a.listTables(registry.getPool(ds), schema);
+        // schema 为空时按数据源配置的 db_name 过滤：避免整个实例所有库表涌入（配了 ods 就只看 ods 库）
+        String effectiveSchema = (schema != null && !schema.isEmpty()) ? schema : ds.dbName;
+        return a.listTables(registry.getPool(ds), effectiveSchema);
     }
 
     @GetMapping("/columns")
@@ -192,7 +194,7 @@ public class DataSourceController {
     private List<String> usagesOf(long id) {
         List<String> modules = new ArrayList<>();
         if (cnt("SELECT COUNT(*) FROM meta.gov_layer_datasource WHERE datasource_id=?", id) > 0) modules.add("数仓层级");
-        if (cnt("SELECT COUNT(*) FROM meta.ing_offline_job WHERE source_ds_id=?", id) > 0) modules.add("离线接入");
+        if (cnt("SELECT COUNT(*) FROM meta.ing_offline_job WHERE source_ds_id=? OR target_ds_id=?", id, id) > 0) modules.add("离线接入");
         if (cnt("SELECT COUNT(*) FROM meta.ing_stream_job WHERE source_ds_id=?", id) > 0) modules.add("实时接入");
         if (cnt("SELECT COUNT(*) FROM meta.ing_profile_job WHERE source_ds_id=?", id) > 0) modules.add("数据探查");
         if (cnt("SELECT COUNT(*) FROM meta.gov_quality_rule WHERE ds_id=?", id) > 0) modules.add("数据质量");
@@ -210,6 +212,15 @@ public class DataSourceController {
             return c == null ? 0 : c;
         } catch (Exception e) {
             return 0;   // 表缺失等容错
+        }
+    }
+    /** 双参数计数（如 source_ds_id=? OR target_ds_id=? 绑同一 id）。 */
+    private long cnt(String sql, long a, long b) {
+        try {
+            Long c = jdbc.queryForObject(sql, Long.class, a, b);
+            return c == null ? 0 : c;
+        } catch (Exception e) {
+            return 0;
         }
     }
 

@@ -26,11 +26,11 @@
       <el-table :data="paged" size="small" stripe border v-loading="loading">
         <el-table-column prop="id" label="ID" width="130" />
         <el-table-column prop="name" label="任务名" min-width="130" />
-        <el-table-column label="源 → 目标" min-width="260">
+        <el-table-column label="源 → 目标" min-width="300">
           <template #default="{ row }">
             <span class="muted">{{ dsMap[row.source_ds_id] || ('ds#' + row.source_ds_id) }}/{{ row.source_table }}</span>
             <b style="margin:0 4px">→</b>
-            <span>{{ row.target_db }}.{{ row.target_table }}</span>
+            <span>{{ row.target_ds_id ? (dsMap[row.target_ds_id] || ('ds#' + row.target_ds_id)) + '/' : '(主库)/' }}{{ row.target_db }}.{{ row.target_table }}</span>
           </template>
         </el-table-column>
         <el-table-column label="策略" width="80">
@@ -62,7 +62,7 @@
           :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper"
           @size-change="onSizeChange" @current-change="onPageChange" />
       </div>
-      <div class="hint"><el-icon><InfoFilled /></el-icon> 全量=truncate+insert；增量=按业务键 PRIMARY KEY 表去重 upsert（首次自动建表）；<b>上线状态编辑/删除置灰</b>；数据过滤(where)与增量水位 AND 组合。</div>
+      <div class="hint"><el-icon><InfoFilled /></el-icon> 目标可选任意关系型数据源；全量=truncate+insert；增量仅 StarRocks/Doris 目标（主键模型去重）；<b>上线状态编辑/删除置灰</b>。</div>
     </div>
 
     <!-- 新建/编辑 -->
@@ -75,19 +75,44 @@
             <el-option v-for="d in dsList" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="源表"><el-input v-model="form.source_table" placeholder="schema.table 或 table" /></el-form-item>
+        <el-form-item label="源数据库">
+          <el-select v-model="srcSchema" filterable :loading="tablesLoading" placeholder="选择数据库（schema）" @change="onSchema" style="width:100%">
+            <el-option v-for="s in schemaOptions" :key="s || '__default__'" :label="s || '（默认）'" :value="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="源表">
+          <el-select v-model="form.source_table" filterable :loading="tablesLoading" placeholder="选择源表" no-data-text="请先选择数据库" style="width:100%">
+            <el-option v-for="t in tableOptions" :key="qualifiedName(t)" :label="t.comment ? `${t.name}（${t.comment}）` : t.name" :value="qualifiedName(t)" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="策略">
           <el-radio-group v-model="form.strategy">
             <el-radio value="FULL">全量</el-radio>
             <el-radio value="INCREMENTAL">增量</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item v-if="incBlocked" label=" ">
+          <el-alert type="warning" :closable="false" show-icon title="增量仅支持 StarRocks/Doris 目标（依赖主键模型去重）；该目标请选全量" />
+        </el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="增量列"><el-input v-model="form.inc_column" placeholder="时间或自增列" /></el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="业务唯一键"><el-input v-model="form.biz_key" placeholder="去重主键（留空取首列）" /></el-form-item>
         <el-form-item label="数据过滤"><el-input v-model="form.where_clause" type="textarea" :rows="2" placeholder="如 status=1 AND create_time>'2026-01-01'（不加 WHERE 关键字；增量时与水位 AND 组合）" /></el-form-item>
         <el-divider content-position="left">目标端配置</el-divider>
-        <el-form-item label="目标库"><el-input v-model="form.target_db" /></el-form-item>
-        <el-form-item label="目标表"><el-input v-model="form.target_table" placeholder="自动建表（列类型按源推断）" /></el-form-item>
+        <el-form-item label="目标数据源">
+          <el-select v-model="form.target_ds_id" filterable placeholder="选择目标数据源" @change="onTgtDs" style="width:100%">
+            <el-option v-for="d in targetDsList" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标库">
+          <el-select v-model="tgtSchema" filterable allow-create default-first-option :loading="tgtLoading" placeholder="选择目标库，或输入新库名" @change="onTgtSchema" style="width:100%">
+            <el-option v-for="s in tgtSchemaOptions" :key="s || '__tgt_default__'" :label="s || '（默认）'" :value="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标表">
+          <el-select v-model="form.target_table" filterable allow-create default-first-option :loading="tgtLoading" placeholder="留空则自动用源表名建表，或选择/输入表名" style="width:100%">
+            <el-option v-for="t in tgtTableOptions" :key="t.name" :label="t.comment ? `${t.name}（${t.comment}）` : t.name" :value="t.name" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="form.status">
             <el-radio value="DISABLED">下线（可编辑）</el-radio>
@@ -97,7 +122,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" :disabled="incBlocked" @click="save">保存</el-button>
       </template>
     </el-dialog>
 
@@ -151,7 +176,7 @@ const jobs = ref<OfflineJobRow[]>([])
 const dsList = ref<DataSourceRow[]>([])
 const loading = ref(false)
 const dlg = ref(false); const saving = ref(false); const runningId = ref<number | null>(null)
-const form = reactive<any>({ id: null, name: '', source_ds_id: null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
+const form = reactive<any>({ id: null, name: '', source_ds_id: null, source_table: '', target_ds_id: null, target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
 
 const dsMap = computed<Record<number, string>>(() => {
   const m: Record<number, string> = {}
@@ -184,16 +209,121 @@ async function load() {
   } catch (e) { ElMessage.error(errMsg(e, '加载失败')) } finally { loading.value = false }
 }
 
-function onDs() {}
+// 源表按库选择：一次拉取数据源下全部表，前端按 schema 分组
+const srcSchema = ref('')
+const srcTables = ref<any[]>([])
+const tablesLoading = ref(false)
+const schemaOptions = computed(() => {
+  const set = new Set<string>()
+  srcTables.value.forEach(t => set.add((t.schema_name || '').toString()))
+  return Array.from(set).sort()
+})
+const tableOptions = computed(() => srcTables.value.filter(t => (t.schema_name || '') === srcSchema.value))
+function qualifiedName(t: any) {
+  const sch = t.schema_name ? String(t.schema_name) : ''
+  return sch ? `${sch}.${t.name}` : String(t.name)
+}
+
+async function loadTables(dsId: number | null, preferSchema = '') {
+  srcTables.value = []
+  srcSchema.value = ''
+  if (!dsId) return
+  tablesLoading.value = true
+  try {
+    const r: any = await api.daSourceTables(dsId)
+    if (Array.isArray(r)) srcTables.value = r
+    else if (r && Array.isArray(r.indices)) srcTables.value = r.indices.map((n: string) => ({ name: n, schema_name: '', comment: '' }))
+    else srcTables.value = []
+    if (schemaOptions.value.includes(preferSchema)) srcSchema.value = preferSchema
+    else if (schemaOptions.value.length === 1) srcSchema.value = schemaOptions.value[0]
+  } catch (e) {
+    srcTables.value = []
+    ElMessage.warning('源库表拉取失败：' + errMsg(e, '请检查数据源连通性/驱动'))
+  } finally {
+    tablesLoading.value = false
+  }
+}
+
+function onDs() {
+  form.source_table = ''
+  loadTables(form.source_ds_id)
+}
+function onSchema() {
+  form.source_table = ''
+}
+
+// 目标端：同样按 数据源 → 库 → 表 选择。目标可选任意关系型数据源；增量仅 starrocks/doris
+const RELATIONAL_TARGET_TYPES = new Set(['mysql', 'starrocks', 'doris', 'postgresql', 'greenplum', 'opengauss', 'clickhouse', 'sqlserver', 'oracle'])
+const tgtSchema = ref('')
+const tgtTables = ref<any[]>([])
+const tgtLoading = ref(false)
+const targetDsList = computed(() => dsList.value.filter((d: any) => RELATIONAL_TARGET_TYPES.has(d.type)))
+const tgtDsDbName = computed(() => dsList.value.find((d: any) => d.id === form.target_ds_id)?.db_name || '')
+const tgtSchemaOptions = computed(() => {
+  const set = new Set<string>()
+  tgtTables.value.forEach(t => set.add((t.schema_name || '').toString()))
+  if (tgtDsDbName.value) set.add(tgtDsDbName.value)   // 数据源配置的库即使为空也展示
+  return Array.from(set).sort()
+})
+const tgtTableOptions = computed(() => tgtTables.value.filter(t => (t.schema_name || '') === tgtSchema.value))
+// 增量校验：增量仅支持 StarRocks/Doris 目标（依赖主键模型去重）
+const tgtType = computed(() => dsList.value.find((d: any) => d.id === form.target_ds_id)?.type || '')
+const incBlocked = computed(() => form.strategy === 'INCREMENTAL' && !!tgtType.value && tgtType.value !== 'starrocks' && tgtType.value !== 'doris')
+
+async function loadTargetTables(dsId: number | null, preferSchema = '') {
+  tgtTables.value = []
+  tgtSchema.value = ''
+  if (!dsId) return
+  tgtLoading.value = true
+  try {
+    const r: any = await api.daSourceTables(dsId)
+    if (Array.isArray(r)) tgtTables.value = r
+    else if (r && Array.isArray(r.indices)) tgtTables.value = r.indices.map((n: string) => ({ name: n, schema_name: '', comment: '' }))
+    else tgtTables.value = []
+    if (preferSchema) tgtSchema.value = preferSchema
+    else if (tgtSchemaOptions.value.length === 1) tgtSchema.value = tgtSchemaOptions.value[0]
+  } catch (e) {
+    tgtTables.value = []
+    ElMessage.warning('目标库表拉取失败：' + errMsg(e, '请检查目标数据源连通性'))
+  } finally {
+    tgtLoading.value = false
+  }
+}
+function onTgtDs() {
+  form.target_db = ''
+  form.target_table = ''
+  loadTargetTables(form.target_ds_id)
+}
+function onTgtSchema() {
+  form.target_table = ''
+}
 
 function open(row?: OfflineJobRow) {
-  Object.assign(form, { id: null, name: '', source_ds_id: dsList.value[0]?.id || null, source_table: '', target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
-  if (row) Object.assign(form, { id: row.id, name: row.name, source_ds_id: row.source_ds_id, source_table: row.source_table, target_db: row.target_db, target_table: row.target_table, strategy: row.strategy, inc_column: row.inc_column || '', biz_key: row.biz_key || '', where_clause: (row as any).where_clause || '', status: row.status })
+  Object.assign(form, { id: null, name: '', source_ds_id: dsList.value[0]?.id || null, source_table: '', target_ds_id: targetDsList.value[0]?.id || null, target_db: 'ods', target_table: '', strategy: 'FULL', inc_column: '', biz_key: '', where_clause: '', status: 'DISABLED' })
+  if (row) {
+    Object.assign(form, { id: row.id, name: row.name, source_ds_id: row.source_ds_id, source_table: row.source_table, target_ds_id: row.target_ds_id ?? null, target_db: row.target_db, target_table: row.target_table, strategy: row.strategy, inc_column: row.inc_column || '', biz_key: row.biz_key || '', where_clause: (row as any).where_clause || '', status: row.status })
+    // 回显：从 source_table（可能是 schema.table）拆出 schema 并加载该数据源的表
+    const dot = (row.source_table || '').lastIndexOf('.')
+    loadTables(row.source_ds_id, dot > 0 ? row.source_table.substring(0, dot) : '')
+    // 回显目标端：加载目标数据源的表并定位到目标库
+    loadTargetTables(form.target_ds_id, row.target_db || '')
+  } else {
+    loadTables(form.source_ds_id)
+    loadTargetTables(form.target_ds_id, tgtDsDbName.value)
+  }
   dlg.value = true
 }
 
 async function save() {
-  if (!form.name || !form.source_ds_id || !form.source_table || !form.target_table) return ElMessage.warning('请补全：名称/源/源表/目标表')
+  if (!form.name || !form.source_ds_id || !form.source_table) return ElMessage.warning('请补全：名称/源/源表')
+  // 目标表留空 → 默认用源表名（去 schema 前缀），保存后后端自动建表
+  if (!form.target_table) {
+    const src = form.source_table || ''
+    const dot = src.lastIndexOf('.')
+    form.target_table = dot > 0 ? src.substring(dot + 1) : src
+  }
+  if (incBlocked.value) return ElMessage.warning('该目标仅支持全量，请改策略为全量或更换为 StarRocks/Doris 目标')
+  form.target_db = tgtSchema.value
   saving.value = true
   try { await api.daSaveOfflineJob({ ...form }); ElMessage.success('保存成功'); dlg.value = false; await load() }
   catch (e) { ElMessage.error(errMsg(e)) } finally { saving.value = false }

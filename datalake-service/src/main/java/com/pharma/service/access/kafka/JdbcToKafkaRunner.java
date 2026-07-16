@@ -32,6 +32,7 @@ public class JdbcToKafkaRunner {
     @Autowired private DataSourceLoader loader;
     @Autowired private DataSourceAdapterRegistry registry;
     @Autowired private KafkaProducerHolder producer;
+    @Autowired private KafkaAdminHolder kafkaAdmin;
     @Autowired private JdbcTemplate jdbc;
 
     private final ScheduledExecutorService pool = Executors.newScheduledThreadPool(2, r -> {
@@ -41,6 +42,7 @@ public class JdbcToKafkaRunner {
 
     /** 启动一个作业的定时轮询。 */
     public void start(long jobId, long dsId, String sourceQuery, String topic, int periodSec) {
+        kafkaAdmin.ensureTopic(topic);  // 显式建 topic，避免消费端 auto-create 边际
         stop(jobId);
         ScheduledFuture<?> f = pool.scheduleAtFixedRate(() -> runOnce(jobId, dsId, sourceQuery, topic),
                 0, Math.max(periodSec, 1), TimeUnit.SECONDS);
@@ -69,9 +71,9 @@ public class JdbcToKafkaRunner {
                     String key = null;
                     for (int i = 1; i <= n; i++) {
                         String col = md.getColumnLabel(i);
-                        Object v = rs.getObject(i);
-                        row.put(col, v);
-                        if (key == null) key = v == null ? null : String.valueOf(v);
+                        Object fv = fmtVal(rs.getObject(i));
+                        row.put(col, fv);
+                        if (key == null) key = fv == null ? null : String.valueOf(fv);
                     }
                     producer.send(topic, key == null ? String.valueOf(System.nanoTime()) : key, row);
                     out++;
@@ -109,5 +111,19 @@ public class JdbcToKafkaRunner {
         for (int i = 0; i < 6 && cur.getCause() != null && cur.getCause() != cur; i++) cur = cur.getCause();
         String m = cur.getMessage();
         return m == null ? cur.getClass().getSimpleName() : (cur.getClass().getSimpleName() + ": " + m);
+    }
+
+    /** JDBC 日期/时间值 → StarRocks ROUTINE LOAD 可解析的字符串（默认 ObjectMapper 会把日期写成 epoch 毫秒，SR 不认）。 */
+    private static final java.time.format.DateTimeFormatter DT = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static Object fmtVal(Object v) {
+        if (v == null) return null;
+        if (v instanceof java.time.LocalDateTime) return ((java.time.LocalDateTime) v).format(DT);
+        if (v instanceof java.time.LocalDate) return ((java.time.LocalDate) v).toString();
+        if (v instanceof java.time.LocalTime) return ((java.time.LocalTime) v).toString();
+        if (v instanceof java.sql.Timestamp) return ((java.sql.Timestamp) v).toLocalDateTime().format(DT);
+        if (v instanceof java.sql.Date) return ((java.sql.Date) v).toLocalDate().toString();
+        if (v instanceof java.sql.Time) return ((java.sql.Time) v).toLocalTime().toString();
+        if (v instanceof java.util.Date) return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format((java.util.Date) v);
+        return v;
     }
 }

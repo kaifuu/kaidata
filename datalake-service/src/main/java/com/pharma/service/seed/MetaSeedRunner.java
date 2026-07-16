@@ -323,6 +323,24 @@ public class MetaSeedRunner implements ApplicationRunner {
         boolean m16 = "16".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.portal_subscribe (id BIGINT, username VARCHAR(64), asset_id BIGINT, meta_id BIGINT, table_name VARCHAR(255), purpose VARCHAR(1024), open_type VARCHAR(16), limit_count BIGINT, limit_qps INT, expire_time DATETIME, status VARCHAR(16), auditor VARCHAR(64), audit_comment VARCHAR(1024), audit_time DATETIME, grant_id BIGINT, app_key VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!m16) kvSet("schema_ver", "16");
+
+        // ============ 离线接入任务目标数据源（schema_ver=17，增量） ============
+        // target_ds_id 为空=写入主库（兼容存量任务）；非空则按所选目标数据源写入
+        boolean m17 = "17".equals(kv("schema_ver"));
+        exec("ALTER TABLE meta.ing_offline_job ADD COLUMN target_ds_id BIGINT");
+        if (!m17) kvSet("schema_ver", "17");
+
+        // ============ 数据质量升级（schema_ver=18，增量） ============
+        // 规则加 severity(严重度) + description；结果加 score(0-100)/severity/table_name(快照，评分/报告免 join)
+        // 新建 gov_quality_report：每次执行任务落一条报告快照（总分/等级/计数/维度·表摘要），供趋势与报告列表
+        boolean m18 = "18".equals(kv("schema_ver"));
+        exec("ALTER TABLE meta.gov_quality_rule ADD COLUMN severity VARCHAR(16)");
+        exec("ALTER TABLE meta.gov_quality_rule ADD COLUMN description VARCHAR(512)");
+        exec("ALTER TABLE meta.gov_quality_result ADD COLUMN score DOUBLE");
+        exec("ALTER TABLE meta.gov_quality_result ADD COLUMN severity VARCHAR(16)");
+        exec("ALTER TABLE meta.gov_quality_result ADD COLUMN table_name VARCHAR(255)");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_quality_report (id BIGINT, task_id BIGINT, task_name VARCHAR(128), run_time DATETIME, overall_score DOUBLE, grade VARCHAR(4), total_rules INT, pass_count INT, fail_count INT, error_count INT, dim_summary VARCHAR(4096), table_summary VARCHAR(4096)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m18) kvSet("schema_ver", "18");
     }
 
     private void seedStd(String code, String name, int level, String desc) {

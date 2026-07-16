@@ -2,11 +2,12 @@
 // 各视图统一从这里引入 VChart，并用 theme.chartTheme 绑定 :theme，随全局主题切换。
 import { use, registerTheme } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, GaugeChart, GraphChart, LineChart, PieChart } from 'echarts/charts'
+import { BarChart, GaugeChart, GraphChart, LineChart, PieChart, RadarChart } from 'echarts/charts'
 import {
   DataZoomComponent,
   GridComponent,
   LegendComponent,
+  RadarComponent,
   TitleComponent,
   TooltipComponent
 } from 'echarts/components'
@@ -18,11 +19,13 @@ use([
   PieChart,
   GaugeChart,
   GraphChart,
+  RadarChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   TitleComponent,
-  DataZoomComponent
+  DataZoomComponent,
+  RadarComponent
 ])
 
 // 暗色霓虹主题

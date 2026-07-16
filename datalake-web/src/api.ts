@@ -47,7 +47,7 @@ export interface DataSourceRow { id: number; name: string; type: string; host: s
 export interface DatasourceUsage { inUse: boolean; modules: string[] }
 export interface FilestoreRow { id: number; name: string; type: string; host: string; port: number; username: string; password?: string; base_path: string; props?: string; status: string; create_time?: string }
 export interface IngestedFileRow { id: number; store_id: number; path: string; name: string; size: number; file_type: string; target_table: string; rows_written: number; ingested: boolean; create_time: string }
-export interface OfflineJobRow { id: number; name: string; source_ds_id: number; source_table: string; target_db: string; target_table: string; strategy: string; inc_column?: string; biz_key?: string; last_value?: string; column_map?: string; where_clause?: string; status: string; create_time?: string }
+export interface OfflineJobRow { id: number; name: string; source_ds_id: number; source_table: string; target_ds_id?: number; target_db: string; target_table: string; strategy: string; inc_column?: string; biz_key?: string; last_value?: string; column_map?: string; where_clause?: string; status: string; create_time?: string }
 export interface OfflineRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; rows_read: number; rows_written: number; error_msg?: string; triggered_by?: string }
 export interface StreamJobRow { id: number; name: string; type: string; source_ds_id?: number; source_query?: string; kafka_topic: string; target_db?: string; target_table?: string; columns_json?: string; schedule_cron?: string; status: string }
 export interface StreamRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; rows_in: number; rows_out: number; error_msg?: string }
@@ -148,7 +148,7 @@ export const api = {
   daOfflinePreview: (b: any) => http.post('/data-access/offline/preview', b).then((r) => r.data),
   daOfflineRun: (jobId: number) => http.post('/data-access/offline/run', null, { params: { jobId }, timeout: 120000 }).then((r) => r.data),
   daOfflineRuns: (jobId: number) => http.get<OfflineRunRow[]>('/data-access/offline/run/list', { params: { jobId } }).then((r) => r.data),
-  daOfflineTargetPreview: (targetDb: string, targetTable: string) => http.get('/data-access/offline/target/preview', { params: { targetDb, targetTable } }).then((r) => r.data),
+  daOfflineTargetPreview: (targetDb: string, targetTable: string, targetDsId?: number) => http.get('/data-access/offline/target/preview', { params: { targetDb, targetTable, targetDsId } }).then((r) => r.data),
   daOfflineCopy: (id: number) => http.post('/data-access/offline/job/copy', null, { params: { id } }).then((r) => r.data),
   daOfflineOnline: (id: number) => http.post('/data-access/offline/job/online', null, { params: { id } }).then((r) => r.data),
   daOfflineOffline: (id: number) => http.post('/data-access/offline/job/offline', null, { params: { id } }).then((r) => r.data),
@@ -163,6 +163,9 @@ export const api = {
   daStreamStatus: (jobId: number) => http.get('/data-access/stream/status', { params: { jobId } }).then((r) => r.data),
   daStreamRuns: (jobId: number) => http.get<StreamRunRow[]>('/data-access/stream/run/list', { params: { jobId } }).then((r) => r.data),
   daRoutineLoads: () => http.get<RoutineLoadRow[]>('/data-access/stream/routine-load/list').then((r) => r.data),
+  daStreamStats: (jobId: number) => http.get('/data-access/stream/stats', { params: { jobId } }).then((r) => r.data),
+  daStreamTopicPreview: (topic: string, max = 20) => http.get<string[]>('/data-access/stream/topic/preview', { params: { topic, max } }).then((r) => r.data),
+  daStreamTablePreview: (db: string, table: string, max = 20) => http.get<{ columns: string[]; rows: any[] }>('/data-access/stream/table/preview', { params: { db, table, max } }).then((r) => r.data),
 
   // ===== 数据探查 [SYS_ADMIN] =====
   daProfileJobs: () => http.get<ProfileJobRow[]>('/data-access/profile/job/list').then((r) => r.data),
@@ -225,6 +228,10 @@ export const api = {
   govDeleteTask: (id: number) => http.delete('/data-gov/quality/task', { params: { id } }).then((r) => r.data),
   govRunQuality: (taskId: number) => http.post('/data-gov/quality/run', null, { params: { taskId }, timeout: 120000 }).then((r) => r.data),
   govQualityResult: (taskId: number) => http.get('/data-gov/quality/result', { params: { taskId } }).then((r) => r.data),
+  govQualityDimensions: () => http.get('/data-gov/quality/dimensions').then((r) => r.data),
+  govQualityReport: (taskId: number) => http.get('/data-gov/quality/report', { params: { taskId } }).then((r) => r.data),
+  govQualityReportList: (taskId: number) => http.get('/data-gov/quality/report/list', { params: { taskId } }).then((r) => r.data),
+  govQualityReportWord: (taskId: number) => http.get('/data-gov/quality/report/word', { params: { taskId }, responseType: 'blob' }).then((r) => r.data),
   // 元数据
   govMetaList: (params: { dsId?: number; kw?: string } = {}) => http.get('/data-gov/meta/list', { params }).then((r) => r.data),
   govMetaDetail: (id: number) => http.get('/data-gov/meta/detail', { params: { id } }).then((r) => r.data),

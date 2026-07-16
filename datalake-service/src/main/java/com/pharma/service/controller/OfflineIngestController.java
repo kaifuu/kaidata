@@ -34,7 +34,7 @@ public class OfflineIngestController {
     @GetMapping("/job/list")
     public List<Map<String, Object>> listJobs() {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, name, source_ds_id, source_table, target_db, target_table, " +
+        return jdbc.queryForList("SELECT id, name, source_ds_id, source_table, target_ds_id, target_db, target_table, " +
                 "strategy, inc_column, biz_key, last_sync_value, where_clause, status, create_time, update_time " +
                 "FROM meta.ing_offline_job ORDER BY id");
     }
@@ -45,10 +45,10 @@ public class OfflineIngestController {
         long id = System.currentTimeMillis();
         Timestamp now = new Timestamp(id);
         jdbc.update("INSERT INTO meta.ing_offline_job" +
-                        "(id, name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
+                        "(id, name, source_ds_id, source_table, target_ds_id, target_db, target_table, strategy, inc_column, " +
                         "biz_key, last_sync_value, column_map, where_clause, status, create_by, create_time, update_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                id, str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")),
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                id, str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")), lng(b.get("target_ds_id")),
                 str(b.getOrDefault("target_db", "ods")), str(b.get("target_table")),
                 str(b.getOrDefault("strategy", "FULL")), str(b.get("inc_column")),
                 str(b.get("biz_key")), str(b.get("last_sync_value")), str(b.get("column_map")),
@@ -64,9 +64,9 @@ public class OfflineIngestController {
         String curStatus = jdbc.queryForObject("SELECT status FROM meta.ing_offline_job WHERE id=?", String.class, id);
         if ("ENABLED".equals(curStatus)) throw new AccessDeniedException("任务已上线，请先下线再编辑");
         Timestamp now = new Timestamp(System.currentTimeMillis());
-        jdbc.update("UPDATE meta.ing_offline_job SET name=?, source_ds_id=?, source_table=?, target_db=?, " +
+        jdbc.update("UPDATE meta.ing_offline_job SET name=?, source_ds_id=?, source_table=?, target_ds_id=?, target_db=?, " +
                         "target_table=?, strategy=?, inc_column=?, biz_key=?, column_map=?, where_clause=?, status=?, update_time=? WHERE id=?",
-                str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")),
+                str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_table")), lng(b.get("target_ds_id")),
                 str(b.getOrDefault("target_db", "ods")), str(b.get("target_table")),
                 str(b.getOrDefault("strategy", "FULL")), str(b.get("inc_column")),
                 str(b.get("biz_key")), str(b.get("column_map")), str(b.get("where_clause")),
@@ -89,16 +89,16 @@ public class OfflineIngestController {
     public Map<String, Object> copyJob(@RequestParam long id) {
         Authz.require(Authz.SYS_ADMIN);
         Map<String, Object> src = jdbc.queryForMap(
-                "SELECT name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
+                "SELECT name, source_ds_id, source_table, target_ds_id, target_db, target_table, strategy, inc_column, " +
                         "biz_key, column_map, where_clause FROM meta.ing_offline_job WHERE id=?", id);
         long newId = System.currentTimeMillis();
         String newName = nextCopyName(str(src.get("name")));
         Timestamp now = new Timestamp(newId);
         jdbc.update("INSERT INTO meta.ing_offline_job" +
-                        "(id, name, source_ds_id, source_table, target_db, target_table, strategy, inc_column, " +
+                        "(id, name, source_ds_id, source_table, target_ds_id, target_db, target_table, strategy, inc_column, " +
                         "biz_key, last_sync_value, column_map, where_clause, status, create_by, create_time, update_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                newId, newName, ((Number) src.get("source_ds_id")).longValue(), str(src.get("source_table")),
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                newId, newName, ((Number) src.get("source_ds_id")).longValue(), str(src.get("source_table")), lng(src.get("target_ds_id")),
                 str(src.get("target_db")), str(src.get("target_table")), str(src.get("strategy")),
                 str(src.get("inc_column")), str(src.get("biz_key")), "", str(src.get("column_map")),
                 str(src.get("where_clause")), "DISABLED", currentUser(), now, now);
@@ -172,7 +172,7 @@ public class OfflineIngestController {
     public Map<String, Object> run(@RequestParam long jobId) {
         Authz.require(Authz.SYS_ADMIN);
         Map<String, Object> job = jdbc.queryForMap(
-                "SELECT id, name, source_ds_id, source_table, target_db, target_table, strategy, " +
+                "SELECT id, name, source_ds_id, source_table, target_ds_id, target_db, target_table, strategy, " +
                         "inc_column, biz_key, last_sync_value, where_clause FROM meta.ing_offline_job WHERE id=?", jobId);
         long runId = System.currentTimeMillis();
         Timestamp start = new Timestamp(runId);
@@ -199,11 +199,27 @@ public class OfflineIngestController {
         if (!conds.isEmpty()) sourceSql += " WHERE " + String.join(" AND ", conds);
 
         try {
-            IngestExecutor.Result r = executor.execute(pool, sourceSql, targetDb, targetTable, incremental, bizKey);
-            // 增量更新水位
+            // 目标数据源：target_ds_id 为空/0 → 主库（兼容存量）；否则按所选目标数据源写入
+            Long targetDsId = job.get("target_ds_id") == null ? null : ((Number) job.get("target_ds_id")).longValue();
+            boolean useMain = targetDsId == null || targetDsId.longValue() == 0;
+            String targetType = "starrocks";
+            DataSource tgtPool = null;
+            if (!useMain) {
+                DataSourceDescriptor tgtDs = loader.load(targetDsId);
+                targetType = tgtDs.type;
+                tgtPool = registry.getPool(tgtDs);
+            }
+            // 增量仅支持 StarRocks/Doris（依赖主键模型去重）；由本 catch 落 FAIL run
+            if (incremental && !"starrocks".equals(targetType) && !"doris".equals(targetType)) {
+                throw new IllegalArgumentException("增量模式仅支持 StarRocks/Doris 目标（依赖主键模型去重）");
+            }
+
+            IngestExecutor.Result r = executor.execute(pool, sourceSql, targetDb, targetTable, incremental, bizKey, tgtPool, targetType);
+            // 增量更新水位（用目标连接池；增量已限 starrocks/doris，反引号有效）
             if (incremental && !incCol.isEmpty()) {
                 try {
-                    Object max = jdbc.queryForObject(
+                    JdbcTemplate tgtJt = useMain ? this.jdbc : new JdbcTemplate(tgtPool);
+                    Object max = tgtJt.queryForObject(
                             "SELECT MAX(" + incCol + ") FROM `" + targetDb + "`.`" + targetTable + "`", Object.class);
                     if (max != null) jdbc.update("UPDATE meta.ing_offline_job SET last_sync_value=? WHERE id=?",
                             String.valueOf(max), jobId);
@@ -248,11 +264,20 @@ public class OfflineIngestController {
 
     @GetMapping("/target/preview")
     public Map<String, Object> targetPreview(@RequestParam String targetDb, @RequestParam String targetTable,
+                                             @RequestParam(required = false) Long targetDsId,
                                              @RequestParam(defaultValue = "50") int limit) {
         Authz.require(Authz.SYS_ADMIN);
         StarRocksDdlIdent(targetDb, targetTable);
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT * FROM `" + targetDb + "`.`" + targetTable + "` LIMIT " + Math.min(limit, 500));
+        // targetDsId 为空 → 主库（反引号）；否则按目标数据源类型的引用方式查
+        JdbcTemplate tgtJt = this.jdbc;
+        String qualify = "`" + targetDb + "`.`" + targetTable + "`";
+        if (targetDsId != null && targetDsId != 0) {
+            DataSourceDescriptor tgtDs = loader.load(targetDsId);
+            tgtJt = new JdbcTemplate(registry.getPool(tgtDs));
+            qualify = com.pharma.service.access.util.TargetDialect.forType(tgtDs.type).qualify(targetDb, targetTable);
+        }
+        List<Map<String, Object>> rows = tgtJt.queryForList(
+                "SELECT * FROM " + qualify + " LIMIT " + Math.min(limit, 500));
         return Map.of("rows", rows);
     }
 

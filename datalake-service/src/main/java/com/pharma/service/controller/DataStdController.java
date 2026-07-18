@@ -103,6 +103,54 @@ public class DataStdController {
         return Map.of("ref_count", refs.size(), "refs", refs);
     }
 
+    // ==================== 标准落标 + 合规扫描 ====================
+
+    /** 落标统计：总字段数 / 已落标 / 落标率 / 引用最多的数据元 top5 / 未落标字段清单。 */
+    @GetMapping("/landing-stats")
+    public Map<String, Object> landingStats() {
+        Authz.require(Authz.SYS_ADMIN);
+        long total = cnt("SELECT COUNT(*) FROM meta.gov_model_field");
+        long landed = cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE element_id>0");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", total);
+        out.put("landed", landed);
+        out.put("rate", total == 0 ? 0 : Math.round(landed * 100.0 / total));
+        out.put("topElements", safeList(
+                "SELECT e.name, e.code, r.c AS refs FROM meta.gov_data_element e " +
+                        "JOIN (SELECT element_id, COUNT(*) AS c FROM meta.gov_model_field WHERE element_id>0 GROUP BY element_id ORDER BY c DESC LIMIT 5) r ON r.element_id=e.id ORDER BY r.c DESC"));
+        out.put("unlanded", safeList(
+                "SELECT f.name AS field, f.data_type, t.name AS table_name, m.name AS model_name " +
+                        "FROM meta.gov_model_field f LEFT JOIN meta.gov_model_table t ON t.id=f.table_id " +
+                        "LEFT JOIN meta.gov_model m ON m.id=t.model_id WHERE f.element_id<=0 OR f.element_id IS NULL ORDER BY f.id LIMIT 200"));
+        return out;
+    }
+
+    /** 合规扫描：已落标字段的类型基名 vs 数据元类型基名是否一致。 */
+    @GetMapping("/compliance-scan")
+    public Map<String, Object> complianceScan() {
+        Authz.require(Authz.SYS_ADMIN);
+        List<Map<String, Object>> rows = safeList(
+                "SELECT f.name AS field, f.data_type AS field_type, e.name AS element, e.data_type AS element_type, t.name AS table_name " +
+                        "FROM meta.gov_model_field f JOIN meta.gov_data_element e ON e.id=f.element_id " +
+                        "LEFT JOIN meta.gov_model_table t ON t.id=f.table_id WHERE f.element_id>0");
+        List<Map<String, Object>> fail = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            if (!baseName(str(r.get("field_type"))).equalsIgnoreCase(baseName(str(r.get("element_type"))))) fail.add(r);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", rows.size());
+        out.put("pass", rows.size() - fail.size());
+        out.put("fail", fail.size());
+        out.put("failList", fail);
+        return out;
+    }
+
+    private static String baseName(String t) {
+        if (t == null) return "";
+        int i = t.indexOf('(');
+        return (i < 0 ? t : t.substring(0, i)).trim().toUpperCase();
+    }
+
     // ==================== 代码集 ====================
 
     @GetMapping("/code-set")
@@ -244,6 +292,8 @@ public class DataStdController {
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
     private static long lng(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).longValue(); try { return Long.parseLong(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
     private static int num(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).intValue(); try { return Integer.parseInt(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
+    private long cnt(String sql, Object... args) { try { return args.length == 0 ? jdbc.queryForObject(sql, Long.class) : jdbc.queryForObject(sql, Long.class, args); } catch (Exception e) { return 0; } }
+    private List<Map<String, Object>> safeList(String sql, Object... args) { try { return args.length == 0 ? jdbc.queryForList(sql) : jdbc.queryForList(sql, args); } catch (Exception e) { return List.of(); } }
     private static boolean boolOr(Object o, boolean def) {
         if (o == null) return def;
         return Boolean.TRUE.equals(o) || "true".equalsIgnoreCase(String.valueOf(o)) || "1".equals(String.valueOf(o));

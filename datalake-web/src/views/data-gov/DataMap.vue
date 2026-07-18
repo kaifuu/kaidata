@@ -149,14 +149,27 @@
           <div v-else class="empty">切换上游/下游查看血缘（基于离线接入 / 实时开发 / 数据接出任务）</div>
         </el-tab-pane>
 
-        <!-- 质量（仅库表） -->
+        <!-- 质量（仅库表）：元数据摘要 + 质量引导（非空壳） -->
         <el-tab-pane v-if="assetType === 'table'" label="质量" name="quality">
-          <div class="empty">质量检测按「数据质量」规则维度执行，按表聚合视图留待后续对接 gov_quality_result。</div>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="字段数">{{ cols.length }}</el-descriptions-item>
+            <el-descriptions-item label="行数">{{ detail.row_count }}</el-descriptions-item>
+            <el-descriptions-item label="分层">{{ detail.layer_code || '未分层' }}</el-descriptions-item>
+            <el-descriptions-item label="安全级别">{{ detail.security_level || '未定' }}</el-descriptions-item>
+            <el-descriptions-item label="数据分类">{{ detail.data_category || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="填充度">{{ biz.fill_percent || 0 }}%</el-descriptions-item>
+          </el-descriptions>
+          <div class="hint" style="margin-top:10px">质量检测结果请前往「数据质量」为该表配置规则并执行；按表聚合结果视图后续对接 gov_quality_result。</div>
         </el-tab-pane>
 
-        <!-- 产出任务（仅库表） -->
+        <!-- 产出任务（仅库表）：来自统一血缘边表的上游 -->
         <el-tab-pane v-if="assetType === 'table'" label="产出任务" name="producers">
-          <div class="empty">产出此表的任务视图留待后续接入（离线开发 / 工作流血缘本期未解析）。</div>
+          <el-table :data="producers" size="small" border max-height="320" v-loading="prodLoading">
+            <el-table-column prop="src" label="上游表" min-width="180" />
+            <el-table-column prop="jobName" label="作业名" min-width="150" />
+            <el-table-column prop="edgeType" label="来源类型" width="130" />
+          </el-table>
+          <div v-if="!producers.length && !prodLoading" class="hint" style="margin-top:10px">暂无产出任务血缘（该表无上游解析记录，可到「血缘分析」重算）。</div>
         </el-tab-pane>
 
         <!-- 版本（仅库表） -->
@@ -200,6 +213,9 @@ const fileCols = ref<any[]>([])
 const biz = ref<any>({})
 const saving = ref(false)
 const versions = ref<any[]>([])
+// 产出任务（统一血缘上游）
+const producers = ref<any[]>([])
+const prodLoading = ref(false)
 // 血缘
 const lineageMode = ref<'lineage' | 'impact'>('lineage')
 const graphData = ref<any>(null)
@@ -287,6 +303,14 @@ async function drawLineage() {
       : await api.govMetaImpact(detail.value.ds_id, detail.value.schema_name, detail.value.table_name)
   } catch (e: any) { ElMessage.error(errMsg(e)) }
 }
+async function loadProducers() {
+  if (!detail.value.table_name) return
+  prodLoading.value = true
+  try {
+    const r: any = await api.govLineageGraph(detail.value.table_name, detail.value.schema_name || '', detail.value.ds_id, 'up', 1)
+    producers.value = (r.links || []).map((l: any) => ({ src: l.source, jobName: l.jobName, edgeType: l.edgeType }))
+  } catch { producers.value = [] } finally { prodLoading.value = false }
+}
 async function doSearch() {
   if (!kw.value) return
   try { searchResult.value = await api.govMetaSearch(kw.value); showResult.value = true } catch (e: any) { ElMessage.error(errMsg(e)) }
@@ -299,7 +323,10 @@ async function goto(type: string, id: number) {
   if (row) openDetail(row)
 }
 
-watch(detailTab, (t) => { if (t === 'lineage' && assetType.value === 'table' && !graphData.value) drawLineage() })
+watch(detailTab, (t) => {
+  if (t === 'lineage' && assetType.value === 'table' && !graphData.value) drawLineage()
+  if (t === 'producers' && assetType.value === 'table') loadProducers()
+})
 onMounted(async () => { try { catalog.value = await api.assetCatalogTree(); subjects.value = await api.govSubjects(); standards.value = await api.secStandards() } catch { /* */ } await loadList() })
 </script>
 <style scoped>

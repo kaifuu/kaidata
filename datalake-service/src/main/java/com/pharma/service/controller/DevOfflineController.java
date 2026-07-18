@@ -26,6 +26,7 @@ public class DevOfflineController {
     @Autowired private DevOfflineExecutor executor;
     @Autowired private DevOfflineScheduler scheduler;
     @Value("${pharma.engines.jar-dir:data/flink-jars}") private String jarDir;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     // ===== 任务 CRUD =====
     @GetMapping("/task/list")
@@ -53,6 +54,7 @@ public class DevOfflineController {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
         saveTask(id, b, true);
+        try { lineageExtractor.rebuild("DEV_TASK", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
 
@@ -61,6 +63,7 @@ public class DevOfflineController {
         Authz.require(Authz.SYS_ADMIN);
         long id = lng(b.get("id"));
         saveTask(id, b, false);
+        try { lineageExtractor.rebuild("DEV_TASK", id); } catch (Exception ignored) {}
         scheduler.stop(id);
         if ("ONLINE".equals(str(b.getOrDefault("status", ""))) && !str(b.get("cron")).isEmpty()) {
             scheduler.start(id, str(b.get("cron")));

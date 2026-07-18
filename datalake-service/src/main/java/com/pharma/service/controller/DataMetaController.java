@@ -429,6 +429,76 @@ public class DataMetaController {
         } catch (Exception e) { return false; }
     }
 
+    // ==================== 补录统计 / 待补录清单（补录工作台 MetaFill.vue） ====================
+
+    @GetMapping("/fill/stats")
+    public Map<String, Object> fillStats() {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> table = fillAgg("meta.gov_meta_table");
+        Map<String, Object> api = fillAgg("meta.gov_meta_api");
+        Map<String, Object> file = fillAgg("meta.gov_meta_file");
+        long tTotal = lng(table.get("total")) + lng(api.get("total")) + lng(file.get("total"));
+        long tFilled = lng(table.get("filled")) + lng(api.get("filled")) + lng(file.get("filled"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("overall", tTotal == 0 ? 0 : Math.round(tFilled * 100.0 / tTotal));
+        out.put("table", table);
+        out.put("api", api);
+        out.put("file", file);
+        return out;
+    }
+
+    @GetMapping("/fill/list")
+    public Map<String, Object> fillList(@RequestParam(defaultValue = "table") String type,
+                                        @RequestParam(defaultValue = "filling") String status,
+                                        @RequestParam(required = false) String kw,
+                                        @RequestParam(required = false) Long dsId,
+                                        @RequestParam(defaultValue = "1") int page,
+                                        @RequestParam(defaultValue = "20") int size) {
+        Authz.require(Authz.SYS_ADMIN);
+        String table, nameCol, idCol;
+        if ("api".equalsIgnoreCase(type)) { table = "meta.gov_meta_api"; nameCol = "cn_name"; idCol = "service_id"; }
+        else if ("file".equalsIgnoreCase(type)) { table = "meta.gov_meta_file"; nameCol = "cn_name"; idCol = "id"; }
+        else { table = "meta.gov_meta_table"; nameCol = "table_name"; idCol = "id"; }
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if ("filled".equalsIgnoreCase(status)) where.append(" AND fill_percent>=100");
+        else where.append(" AND (fill_percent<100 OR fill_percent IS NULL)");
+        if (kw != null && !kw.isEmpty()) { where.append(" AND ").append(nameCol).append(" LIKE ?"); args.add("%" + kw + "%"); }
+        if (dsId != null && "table".equalsIgnoreCase(type)) { where.append(" AND ds_id=?"); args.add(dsId); }
+        long total = cntFill("SELECT COUNT(*) FROM " + table + where, args);
+        int offset = Math.max(0, (page - 1) * size);
+        String sql = "SELECT " + idCol + " AS id, " + nameCol + " AS name, fill_percent FROM " + table
+                + where + " ORDER BY fill_percent ASC LIMIT " + offset + "," + size;
+        List<Map<String, Object>> records = args.isEmpty()
+                ? jdbc.queryForList(sql)
+                : jdbc.queryForList(sql, args.toArray());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("records", records);
+        out.put("total", total);
+        return out;
+    }
+
+    private Map<String, Object> fillAgg(String table) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        try {
+            Double avg = jdbc.queryForObject("SELECT AVG(fill_percent) FROM " + table, Double.class);
+            Long total = jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
+            Long filled = jdbc.queryForObject("SELECT COUNT(*) FROM " + table + " WHERE fill_percent>=100", Long.class);
+            m.put("avg", avg == null ? 0 : Math.round(avg));
+            m.put("total", total == null ? 0 : total);
+            m.put("filled", filled == null ? 0 : filled);
+            m.put("filling", (total == null ? 0 : total) - (filled == null ? 0 : filled));
+        } catch (Exception e) {
+            m.put("avg", 0); m.put("total", 0); m.put("filled", 0); m.put("filling", 0);
+        }
+        return m;
+    }
+
+    private long cntFill(String sql, List<Object> args) {
+        try { return args.isEmpty() ? jdbc.queryForObject(sql, Long.class) : jdbc.queryForObject(sql, Long.class, args.toArray()); }
+        catch (Exception e) { return 0; }
+    }
+
     // ==================== 助手 ====================
 
     private void upsertMeta(long dsId, String schema, String table, String comment, String colsJson) {

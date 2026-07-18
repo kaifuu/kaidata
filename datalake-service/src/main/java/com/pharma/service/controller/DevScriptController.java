@@ -17,6 +17,7 @@ public class DevScriptController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DevScriptExecutor executor;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     @GetMapping("/list")
     public List<Map<String, Object>> list() {
@@ -30,6 +31,7 @@ public class DevScriptController {
         jdbc.update("INSERT INTO meta.dev_script(id, name, script_type, datasource_id, catalog_id, content, description, create_time) VALUES (?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), str(b.getOrDefault("script_type", "SQL")), lng(b.get("datasource_id")),
                 lng(b.get("catalog_id")), str(b.get("content")), str(b.get("description")), new Timestamp(id));
+        try { lineageExtractor.rebuild("SCRIPT", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
     @PutMapping
@@ -38,6 +40,7 @@ public class DevScriptController {
         jdbc.update("UPDATE meta.dev_script SET name=?, script_type=?, datasource_id=?, catalog_id=?, content=?, description=? WHERE id=?",
                 str(b.get("name")), str(b.getOrDefault("script_type", "SQL")), lng(b.get("datasource_id")),
                 lng(b.get("catalog_id")), str(b.get("content")), str(b.get("description")), lng(b.get("id")));
+        try { lineageExtractor.rebuild("SCRIPT", lng(b.get("id"))); } catch (Exception ignored) {}
         return Map.of("success", true);
     }
     @DeleteMapping

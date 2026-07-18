@@ -69,6 +69,30 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- 落标概况 -->
+      <el-tab-pane label="落标概况" name="landing">
+        <div v-loading="landingLoading">
+          <el-row :gutter="12" v-if="landing">
+            <el-col :span="6"><div class="ring-box"><v-chart :option="rateOption" :theme="theme" autoresize style="height:150px" /></div></el-col>
+            <el-col :span="18">
+              <div class="muted" style="margin-bottom:6px">已落标 {{ landing.landed }} / {{ landing.total }} 字段 · 引用最多的数据元 Top5</div>
+              <el-table :data="landing.topElements || []" size="small" border max-height="140">
+                <el-table-column prop="name" label="数据元" min-width="140" /><el-table-column prop="code" label="编码" width="120" /><el-table-column prop="refs" label="引用数" width="80" />
+              </el-table>
+            </el-col>
+          </el-row>
+          <div style="margin:12px 0 6px" class="muted">未落标字段（未关联数据元）</div>
+          <el-table :data="landing?.unlanded || []" size="small" border max-height="200">
+            <el-table-column prop="field" label="字段" min-width="120" /><el-table-column prop="data_type" label="类型" width="110" /><el-table-column prop="table_name" label="模型表" min-width="120" /><el-table-column prop="model_name" label="模型" min-width="120" />
+          </el-table>
+          <div style="margin:12px 0 6px"><span class="muted">合规扫描（字段类型 vs 数据元类型基名）</span><el-button link size="small" type="primary" @click="loadCompliance" style="margin-left:8px">开始扫描</el-button></div>
+          <div v-if="compliance" class="muted">共 {{ compliance.total }} 个已落标字段，类型一致 {{ compliance.pass }}，不一致 {{ compliance.fail }}</div>
+          <el-table :data="compliance?.failList || []" size="small" border max-height="200" style="margin-top:6px">
+            <el-table-column prop="field" label="字段" min-width="120" /><el-table-column prop="field_type" label="字段类型" width="110" /><el-table-column prop="element" label="数据元" min-width="120" /><el-table-column prop="element_type" label="数据元类型" width="110" /><el-table-column prop="table_name" label="模型表" min-width="120" />
+          </el-table>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 数据元编辑 -->
@@ -204,9 +228,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import { VChart } from '@/echarts'
 import { api, errMsg } from '@/api'
 
 const CATEGORIES = ['人员', '产品', '事件', '财务', '组织', '地理位置', '其他']
@@ -331,6 +356,18 @@ async function delItem(row: any) {
   try { await api.govDeleteCodeItem(row.id); codeItems.value = await api.govCodeItems(curSet.value.id); await loadEl() }
   catch (e:any) { ElMessage.error(errMsg(e)) }
 }
+
+// ===== 落标概况 =====
+const theme = 'tech-dark'
+const landing = ref<any>(null); const landingLoading = ref(false); const compliance = ref<any>(null)
+async function loadLanding() { landingLoading.value = true; try { landing.value = await api.govStdLandingStats() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { landingLoading.value = false } }
+async function loadCompliance() { try { compliance.value = await api.govStdComplianceScan() } catch (e: any) { ElMessage.error(errMsg(e)) } }
+const rateOption = computed(() => {
+  const v = landing.value?.rate || 0
+  return { title: { text: v + '%', left: 'center', top: '34%', textStyle: { fontSize: 20, color: '#e6ecff' } },
+    series: [{ type: 'pie', radius: ['60%', '78%'], silent: true, label: { show: false }, data: [{ value: v, itemStyle: { color: '#2ee6a6' } }, { value: 100 - v, itemStyle: { color: '#26314f' } }] }] }
+})
+watch(tab, (t) => { if (t === 'landing' && !landing.value) loadLanding() })
 
 onMounted(() => { loadEl(); loadCs() })
 </script>

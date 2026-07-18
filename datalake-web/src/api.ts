@@ -191,6 +191,10 @@ export const api = {
   govSaveElement: (b: any) => save('/data-gov/std/element', b),
   govDeleteElement: (id: number) => http.delete('/data-gov/std/element', { params: { id } }).then((r) => r.data),
   govElementRefs: (id: number) => http.get('/data-gov/std/element/refs', { params: { id } }).then((r) => r.data),
+  // 治理驾驶舱 + 标准落标/合规
+  govDashboardStats: () => http.get('/data-gov/dashboard/stats').then((r) => r.data),
+  govStdLandingStats: () => http.get('/data-gov/std/landing-stats').then((r) => r.data),
+  govStdComplianceScan: () => http.get('/data-gov/std/compliance-scan').then((r) => r.data),
   govCodeSets: (category?: string, keyword?: string) => http.get('/data-gov/std/code-set', { params: { category, keyword } }).then((r) => r.data),
   govSaveCodeSet: (b: any) => save('/data-gov/std/code-set', b),
   govDeleteCodeSet: (id: number) => http.delete('/data-gov/std/code-set', { params: { id } }).then((r) => r.data),
@@ -204,6 +208,10 @@ export const api = {
   govSaveModel: (b: any) => save('/data-gov/model', b),
   govDeleteModel: (id: number) => http.delete('/data-gov/model', { params: { id } }).then((r) => r.data),
   govModelTables: (modelId: number) => http.get('/data-gov/model/table', { params: { modelId } }).then((r) => r.data),
+  // 模型落地：DDL 生成 / 一键建物理表 / 物理表逆向导入
+  govModelDdl: (tableId: number) => http.get('/data-gov/model/table/ddl', { params: { tableId } }).then((r) => r.data),
+  govModelCreatePhysical: (tableId: number, dsId: number) => http.post('/data-gov/model/table/create-physical', null, { params: { tableId, dsId }, timeout: 60000 }).then((r) => r.data),
+  govModelReverse: (metaId: number, modelId: number, layer: string) => http.post('/data-gov/model/reverse', null, { params: { metaId, modelId, layer } }).then((r) => r.data),
   govSaveModelTable: (b: any) => http.post('/data-gov/model/table', b).then((r) => r.data),
   govDeleteModelTable: (id: number) => http.delete('/data-gov/model/table', { params: { id } }).then((r) => r.data),
   govModelFields: (tableId: number) => http.get('/data-gov/model/field', { params: { tableId } }).then((r) => r.data),
@@ -262,6 +270,19 @@ export const api = {
   govMetaLineage: (dsId: number, schema: string, table: string) => http.get('/data-gov/meta/lineage', { params: { dsId, schema, table } }).then((r) => r.data),
   govMetaImpact: (dsId: number, schema: string, table: string) => http.get('/data-gov/meta/impact', { params: { dsId, schema, table } }).then((r) => r.data),
   govMetaFulllink: (dsId: number, expandFields: boolean) => http.get('/data-gov/meta/fulllink', { params: { dsId, expandFields } }).then((r) => r.data),
+  // 统一边缘表血缘（DataLineageController，驱动「血缘分析」页）
+  govLineageGraph: (table: string, schema: string, dsId: number, direction: string, depth: number) =>
+    http.get('/data-gov/lineage/graph', { params: { table, schema, dsId, direction, depth } }).then((r) => r.data),
+  govLineageImpact: (table: string, schema: string, dsId: number, depth: number) =>
+    http.get('/data-gov/lineage/impact', { params: { table, schema, dsId, depth } }).then((r) => r.data),
+  govLineageField: (metaId: number, field: string) =>
+    http.get('/data-gov/lineage/field', { params: { metaId, field } }).then((r) => r.data),
+  govLineageStats: () => http.get('/data-gov/lineage/stats').then((r) => r.data),
+  govLineageRebuild: () => http.post('/data-gov/lineage/rebuild', null, { timeout: 180000 }).then((r) => r.data),
+  // 补录工作台（MetaFill.vue）
+  govMetaFillStats: () => http.get('/data-gov/meta/fill/stats').then((r) => r.data),
+  govMetaFillList: (params: { type?: string; status?: string; kw?: string; dsId?: number; page?: number; size?: number }) =>
+    http.get('/data-gov/meta/fill/list', { params }).then((r) => r.data),
   // 接口元数据 / 文件元数据补录
   govMetaApiList: (kw?: string) => http.get('/data-gov/meta/api/list', { params: kw ? { kw } : {} }).then((r) => r.data),
   govMetaApiDetail: (serviceId: number) => http.get('/data-gov/meta/api/detail', { params: { serviceId } }).then((r) => r.data),

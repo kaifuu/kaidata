@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 public final class TableExtractor {
 
     private static final Pattern P = Pattern.compile("(?i)\\b(?:from|join)\\s+([a-z_][\\w.]*)");
+    private static final Pattern INSERT_P = Pattern.compile("(?i)\\binsert\\s+(?:into\\s+)?([a-z_][\\w.]*)");
 
     private TableExtractor() {}
 
@@ -26,6 +27,13 @@ public final class TableExtractor {
             out.add(t);
         }
         return out;
+    }
+
+    /** 从 INSERT INTO ... 抽取首个目标表名（可含 schema.table），与 parse()（抽源表）配套用于血缘解析；无 INSERT 返回 null。 */
+    public static String parseInsertTarget(String sql) {
+        if (sql == null || sql.isBlank()) return null;
+        Matcher m = INSERT_P.matcher(sql);
+        return m.find() ? m.group(1).toLowerCase() : null;
     }
 
     private static boolean isKeyword(String t) {

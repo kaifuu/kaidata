@@ -28,6 +28,7 @@ public class OfflineIngestController {
     @Autowired private DataSourceAdapterRegistry registry;
     @Autowired private DataSourceLoader loader;
     @Autowired private IngestExecutor executor;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     // ==================== 任务 CRUD ====================
 
@@ -54,6 +55,7 @@ public class OfflineIngestController {
                 str(b.get("biz_key")), str(b.get("last_sync_value")), str(b.get("column_map")),
                 str(b.get("where_clause")),
                 str(b.getOrDefault("status", "DISABLED")), currentUser(), now, now);
+        try { lineageExtractor.rebuild("OFFLINE", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
 
@@ -71,6 +73,7 @@ public class OfflineIngestController {
                 str(b.getOrDefault("strategy", "FULL")), str(b.get("inc_column")),
                 str(b.get("biz_key")), str(b.get("column_map")), str(b.get("where_clause")),
                 str(b.getOrDefault("status", "DISABLED")), now, id);
+        try { lineageExtractor.rebuild("OFFLINE", id); } catch (Exception ignored) {}
         return Map.of("success", true);
     }
 

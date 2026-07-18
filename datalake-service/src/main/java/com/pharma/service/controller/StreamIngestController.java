@@ -33,6 +33,7 @@ public class StreamIngestController {
     @Autowired private JdbcToKafkaRunner jdbcToKafka;
     @Autowired private KafkaAdminHolder kafkaAdmin;
     @Autowired private DataSource dataSource;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     @GetMapping("/job/list")
     public List<Map<String, Object>> listJobs(@RequestParam(required = false) Long catalogId) {
@@ -57,6 +58,7 @@ public class StreamIngestController {
                 str(b.get("kafka_topic")), str(b.get("target_db")), str(b.get("target_table")),
                 str(b.get("columns_json")), str(b.get("schedule_cron")), lng(b.get("catalog_id")), "STOPPED", str(b.get("props")),
                 currentUser(), now, now);
+        try { lineageExtractor.rebuild("STREAM", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
 
@@ -70,6 +72,7 @@ public class StreamIngestController {
                 str(b.get("name")), str(b.get("type")), lng(b.get("source_ds_id")), str(b.get("source_query")),
                 str(b.get("kafka_topic")), str(b.get("target_db")), str(b.get("target_table")),
                 str(b.get("columns_json")), str(b.get("schedule_cron")), lng(b.get("catalog_id")), str(b.get("props")), now, id);
+        try { lineageExtractor.rebuild("STREAM", id); } catch (Exception ignored) {}
         return Map.of("success", true);
     }
 

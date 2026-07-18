@@ -24,6 +24,7 @@ const routes = [
       { path: 'data-access/stream', name: 'DaStream', component: () => import('@/views/data-access/Stream.vue'), meta: { title: '实时数据接入', icon: 'VideoPlay' } },
       { path: 'data-access/profile', name: 'DaProfile', component: () => import('@/views/data-access/Profile.vue'), meta: { title: '数据探查', icon: 'Search' } },
       // 数据治理
+      { path: 'data-gov/dashboard', name: 'GovDashboard', component: () => import('@/views/data-gov/Dashboard.vue'), meta: { title: '治理驾驶舱', icon: 'DataBoard' } },
       { path: 'data-gov/std', name: 'GovStd', component: () => import('@/views/data-gov/Std.vue'), meta: { title: '数据标准', icon: 'Coin' } },
       { path: 'data-gov/model', name: 'GovModel', component: () => import('@/views/data-gov/Model.vue'), meta: { title: '数据模型', icon: 'Share' } },
       { path: 'data-gov/wh', name: 'GovWh', component: () => import('@/views/data-gov/Wh.vue'), meta: { title: '数据仓库', icon: 'Files' } },
@@ -32,6 +33,8 @@ const routes = [
       { path: 'data-gov/tag', name: 'GovTag', component: () => import('@/views/data-gov/Tag.vue'), meta: { title: '数据标签', icon: 'PriceTag' } },
       { path: 'data-gov/master', name: 'GovMaster', component: () => import('@/views/data-gov/Master.vue'), meta: { title: '主数据', icon: 'Box' } },
       { path: 'data-gov/meta-collect', name: 'GovMetaCollect', component: () => import('@/views/data-gov/MetaCollect.vue'), meta: { title: '采集管理', icon: 'Refresh' } },
+      { path: 'data-gov/lineage', name: 'GovLineage', component: () => import('@/views/data-gov/Lineage.vue'), meta: { title: '血缘分析', icon: 'Share' } },
+      { path: 'data-gov/meta-fill', name: 'GovMetaFill', component: () => import('@/views/data-gov/MetaFill.vue'), meta: { title: '元数据补录', icon: 'Edit' } },
       // 数据开发
       { path: 'data-dev/func', name: 'DevFunc', component: () => import('@/views/data-dev/Func.vue'), meta: { title: '函数管理', icon: 'Operation' } },
       { path: 'data-dev/offline', name: 'DevOffline', component: () => import('@/views/data-dev/Offline.vue'), meta: { title: '离线开发', icon: 'Download' } },

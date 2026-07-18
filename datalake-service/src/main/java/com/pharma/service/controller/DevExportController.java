@@ -17,6 +17,7 @@ public class DevExportController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DevExportExecutor executor;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     @GetMapping("/list")
     public List<Map<String, Object>> list() {
@@ -30,6 +31,7 @@ public class DevExportController {
         jdbc.update("INSERT INTO meta.dev_export(id, name, source_ds_id, source_query, target_type, target_config, format, create_time) VALUES (?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_query")),
                 str(b.getOrDefault("target_type", "db")), str(b.get("target_config")), str(b.getOrDefault("format", "json")), new Timestamp(id));
+        try { lineageExtractor.rebuild("EXPORT", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
     @PutMapping
@@ -38,6 +40,7 @@ public class DevExportController {
         jdbc.update("UPDATE meta.dev_export SET name=?, source_ds_id=?, source_query=?, target_type=?, target_config=?, format=? WHERE id=?",
                 str(b.get("name")), lng(b.get("source_ds_id")), str(b.get("source_query")),
                 str(b.get("target_type")), str(b.get("target_config")), str(b.get("format")), lng(b.get("id")));
+        try { lineageExtractor.rebuild("EXPORT", lng(b.get("id"))); } catch (Exception ignored) {}
         return Map.of("success", true);
     }
     @DeleteMapping

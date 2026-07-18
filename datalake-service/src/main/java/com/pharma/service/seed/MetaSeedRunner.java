@@ -341,6 +341,13 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.gov_quality_result ADD COLUMN table_name VARCHAR(255)");
         exec("CREATE TABLE IF NOT EXISTS meta.gov_quality_report (id BIGINT, task_id BIGINT, task_name VARCHAR(128), run_time DATETIME, overall_score DOUBLE, grade VARCHAR(4), total_rules INT, pass_count INT, fail_count INT, error_count INT, dim_summary VARCHAR(4096), table_summary VARCHAR(4096)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!m18) kvSet("schema_ver", "18");
+
+        // ============ 元数据统一血缘边表（schema_ver=19，增量） ============
+        // 各作业（离线接入/实时/接出/离线开发 JDBC·Flink SQL·DAG·Kettle/脚本/工作流）解析出的源→目标边。
+        // 表级（src_field/tgt_field 为 NULL）+ 字段级（有值）。LineageExtractor 写入，DataLineageController 查询。
+        boolean m19 = "19".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_lineage_edge (id BIGINT, src_ds_id BIGINT, src_schema VARCHAR(128), src_table VARCHAR(255), src_field VARCHAR(128), tgt_ds_id BIGINT, tgt_schema VARCHAR(128), tgt_table VARCHAR(255), tgt_field VARCHAR(128), edge_type VARCHAR(32), job_id BIGINT, job_name VARCHAR(128), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m19) kvSet("schema_ver", "19");
     }
 
     private void seedStd(String code, String name, int level, String desc) {
@@ -419,6 +426,10 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(58, 18, "采集管理", "/data-gov/meta-collect", "Refresh", "gov:metacollect", "MENU", 6);
         menu(24, 18, "数据标签", "/data-gov/tag", "PriceTag", "gov:tag", "MENU", 6);
         menu(25, 18, "主数据", "/data-gov/master", "Box", "gov:master", "MENU", 7);
+        // 元数据升级：血缘分析 + 元数据补录（独立入口，菜单 id 避开历史收敛删除的 59-62）
+        menu(65, 18, "血缘分析", "/data-gov/lineage", "Share", "gov:lineage", "MENU", 7);
+        menu(66, 18, "元数据补录", "/data-gov/meta-fill", "Edit", "gov:metafill", "MENU", 8);
+        menu(67, 18, "治理驾驶舱", "/data-gov/dashboard", "DataBoard", "gov:dashboard", "MENU", 0);
 
         // 数据开发（一级目录 + 4 子菜单）
         menu(26, 0, "数据开发", "/data-dev", "Cpu", "", "CATALOG", 8);
@@ -494,7 +505,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         int[] daMenus = {12, 13, 14, 15, 16, 17};
         for (int m : daMenus) grantMenu(1, m);
         // 数据治理菜单授予 SYS_ADMIN
-        int[] govMenus = {18, 19, 20, 21, 22, 23, 24, 25, 58};
+        int[] govMenus = {18, 19, 20, 21, 22, 23, 24, 25, 58, 65, 66, 67};
         for (int m : govMenus) grantMenu(1, m);
         // 数据开发菜单授予 SYS_ADMIN
         int[] devMenus = {26, 27, 28, 29, 30, 59};

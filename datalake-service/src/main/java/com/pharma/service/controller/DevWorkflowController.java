@@ -17,6 +17,7 @@ public class DevWorkflowController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DevWorkflowExecutor executor;
+    @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
 
     @GetMapping("/list")
     public List<Map<String, Object>> list() {
@@ -35,6 +36,7 @@ public class DevWorkflowController {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
         saveWf(id, b, true);
+        try { lineageExtractor.rebuild("WORKFLOW", id); } catch (Exception ignored) {}
         return Map.of("success", true, "id", id);
     }
     @PutMapping
@@ -42,6 +44,7 @@ public class DevWorkflowController {
         Authz.require(Authz.SYS_ADMIN);
         long id = lng(b.get("id"));
         saveWf(id, b, false);
+        try { lineageExtractor.rebuild("WORKFLOW", id); } catch (Exception ignored) {}
         executor.stop(id);
         if ("ONLINE".equals(str(b.get("status"))) && !str(b.get("cron")).isEmpty()) executor.start(id, str(b.get("cron")));
         return Map.of("success", true);

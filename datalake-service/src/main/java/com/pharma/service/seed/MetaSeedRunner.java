@@ -348,6 +348,36 @@ public class MetaSeedRunner implements ApplicationRunner {
         boolean m19 = "19".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_lineage_edge (id BIGINT, src_ds_id BIGINT, src_schema VARCHAR(128), src_table VARCHAR(255), src_field VARCHAR(128), tgt_ds_id BIGINT, tgt_schema VARCHAR(128), tgt_table VARCHAR(255), tgt_field VARCHAR(128), edge_type VARCHAR(32), job_id BIGINT, job_name VARCHAR(128), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!m19) kvSet("schema_ver", "19");
+
+        // ============ 容器管理子系统元数据表（schema_ver=20，增量） ============
+        // 镜像版本（PRIMARY KEY，支持 UPDATE 状态机 + DELETE）
+        boolean m20 = "20".equals(kv("schema_ver"));
+        exec("CREATE TABLE IF NOT EXISTS meta.ct_image_version (" +
+                "id BIGINT, name VARCHAR(128), tag VARCHAR(64), version_label VARCHAR(128), " +
+                "image_id VARCHAR(128), size_bytes BIGINT, dockerfile_text VARCHAR(65535), " +
+                "expose_port VARCHAR(64), status VARCHAR(16), " +   // DRAFT/BUILT/SAVED/FAIL
+                "file_path VARCHAR(512), file_size BIGINT, remark VARCHAR(1024), " +
+                "create_by VARCHAR(64), create_time DATETIME, update_time DATETIME" +
+                ") PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // 构建/保存动作历史（追加型 DUPLICATE KEY，完成时一次性写）
+        exec("CREATE TABLE IF NOT EXISTS meta.ct_image_build_run (" +
+                "id BIGINT, version_id BIGINT, action VARCHAR(16), status VARCHAR(16), " +
+                "log_text VARCHAR(65535), start_time DATETIME, end_time DATETIME, " +
+                "error_msg VARCHAR(2048), triggered_by VARCHAR(64)" +
+                ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // 远端服务器（PRIMARY KEY；password 存 CryptoUtil AES-GCM 密文）
+        exec("CREATE TABLE IF NOT EXISTS meta.ct_server (" +
+                "id BIGINT, name VARCHAR(128), host VARCHAR(128), ssh_port INT, username VARCHAR(128), " +
+                "password VARCHAR(512), deploy_path VARCHAR(512), docker_bin VARCHAR(64), " +
+                "status VARCHAR(16), remark VARCHAR(512), create_time DATETIME, update_time DATETIME" +
+                ") PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // 部署记录（追加型 DUPLICATE KEY，与 build_run 同构）
+        exec("CREATE TABLE IF NOT EXISTS meta.ct_deploy_record (" +
+                "id BIGINT, version_id BIGINT, server_id BIGINT, status VARCHAR(16), " +
+                "log_text VARCHAR(65535), start_time DATETIME, end_time DATETIME, " +
+                "error_msg VARCHAR(2048), triggered_by VARCHAR(64)" +
+                ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m20) kvSet("schema_ver", "20");
     }
 
     private void seedStd(String code, String name, int level, String desc) {
@@ -482,6 +512,12 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(63, 55, "我的订阅", "/market/my-subscribe", "ShoppingCart", "market:subscribe", "MENU", 3);
         menu(64, 55, "订阅审核", "/market/subscribe-audit", "Checked", "market:subaudit", "MENU", 4);
 
+        // 容器管理（一级目录 sort=14 + 3 子菜单，菜单 id 68-71）
+        menu(68, 0, "容器管理", "/container", "Box", "", "CATALOG", 14);
+        menu(69, 68, "镜像版本", "/container/image", "Files", "container:image", "MENU", 1);
+        menu(70, 68, "远端服务器", "/container/server", "Connection", "container:server", "MENU", 2);
+        menu(71, 68, "部署记录", "/container/deploy", "Promotion", "container:deploy", "MENU", 3);
+
         // 数据门户 → 数据总览（重命名，幂等 UPDATE）
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
         // 元数据门户收敛：23→数据地图，58→采集管理，删除 59-62（接口/文件/血缘/检索 并入数据地图门户）
@@ -525,6 +561,9 @@ public class MetaSeedRunner implements ApplicationRunner {
         // 数据集市菜单授予 SYS_ADMIN
         int[] marketMenus = {55, 56, 57, 63, 64};
         for (int m : marketMenus) grantMenu(1, m);
+        // 容器管理菜单授予 SYS_ADMIN
+        int[] containerMenus = {68, 69, 70, 71};
+        for (int m : containerMenus) grantMenu(1, m);
 
         // ---------- 用户（三员 + 超级演示号） ----------
         // admin/admin123：三员合一（便于演示全貌）

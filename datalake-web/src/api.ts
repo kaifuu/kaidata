@@ -441,5 +441,23 @@ export const api = {
   marketRemoveCart: (id: number) => http.delete('/market/cart/remove', { params: { id } }).then((r) => r.data),
   marketClearCart: () => http.post('/market/cart/clear', null).then((r) => r.data),
   marketPreviewTable: (b: any) => http.post('/market/preview-table', b, { timeout: 60000 }).then((r) => r.data),
-  marketOverview: () => http.get('/market/overview').then((r) => r.data)
+  marketOverview: () => http.get('/market/overview').then((r) => r.data),
+
+  // ===== 容器管理 [SYS_ADMIN] =====
+  containerDockerInfo: () => http.get('/container/docker/info').then((r) => r.data),
+  containerVersionList: (params: { kw?: string; status?: string } = {}) => http.get('/container/version/list', { params }).then((r) => r.data),
+  containerVersionDetail: (id: number) => http.get('/container/version/detail', { params: { id } }).then((r) => r.data),
+  containerSaveVersion: (b: any) => save('/container/version', b),
+  containerDeleteVersion: (id: number) => http.delete('/container/version', { params: { id } }).then((r) => r.data),
+  containerBuild: (id: number) => http.post('/container/version/build', null, { params: { id } }).then((r) => r.data),
+  containerBuildStatus: (versionId: number) => http.get('/container/version/build-status', { params: { versionId } }).then((r) => r.data),
+  containerBuildRuns: (versionId: number) => http.get('/container/build-run/list', { params: { versionId } }).then((r) => r.data),
+  containerDownloadTicket: (id: number) => http.post('/container/version/download-ticket', null, { params: { id } }).then((r) => r.data),
+  containerServerList: () => http.get('/container/server/list').then((r) => r.data),
+  containerSaveServer: (b: any) => save('/container/server', b),
+  containerDeleteServer: (id: number) => http.delete('/container/server', { params: { id } }).then((r) => r.data),
+  containerTestServer: (b: any) => http.post('/container/server/test', b).then((r) => r.data),
+  containerDeploy: (versionId: number, serverId: number) => http.post('/container/deploy', null, { params: { versionId, serverId } }).then((r) => r.data),
+  containerDeployStatus: (deployId: number) => http.get('/container/deploy/status', { params: { deployId } }).then((r) => r.data),
+  containerDeployList: (params: { versionId?: number; serverId?: number } = {}) => http.get('/container/deploy/list', { params }).then((r) => r.data)
 }

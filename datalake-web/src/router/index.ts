@@ -69,7 +69,11 @@ const routes = [
       { path: 'market/dataset', name: 'MarketDataset', component: () => import('@/views/market/Dataset.vue'), meta: { title: '数据集', icon: 'Files' } },
       { path: 'market/my-subscribe', name: 'MarketMySubscribe', component: () => import('@/views/market/MySubscribe.vue'), meta: { title: '我的订阅', icon: 'ShoppingCart' } },
       { path: 'market/subscribe-audit', name: 'MarketSubscribeAudit', component: () => import('@/views/market/SubscribeAudit.vue'), meta: { title: '订阅审核', icon: 'Checked' } },
-      { path: 'market/overview', name: 'MarketOverview', component: () => import('@/views/market/Overview.vue'), meta: { title: '资源概览', icon: 'DataAnalysis' } }
+      { path: 'market/overview', name: 'MarketOverview', component: () => import('@/views/market/Overview.vue'), meta: { title: '资源概览', icon: 'DataAnalysis' } },
+      // 容器管理
+      { path: 'container/image', name: 'ContainerImage', component: () => import('@/views/container/Image.vue'), meta: { title: '镜像版本', icon: 'Files' } },
+      { path: 'container/server', name: 'ContainerServer', component: () => import('@/views/container/Server.vue'), meta: { title: '远端服务器', icon: 'Connection' } },
+      { path: 'container/deploy', name: 'ContainerDeploy', component: () => import('@/views/container/Deploy.vue'), meta: { title: '部署记录', icon: 'Promotion' } }
     ]
   }
 ]

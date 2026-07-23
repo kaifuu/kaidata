@@ -45,6 +45,13 @@ pharma:
       user: ${HOP_USER:cluster}
       pass: ${HOP_PASS:cluster}
     jar-dir: ${FLINK_JAR_DIR:data/flink-jars}   # FlinkJar 的 jar 本地存储目录
+  image:
+    dir: ${IMAGE_DIR:data/images}                       # docker save 产出 tar 的本地目录
+    context-dir: ${IMAGE_CONTEXT_DIR:.}                 # docker build 上下文（仓库根）
+    dockerfile: ${IMAGE_DOCKERFILE:docker/app/Dockerfile}
+  docker:
+    bin: ${DOCKER_BIN:docker}                           # 本机 docker；Windows 可填 docker.exe/全路径
+    build-timeout-sec: 1800
 
 # MyBatis-Plus：系统管理模块 ORM。复用上面 StarRocks 数据源（HikariCP），与 JdbcTemplate 共存
 mybatis-plus:

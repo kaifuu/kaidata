@@ -32,3 +32,6 @@ docs/
 
 # 运行产物
 docker/hop-output/
+
+# 容器构建产物（全栈镜像 tar 输出，单文件可达数百 MB）
+data/

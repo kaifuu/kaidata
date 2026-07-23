@@ -178,7 +178,10 @@ export default {
     'market/dataset': 'Datasets',
     'market/my-subscribe': 'My Subscriptions',
     'market/subscribe-audit': 'Subscription Review',
-    'market/overview': 'Overview'
+    'market/overview': 'Overview',
+    'container/image': 'Image Versions',
+    'container/server': 'Remote Servers',
+    'container/deploy': 'Deploy Records'
   },
   // Menu groups (sidebar parents): key = first segment of child path
   menuGroup: {
@@ -190,6 +193,7 @@ export default {
     'ops': 'Operations',
     'security': 'Security',
     'dservice': 'Data Service',
-    'market': 'Marketplace'
+    'market': 'Marketplace',
+    'container': 'Container'
   }
 }

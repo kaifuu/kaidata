@@ -178,7 +178,10 @@ export default {
     'market/dataset': '数据集',
     'market/my-subscribe': '我的订阅',
     'market/subscribe-audit': '订阅审核',
-    'market/overview': '资源概览'
+    'market/overview': '资源概览',
+    'container/image': '镜像版本',
+    'container/server': '远端服务器',
+    'container/deploy': '部署记录'
   },
   // 菜单分组（侧栏父级）：key = 子项 path 的首段
   menuGroup: {
@@ -190,6 +193,7 @@ export default {
     'ops': '运维中心',
     'security': '数据安全',
     'dservice': '数据服务',
-    'market': '数据集市'
+    'market': '数据集市',
+    'container': '容器管理'
   }
 }

@@ -19,6 +19,7 @@ public class OpenGrantController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private OpenGrantService grantService;
+    @Autowired private com.pharma.service.access.util.CryptoUtil crypto;
 
     /** 授权列表（带资产名/状态 + 累计调用数） */
     @GetMapping("/list")
@@ -85,7 +86,7 @@ public class OpenGrantController {
         Authz.require(Authz.SYS_ADMIN);
         String k = java.util.UUID.randomUUID().toString().replace("-", "");
         String s = java.util.UUID.randomUUID().toString().replace("-", "");
-        jdbc.update("UPDATE meta.data_open_grant SET app_key=?, app_secret=? WHERE id=?", k, s, id);
+        jdbc.update("UPDATE meta.data_open_grant SET app_key=?, app_secret=? WHERE id=?", k, crypto.encrypt(s), id);
         return Map.of("success", true, "app_key", k, "app_secret", s);
     }
 

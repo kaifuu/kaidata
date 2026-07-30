@@ -71,8 +71,16 @@ public class DevScriptExecutor {
         List<Map<String, Object>> rows = new ArrayList<>();
         long rowsRead = 0;
         try {
-            DataSourceDescriptor ds = loader.load(dsId);
-            DataSource pool = registry.getPool(ds);
+            // ds_id=0 约定为主库（平台自身 StarRocks，未登记为 ing_datasource）→ 直接用主库 DataSource，
+            // 否则 loader.load(0) 会 EmptyResult。覆盖数据开发/离线/数据服务对主库表(ds_id=0)的取数。
+            DataSource pool;
+            if (dsId <= 0) {
+                pool = jdbc.getDataSource();
+                if (pool == null) throw new IllegalStateException("主库 DataSource 未就绪");
+            } else {
+                DataSourceDescriptor ds = loader.load(dsId);
+                pool = registry.getPool(ds);
+            }
             try (Connection c = pool.getConnection(); Statement st = c.createStatement()) {
                 boolean hasRs = st.execute(content);
                 if (hasRs) {

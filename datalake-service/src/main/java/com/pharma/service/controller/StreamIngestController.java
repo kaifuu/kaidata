@@ -34,6 +34,8 @@ public class StreamIngestController {
     @Autowired private KafkaAdminHolder kafkaAdmin;
     @Autowired private DataSource dataSource;
     @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
+    @Autowired private com.pharma.service.access.meta.MetaCollectExecutor metaCollectExecutor;
+    private final com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
 
     @GetMapping("/job/list")
     public List<Map<String, Object>> listJobs(@RequestParam(required = false) Long catalogId) {
@@ -95,6 +97,11 @@ public class StreamIngestController {
         if ("KAFKA_TO_SR".equals(type)) {
             routineLoad.start(jobId, str(job.get("kafka_topic")), str(job.get("target_db")),
                     str(job.get("target_table")), str(job.get("columns_json")));
+            // 接入即治理：实时表写主库（ds_id=0），建表后自动注册到 gov_meta_table
+            try {
+                metaCollectExecutor.upsertTable(0L, str(job.get("target_db")), str(job.get("target_table")),
+                        normalizeColsJson(str(job.get("columns_json"))));
+            } catch (Exception ignored) {}
         } else if ("JDBC_TO_KAFKA".equals(type)) {
             jdbcToKafka.start(jobId, lng(job.get("source_ds_id")), str(job.get("source_query")),
                     str(job.get("kafka_topic")), parseSec(str(job.get("schedule_cron"))));
@@ -212,6 +219,20 @@ public class StreamIngestController {
     private long cnt(String sql) {
         try { Long v = jdbc.queryForObject(sql, Long.class); return v == null ? 0 : v; }
         catch (Exception e) { return 0; }
+    }
+    /** 实时作业 columns_json（[{"col","type","pk"}] 或 ["x"]）归一为 gov_meta_table 约定的 [{"name","type"}]。 */
+    private String normalizeColsJson(String columnsJson) {
+        try {
+            com.fasterxml.jackson.databind.node.ArrayNode out = json.createArrayNode();
+            for (com.fasterxml.jackson.databind.JsonNode n : json.readTree(columnsJson)) {
+                String name = n.isObject()
+                        ? (n.has("col") ? n.get("col").asText() : (n.has("name") ? n.get("name").asText() : n.asText()))
+                        : n.asText();
+                String type = (n.isObject() && n.has("type")) ? n.get("type").asText() : "VARCHAR(255)";
+                out.addObject().put("name", name).put("type", type);
+            }
+            return json.writeValueAsString(out);
+        } catch (Exception e) { return "[]"; }
     }
     private static int parseSec(String s) { try { return Math.max(Integer.parseInt(s.trim()), 1); } catch (Exception e) { return 30; } }
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }

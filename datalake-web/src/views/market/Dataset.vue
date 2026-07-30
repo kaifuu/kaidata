@@ -69,6 +69,16 @@
         <el-form-item label="用途说明"><el-input v-model="subForm.purpose" type="textarea" :rows="2" placeholder="申请用途 / 场景" /></el-form-item>
         <el-form-item label="限次"><el-input-number v-model="subForm.limit_count" :min="0" controls-position="right" /><span class="muted" style="margin-left:8px">0=不限</span></el-form-item>
         <el-form-item label="限流(QPS)"><el-input-number v-model="subForm.limit_qps" :min="0" controls-position="right" /><span class="muted" style="margin-left:8px">0=不限</span></el-form-item>
+        <el-form-item label="开放字段" v-if="fieldOptions.length">
+          <el-select v-model="subForm.fields" multiple collapse-tags collapse-tags-tooltip placeholder="不选=全部字段" style="width:100%">
+            <el-option v-for="f in fieldOptions" :key="f" :label="f" :value="f" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="参数字段" v-if="fieldOptions.length && subForm.open_type === 'API'">
+          <el-select v-model="subForm.param_field" clearable placeholder="等值过滤字段（可选）" style="width:100%">
+            <el-option v-for="f in fieldOptions" :key="f" :label="f" :value="f" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="subDlg = false">取消</el-button><el-button type="primary" @click="submitSub">提交申请</el-button></template>
     </el-dialog>
@@ -110,10 +120,15 @@ const sampleLoading = ref(false)
 
 const subDlg = ref(false)
 const subItems = ref<any[]>([])
-const subForm = reactive<any>({ open_type: 'API', purpose: '', limit_count: 0, limit_qps: 0 })
+const subForm = reactive<any>({ open_type: 'API', purpose: '', limit_count: 0, limit_qps: 0, fields: [] as string[], param_field: '' })
+const fieldOptions = ref<string[]>([])
 const subNames = computed(() => subItems.value.map((i: any) => i.table_name).join('、'))
 
 function countCols(cj: string) { try { const a = JSON.parse(cj); return Array.isArray(a) ? a.length : 0 } catch { return 0 } }
+function parseColNames(cj: string): string[] {
+  try { const a = JSON.parse(cj); if (!Array.isArray(a)) return []; return a.map((x: any) => typeof x === 'string' ? x : (x.name || x.col || '')).filter(Boolean) }
+  catch { return [] }
+}
 function buildTree(flat: any[]): any[] {
   const m = new Map<number, any>()
   flat.forEach((f: any) => m.set(Number(f.id), { ...f, children: [] }))
@@ -154,7 +169,13 @@ async function openSchema(r: any) {
   } catch (e: any) { ElMessage.error(errMsg(e)) } finally { sampleLoading.value = false }
 }
 
-function openSubscribe(items: any[]) { subItems.value = items; Object.assign(subForm, { open_type: 'API', purpose: '', limit_count: 0, limit_qps: 0 }); subDlg.value = true }
+function openSubscribe(items: any[]) {
+  subItems.value = items
+  Object.assign(subForm, { open_type: 'API', purpose: '', limit_count: 0, limit_qps: 0, fields: [], param_field: '' })
+  // 单表订阅且带列结构 → 提供字段选择（批量订阅多表时不适用）
+  fieldOptions.value = (items.length === 1 && items[0].columns_json) ? parseColNames(items[0].columns_json) : []
+  subDlg.value = true
+}
 function openSubscribeFromCart() {
   const items = cart.value.map((c: any) => ({ asset_id: Number(c.item_ref), table_name: c.item_name, meta_id: 0 }))
   if (!items.length) return

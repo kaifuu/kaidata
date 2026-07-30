@@ -1,6 +1,8 @@
 package com.pharma.service.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -14,15 +16,21 @@ import javax.crypto.spec.SecretKeySpec;
  * HMAC-SHA256 签名令牌（JWT 结构：header.payload.signature）
  * <p>
  * 无外部依赖（jjwt 等本机拉不到，故自实现）。载荷含 username/name/role/exp。
- * 签名密钥服务端持有，客户端无法伪造。过期默认 12h。
+ * 签名密钥从配置 {@code pharma.security.token-sign-key} 读取（环境变量 PHARMA_TOKEN_KEY 优先，
+ * 默认值兼容存量 token），不再硬编码于源码。过期默认 12h。
  */
+@Component
 public class TokenUtil {
 
-    private static final String SECRET = "pharma-datalake-sign-secret-2026";
+    private final String secret;
     private static final long TTL_SECONDS = 12 * 3600L;
     private static final ObjectMapper M = new ObjectMapper();
 
-    public static String issue(String username, String name, String role) {
+    public TokenUtil(@Value("${pharma.security.token-sign-key:pharma-datalake-sign-secret-2026}") String secret) {
+        this.secret = secret;
+    }
+
+    public String issue(String username, String name, String role) {
         return issue(username, name, role, role);
     }
 
@@ -32,7 +40,7 @@ public class TokenUtil {
      * @param role     主角色（兼容旧字段）
      * @param rolesCsv 该用户全部角色码，逗号分隔（如 "SYS_ADMIN,SEC_ADMIN"）
      */
-    public static String issue(String username, String name, String role, String rolesCsv) {
+    public String issue(String username, String name, String role, String rolesCsv) {
         try {
             String header = b64(M.writeValueAsString(Map.of("alg", "HS256", "typ", "JWT")));
             long exp = System.currentTimeMillis() / 1000 + TTL_SECONDS;
@@ -56,7 +64,7 @@ public class TokenUtil {
      * HMAC 始终覆盖"最后一段之前的全部内容"。
      */
     @SuppressWarnings("unchecked")
-    public static Map<String, Object> verify(String raw) {
+    public Map<String, Object> verify(String raw) {
         try {
             if (raw == null) return null;
             if (raw.startsWith("Bearer ")) raw = raw.substring(7);
@@ -75,9 +83,9 @@ public class TokenUtil {
         }
     }
 
-    private static byte[] hmac(String data) throws Exception {
+    private byte[] hmac(String data) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
         return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -91,6 +99,5 @@ public class TokenUtil {
         return r == 0;
     }
 
-    private TokenUtil() {}
     public static final Map<String, Object> EMPTY = Collections.emptyMap();
 }

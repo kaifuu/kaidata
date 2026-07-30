@@ -32,6 +32,9 @@ public class AuthController {
     @Autowired
     private CaptchaStore captchaStore;
 
+    @Autowired
+    private TokenUtil tokenUtil;
+
     /** 图形验证码：生成 4 位字符图（免鉴权），前端进入登录页即拉取 */
     @GetMapping("/captcha")
     public Map<String, String> captcha() {
@@ -60,7 +63,7 @@ public class AuthController {
         String role = codes.isEmpty() ? "GUEST" : codes.get(0);
         String rolesCsv = codes.isEmpty() ? "GUEST" : String.join(",", codes);
         String name = String.valueOf(u.get("name"));
-        String token = TokenUtil.issue(username, name, role, rolesCsv);
+        String token = tokenUtil.issue(username, name, role, rolesCsv);
 
         return ResponseEntity.ok(Map.of(
                 "token", token,

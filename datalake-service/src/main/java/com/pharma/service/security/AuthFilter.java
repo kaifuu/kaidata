@@ -34,6 +34,9 @@ public class AuthFilter implements Filter {
     @Autowired
     private MessageSource messageSource;
 
+    @Autowired
+    private TokenUtil tokenUtil;
+
     @Override
     public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
             throws IOException, ServletException {
@@ -46,7 +49,7 @@ public class AuthFilter implements Filter {
         // 登录 / 验证码接口免鉴权（在审计 try/finally 之前 return，不写审计）
         if (uri.equals("/api/auth/login") || uri.equals("/api/auth/captcha")) { chain.doFilter(req, res); return; }
 
-        Map<String, Object> payload = TokenUtil.verify(http.getHeader("Authorization"));
+        Map<String, Object> payload = tokenUtil.verify(http.getHeader("Authorization"));
 
         // 令牌无效 → 记审计并直接 401（不能让 Controller 先提交响应）
         if (payload == null) {

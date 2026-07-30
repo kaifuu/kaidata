@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Timestamp;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** 数据服务执行核心：查服务定义 → {param} 替换（白名单防注入）→ 跑 SQL → 记调用日志 → 返回结果。 */
@@ -16,12 +17,17 @@ public class DataServiceExecutor {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DevScriptExecutor scriptExecutor;
+    @Autowired private Masker masker;
+    @Autowired private com.pharma.service.security.AlertService alertService;
     private final ObjectMapper json = new ObjectMapper();
 
     public Map<String, Object> invoke(String code, Map<String, String> params, String caller, String ip) {
         Map<String, Object> svc;
         try {
-            svc = jdbc.queryForMap("SELECT s.id, s.code, s.sql_text, s.datasource_id, s.status, s.asset_id, a.status AS asset_status FROM meta.data_service s LEFT JOIN meta.asset a ON a.id=s.asset_id WHERE s.code=?", code);
+            svc = jdbc.queryForMap("SELECT s.id, s.code, s.sql_text, s.datasource_id, s.status, s.asset_id, a.status AS asset_status, " +
+                    "m.schema_name AS svc_schema, m.table_name AS svc_table " +
+                    "FROM meta.data_service s LEFT JOIN meta.asset a ON a.id=s.asset_id " +
+                    "LEFT JOIN meta.gov_meta_table m ON m.id=a.source_id AND a.source_type='meta_table' WHERE s.code=?", code);
         } catch (Exception e) {
             return err("服务不存在: " + code);
         }
@@ -40,6 +46,13 @@ public class DataServiceExecutor {
         }
         long t0 = System.currentTimeMillis();
         Map<String, Object> result = scriptExecutor.runAdhoc(lng(svc.get("datasource_id")), sql);
+        // 动态脱敏：按服务关联资产的真实表名，对返回行应用 sec_mask 规则（仅服务取数，数据开发调试不经此处）
+        String svcSchema = str(svc.get("svc_schema")), svcTable = str(svc.get("svc_table"));
+        if (!svcTable.isEmpty() && result.get("rows") instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("rows");
+            masker.apply(rows, svcSchema.isEmpty() ? svcTable : svcSchema + "." + svcTable);
+        }
         long cost = System.currentTimeMillis() - t0;
         String status = "SUCCESS".equals(str(result.get("status"))) ? "SUCCESS" : "FAIL";
         String paramsJson;
@@ -52,6 +65,7 @@ public class DataServiceExecutor {
         Map<String, Object> out = new LinkedHashMap<>(result);
         out.put("service", code);
         out.put("cost_ms", cost);
+        if ("FAIL".equals(status)) { try { alertService.raise("MINOR", "服务调用失败 code=" + code + " caller=" + caller + ": " + str(result.get("msg"))); } catch (Exception ignored) {} }
         return out;
     }
 

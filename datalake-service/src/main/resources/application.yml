@@ -26,6 +26,9 @@ pharma:
   crypto:
     # 数据源/文件存储密码 AES-GCM 加密密钥（32 字节）。生产应通过环境变量 PHARMA_AES_KEY 注入并轮换
     aes-key: ${PHARMA_AES_KEY:pharma-datalake-2026-key!!32bytes}
+  security:
+    # 登录令牌 HMAC 签名密钥。生产应通过环境变量 PHARMA_TOKEN_KEY 注入并轮换（默认值兼容存量 token）
+    token-sign-key: ${PHARMA_TOKEN_KEY:pharma-datalake-sign-secret-2026}
   kafka:
     # Kafka 引导地址：宿主机进程用 localhost:9094；容器化部署用 kafka:9092（环境变量覆盖）
     bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}

@@ -16,6 +16,7 @@ import java.util.*;
 public class AssetController {
 
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.pharma.service.access.quality.QualityExecutor qualityExecutor;
 
     // ===== 资产编目（目录树） =====
     @GetMapping("/catalog/tree")
@@ -77,6 +78,7 @@ public class AssetController {
     @PostMapping
     public Map<String, Object> create(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
+        assertMetaExists(str(b.get("source_type")), lng(b.get("source_id"))); // P2-8：禁止挂载悬空元数据来源
         long id = System.currentTimeMillis();
         jdbc.update("INSERT INTO meta.asset(id, catalog_id, name, asset_type, source_type, source_id, owner, security_level, description, status, create_by, create_time) " +
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -89,6 +91,7 @@ public class AssetController {
     @PutMapping
     public Map<String, Object> update(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
+        assertMetaExists(str(b.get("source_type")), lng(b.get("source_id"))); // P2-8：禁止挂载悬空元数据来源
         jdbc.update("UPDATE meta.asset SET catalog_id=?, name=?, asset_type=?, source_type=?, source_id=?, owner=?, security_level=?, description=? WHERE id=?",
                 lng(b.get("catalog_id")), str(b.get("name")), str(b.get("asset_type")), str(b.get("source_type")),
                 lng(b.get("source_id")), str(b.get("owner")), str(b.get("security_level")), str(b.get("description")), lng(b.get("id")));
@@ -111,6 +114,7 @@ public class AssetController {
     @PostMapping("/approve")
     public Map<String, Object> approve(@RequestParam long id, @RequestBody(required = false) Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
+        qualityCheck(id);   // 改点4：上架前校验资产关联表的最新质量等级达标
         return transition(id, "通过", "通过", b == null ? "" : str(b.get("comment")));
     }
     @PostMapping("/reject")
@@ -183,6 +187,33 @@ public class AssetController {
     }
 
     // -------- 助手 --------
+    /** P2-8：表类型资产的 source_id 须指向真实存在的 gov_meta_table，禁止挂载悬空元数据来源。 */
+    private void assertMetaExists(String sourceType, long sourceId) {
+        if ("meta_table".equals(sourceType) && sourceId > 0) {
+            long n = jdbc.queryForObject("SELECT COUNT(*) FROM meta.gov_meta_table WHERE id=?", Long.class, sourceId);
+            if (n == 0) throw new AccessDeniedException("所选元数据表不存在（id=" + sourceId + "），禁止挂载");
+        }
+    }
+    /** 改点4：上架前校验资产关联表的最新质量等级达标（阈值 sys_kv.asset_approve_min_grade，默认 C）；无报告则放行。 */
+    private void qualityCheck(long assetId) {
+        String table;
+        try {
+            table = jdbc.queryForObject(
+                    "SELECT m.table_name FROM meta.gov_meta_table m WHERE m.id=(SELECT source_id FROM meta.asset WHERE id=? AND source_type='meta_table')",
+                    String.class, assetId);
+        } catch (Exception e) { return; }
+        if (table == null || table.isEmpty()) return;
+        String grade = qualityExecutor.latestGradeForTable(table);
+        if (grade == null) return;  // 无质量报告 → 放行（质量未知不阻断）
+        String min = sysKv("asset_approve_min_grade", "C");
+        if (gradeRank(grade) > gradeRank(min)) {
+            throw new AccessDeniedException("质量未达标：grade=" + grade + "（要求 >= " + min + "），禁止上架");
+        }
+    }
+    private static int gradeRank(String g) { if (g == null) return 9; return switch (g) { case "A" -> 1; case "B" -> 2; case "C" -> 3; default -> 4; }; }
+    private String sysKv(String k, String def) {
+        try { String v = jdbc.queryForObject("SELECT v FROM meta.sys_kv WHERE k=?", String.class, k); return v == null || v.isEmpty() ? def : v; } catch (Exception e) { return def; }
+    }
     private String currentStatus(long id) {
         return str(jdbc.queryForObject("SELECT status FROM meta.asset WHERE id=?", String.class, id));
     }

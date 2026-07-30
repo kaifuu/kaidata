@@ -34,6 +34,7 @@ public class JdbcToKafkaRunner {
     @Autowired private KafkaProducerHolder producer;
     @Autowired private KafkaAdminHolder kafkaAdmin;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.pharma.service.security.AlertService alertService;
 
     private final ScheduledExecutorService pool = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "jdbc-to-kafka"); t.setDaemon(true); return t;
@@ -100,6 +101,7 @@ public class JdbcToKafkaRunner {
             jdbc.update("INSERT INTO meta.ing_stream_run(id, job_id, start_time, end_time, status, rows_in, rows_out, error_msg) " +
                     "VALUES (?,?,?,?,?,?,?,?)", id, jobId, new java.sql.Timestamp(id), new java.sql.Timestamp(System.currentTimeMillis()),
                     "ERROR", 0, 0, msg.length() > 2000 ? msg.substring(0, 2000) : msg);
+            try { alertService.raise("MAJOR", "实时接入失败 job=" + jobId + ": " + msg); } catch (Exception ignored) {}
         } catch (Exception ignored) {}
     }
 

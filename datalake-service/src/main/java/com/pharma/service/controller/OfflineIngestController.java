@@ -29,6 +29,9 @@ public class OfflineIngestController {
     @Autowired private DataSourceLoader loader;
     @Autowired private IngestExecutor executor;
     @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
+    @Autowired private com.pharma.service.access.meta.MetaCollectExecutor metaCollectExecutor;
+    private final com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+    @Autowired private com.pharma.service.security.AlertService alertService;
 
     // ==================== 任务 CRUD ====================
 
@@ -228,6 +231,13 @@ public class OfflineIngestController {
                             String.valueOf(max), jobId);
                 } catch (Exception ignored) {}
             }
+            // 接入即治理：入仓成功后自动把目标表注册到 gov_meta_table（ds_id=0 表示主库），数据地图/资产编目立即可见
+            try {
+                com.fasterxml.jackson.databind.node.ArrayNode arr = json.createArrayNode();
+                if (r.colTypes != null) for (String[] ct : r.colTypes) arr.addObject().put("name", ct[0]).put("type", ct[1]);
+                long metaDsId = (useMain || targetDsId == null) ? 0L : targetDsId.longValue();
+                metaCollectExecutor.upsertTable(metaDsId, targetDb, targetTable, json.writeValueAsString(arr));
+            } catch (Exception ignored) {}
             jdbc.update("INSERT INTO meta.ing_offline_run(id, job_id, start_time, end_time, status, rows_read, " +
                             "rows_written, error_msg, triggered_by) VALUES (?,?,?,?,?,?,?,?,?)",
                     runId, jobId, start, new Timestamp(System.currentTimeMillis()), "SUCCESS",
@@ -238,6 +248,7 @@ public class OfflineIngestController {
             jdbc.update("INSERT INTO meta.ing_offline_run(id, job_id, start_time, end_time, status, rows_read, " +
                             "rows_written, error_msg, triggered_by) VALUES (?,?,?,?,?,?,?,?,?)",
                     runId, jobId, start, new Timestamp(System.currentTimeMillis()), "FAIL", 0, 0, msg, currentUser());
+            try { alertService.raise("MAJOR", "离线接入失败 job=" + jobId + ": " + msg); } catch (Exception ignored) {}
             return Map.of("success", false, "runId", runId, "msg", msg);
         }
     }

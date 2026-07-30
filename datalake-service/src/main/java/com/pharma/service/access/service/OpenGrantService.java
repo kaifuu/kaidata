@@ -18,6 +18,7 @@ import java.util.*;
 public class OpenGrantService {
 
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.pharma.service.access.util.CryptoUtil crypto;
     private final ObjectMapper json = new ObjectMapper();
 
     public static class GrantInput {
@@ -87,14 +88,14 @@ public class OpenGrantService {
         sql.append(" LIMIT 1000");
         String sqlText = sql.toString();
 
-        // 5. 派生 data_service（PUBLISHED → 集市可见；asset_id → executor 自动校验资产仍“通过”）
+        // 5. 派生 data_service：auth=true 标记“需 appKey 鉴权”（仅可经 /openapi 调用，/open 拒绝，防枚举绕过）；asset_id → executor 自动校验资产仍“通过”
         long svcId = System.currentTimeMillis();
         String code = "open_" + in.assetId + "_" + Long.toHexString(svcId);
         String params = ("API".equals(in.openType) && in.paramField != null && !in.paramField.isEmpty())
                 ? jsonArr(in.paramField) : "";
         jdbc.update("INSERT INTO meta.data_service(id, code, name, sql_text, datasource_id, method, params, path, auth, status, asset_id, description, owner, verified, create_time) " +
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                svcId, code, in.name, sqlText, dsId, "GET", params, "", false, "PUBLISHED", in.assetId,
+                svcId, code, in.name, sqlText, dsId, "GET", params, "", true, "PUBLISHED", in.assetId,
                 "资产开放(" + in.openType + ")", in.grantee, true, new Timestamp(svcId));
 
         // 6. 生成 appkey + 建 grant
@@ -105,7 +106,7 @@ public class OpenGrantService {
         try { fieldsJson = json.writeValueAsString(fields); } catch (Exception e) { fieldsJson = "[]"; }
         jdbc.update("INSERT INTO meta.data_open_grant(id, name, asset_id, open_type, app_key, app_secret, grantee, fields_json, service_code, limit_count, limit_qps, expire_time, status, create_by, create_time) " +
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                grantId, in.name, in.assetId, in.openType, appKey, appSecret, in.grantee, fieldsJson, code,
+                grantId, in.name, in.assetId, in.openType, appKey, crypto.encrypt(appSecret), in.grantee, fieldsJson, code,
                 in.limitCount, in.limitQps, in.expireTime, "ACTIVE", in.createBy, new Timestamp(grantId));
 
         GrantResult r = new GrantResult();

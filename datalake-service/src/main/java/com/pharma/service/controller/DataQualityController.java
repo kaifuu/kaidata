@@ -40,6 +40,8 @@ public class DataQualityController {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataSourceLoader loader;
     @Autowired private DataSourceAdapterRegistry registry;
+    @Autowired private com.pharma.service.access.quality.QualityExecutor qualityExecutor;
+    @Autowired private com.pharma.service.access.quality.QualityScheduler qualityScheduler;
     private final ObjectMapper json = new ObjectMapper();
 
     /** 维度 code → 中文 label（顺序即下拉顺序）。 */
@@ -115,7 +117,25 @@ public class DataQualityController {
     @DeleteMapping("/task")
     public Map<String, Object> deleteTask(@RequestParam long id) {
         Authz.require(Authz.SYS_ADMIN);
+        qualityScheduler.stop(id);
         jdbc.update("DELETE FROM meta.gov_quality_task WHERE id=?", id);
+        return Map.of("success", true);
+    }
+    /** 上线：ENABLED + 加入周期调度（质量检测串入流水线）。 */
+    @PostMapping("/task/online")
+    public Map<String, Object> onlineTask(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> t = jdbc.queryForMap("SELECT cron FROM meta.gov_quality_task WHERE id=?", id);
+        jdbc.update("UPDATE meta.gov_quality_task SET status='ENABLED' WHERE id=?", id);
+        qualityScheduler.start(id, str(t.get("cron")));
+        return Map.of("success", true);
+    }
+    /** 下线：DISABLED + 停调度。 */
+    @PostMapping("/task/offline")
+    public Map<String, Object> offlineTask(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        jdbc.update("UPDATE meta.gov_quality_task SET status='DISABLED' WHERE id=?", id);
+        qualityScheduler.stop(id);
         return Map.of("success", true);
     }
 
@@ -126,25 +146,7 @@ public class DataQualityController {
     @PostMapping("/run")
     public Map<String, Object> run(@RequestParam long taskId) {
         Authz.require(Authz.SYS_ADMIN);
-        Map<String, Object> task = jdbc.queryForMap("SELECT id, name, rule_ids FROM meta.gov_quality_task WHERE id=?", taskId);
-        List<Long> ruleIds = parseIds(str(task.get("rule_ids")));
-        int pass = 0, fail = 0, error = 0;
-        for (Long rid : ruleIds) {
-            try {
-                if (runRule(taskId, rid)) pass++; else fail++;
-            } catch (Exception e) {
-                error++;
-                record(taskId, rid, "ERROR", 0, 0, 0, 0, 0, "", "", rootMsg(e));
-            }
-        }
-        Map<String, Object> report = aggregateAndSaveReport(taskId, str(task.get("name")), ruleIds.size(), pass, fail, error);
-        Map<String, Object> out = new LinkedHashMap<>(report);
-        out.put("success", true);
-        out.put("total", ruleIds.size());
-        out.put("pass", pass);
-        out.put("fail", fail);
-        out.put("error", error);
-        return out;
+        return qualityExecutor.run(taskId);
     }
 
     /**

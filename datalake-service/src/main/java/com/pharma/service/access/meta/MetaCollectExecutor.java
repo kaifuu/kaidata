@@ -130,6 +130,49 @@ public class MetaCollectExecutor {
         return r;
     }
 
+    /**
+     * 单表元数据 upsert（数据接入入仓后注册复用）：
+     * 新表 → INSERT gov_meta_table + gov_meta_version(INIT)；已存在 → 结构变更则记新版本，否则仅刷新 synced_time。
+     * <p>与 {@link #run} 同样的铁律：绝不覆盖 columns_json 之外的补录列（cn_name/security_level/fill_percent 等）。
+     * source 标 "INGEST" 以与批量采集 "COLLECT" 区分。完全容错，异常不抛出。返回 true=本次新增。
+     */
+    public boolean upsertTable(long dsId, String schema, String table, String colsJson) {
+        try {
+            List<Map<String, Object>> exist = jdbc.queryForList(
+                    "SELECT id, columns_json FROM meta.gov_meta_table WHERE ds_id=? AND schema_name=? AND table_name=?",
+                    dsId, schema, table);
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            if (exist.isEmpty()) {
+                long metaId = System.currentTimeMillis() + (long) (Math.random() * 1000);
+                jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, " +
+                                "row_count, synced_time, current_version, mount_status, fill_percent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        metaId, dsId, schema, table, "", colsJson, 0L, now, 1, "NONE", 0);
+                jdbc.update("INSERT INTO meta.gov_meta_version(id, meta_id, version_n, columns_json, change_type, " +
+                                "change_detail, source, created_time) VALUES (?,?,?,?,?,?,?,?)",
+                        metaId + 1, metaId, 1, colsJson, "INIT", "", "INGEST", now);
+                return true;
+            }
+            long metaId = lng(exist.get(0).get("id"));
+            String prevJson = str(exist.get(0).get("columns_json"));
+            VersionDiffer.Diff diff = prevJson.isEmpty() ? new VersionDiffer.Diff()
+                    : VersionDiffer.diff(toTypeMap(prevJson), toTypeMap(colsJson));
+            if (diff.hasChange()) {
+                Integer prevMax = maxVersion(metaId);
+                int newVer = (prevMax == null ? 0 : prevMax) + 1;
+                String changeDetail = "+[" + String.join(",", diff.added) + "] -[" + String.join(",", diff.removed) +
+                        "] ~[" + String.join(";", diff.typeChanged) + "]";
+                jdbc.update("INSERT INTO meta.gov_meta_version(id, meta_id, version_n, columns_json, change_type, " +
+                                "change_detail, source, created_time) VALUES (?,?,?,?,?,?,?,?)",
+                        System.currentTimeMillis() + newVer, metaId, newVer, colsJson, "MODIFIED", trim(changeDetail, 2000), "INGEST", now);
+            }
+            // 结构未变或已记版本：仅刷新 synced_time，绝不覆盖 columns_json / current_version / 补录列
+            jdbc.update("UPDATE meta.gov_meta_table SET synced_time=? WHERE id=?", now, metaId);
+            return false;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     // -------- 助手 --------
     private Integer maxVersion(long metaId) {
         try {

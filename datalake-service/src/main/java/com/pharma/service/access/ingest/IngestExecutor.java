@@ -37,7 +37,11 @@ public class IngestExecutor {
         public final long rowsRead;
         public final long rowsWritten;
         public final List<String> columns;
-        public Result(long read, long written, List<String> columns) { this.rowsRead = read; this.rowsWritten = written; this.columns = columns; }
+        /** 列结构（原始顺序）：每个元素 {列名, 已映射的目标库类型}，供接入入仓后注册技术元数据。 */
+        public final List<String[]> colTypes;
+        public Result(long read, long written, List<String> columns, List<String[]> colTypes) {
+            this.rowsRead = read; this.rowsWritten = written; this.columns = columns; this.colTypes = colTypes;
+        }
     }
 
     /**
@@ -107,7 +111,9 @@ public class IngestExecutor {
                 if (!batch.isEmpty()) written += doBatch(tgt, insert, batch);
 
                 List<String> colNames = insertCols.stream().map(cd -> cd.name).collect(Collectors.toList());
-                return new Result(read, written, colNames);
+                // 原始顺序的列结构（列名+类型），供上层入仓后注册到 gov_meta_table
+                List<String[]> colTypes = cols.stream().map(cd -> new String[]{cd.name, cd.type}).collect(Collectors.toList());
+                return new Result(read, written, colNames, colTypes);
             }
         }
     }

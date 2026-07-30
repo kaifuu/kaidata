@@ -378,6 +378,13 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "error_msg VARCHAR(2048), triggered_by VARCHAR(64)" +
                 ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!m20) kvSet("schema_ver", "20");
+
+        // ============ 订阅选字段 + 开放授权限次持久化（schema_ver=21，增量） ============
+        boolean m21 = "21".equals(kv("schema_ver"));
+        exec("ALTER TABLE meta.portal_subscribe ADD COLUMN fields_json VARCHAR(4096)");
+        exec("ALTER TABLE meta.portal_subscribe ADD COLUMN param_field VARCHAR(128)");
+        exec("ALTER TABLE meta.data_open_grant ADD COLUMN used_count BIGINT");
+        if (!m21) kvSet("schema_ver", "21");
     }
 
     private void seedStd(String code, String name, int level, String desc) {

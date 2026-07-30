@@ -39,19 +39,20 @@ public class DataServiceController {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
         jdbc.update("INSERT INTO meta.data_service(id, code, name, sql_text, datasource_id, method, params, path, auth, status, asset_id, description, owner, verified, create_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("code")), str(b.get("name")), str(b.get("sql_text")), lng(b.get("datasource_id")),
                 str(b.getOrDefault("method", "GET")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")),
-                str(b.getOrDefault("status", "DRAFT")), lng(b.get("asset_id")), str(b.get("description")), str(b.get("owner")),
+                "DRAFT", lng(b.get("asset_id")), str(b.get("description")), str(b.get("owner")),
                 bool(b.get("verified")), new Timestamp(id));
         return Map.of("success", true, "id", id);
     }
     @PutMapping
     public Map<String, Object> update(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
-        jdbc.update("UPDATE meta.data_service SET code=?, name=?, sql_text=?, datasource_id=?, method=?, params=?, path=?, auth=?, status=?, asset_id=?, description=?, owner=? WHERE id=?",
+        // 编辑不改 status：发布/下线走专用 /publish、/unpublish（均经资产校验），堵住直接改 status 绕过资产审批的后门
+        jdbc.update("UPDATE meta.data_service SET code=?, name=?, sql_text=?, datasource_id=?, method=?, params=?, path=?, auth=?, asset_id=?, description=?, owner=? WHERE id=?",
                 str(b.get("code")), str(b.get("name")), str(b.get("sql_text")), lng(b.get("datasource_id")),
-                str(b.get("method")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")), str(b.get("status")),
+                str(b.get("method")), str(b.get("params")), str(b.get("path")), bool(b.get("auth")),
                 lng(b.get("asset_id")), str(b.get("description")), str(b.get("owner")), lng(b.get("id")));
         return Map.of("success", true);
     }

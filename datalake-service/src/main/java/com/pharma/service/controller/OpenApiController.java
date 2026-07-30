@@ -25,6 +25,7 @@ public class OpenApiController {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataServiceExecutor executor;
     @Autowired private RateLimiter rateLimiter;
+    @Autowired private com.pharma.service.access.util.CryptoUtil crypto;
 
     @GetMapping("/{appKey}")
     public ResponseEntity<Map<String, Object>> invoke(@PathVariable String appKey,
@@ -38,7 +39,7 @@ public class OpenApiController {
         }
         // secret 校验
         String secret = req.getHeader("X-App-Secret");
-        if (secret == null || !secret.equals(str(g.get("app_secret")))) {
+        if (secret == null || !secret.equals(decryptSecret(str(g.get("app_secret"))))) {
             return resp(HttpStatus.UNAUTHORIZED, "appSecret 不匹配");
         }
         // 状态
@@ -63,6 +64,11 @@ public class OpenApiController {
         m.put("status", "FAIL");
         m.put("msg", msg);
         return ResponseEntity.status(s).body(m);
+    }
+
+    /** appSecret 加密存储：解密后比对；解密失败则按历史明文兼容（平滑过渡老数据）。 */
+    private String decryptSecret(String stored) {
+        try { return crypto.decrypt(stored); } catch (Exception e) { return stored; }
     }
 
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }

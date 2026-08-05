@@ -35,8 +35,8 @@
           <el-table-column label="引用" width="70">
             <template #default="{ row }"><el-link v-if="row.ref_cnt > 0" type="primary" @click="openElRefs(row)">{{ row.ref_cnt }}</el-link><span v-else class="muted">0</span></template>
           </el-table-column>
-          <el-table-column label="操作" width="130">
-            <template #default="{ row }"><el-button link size="small" type="primary" @click="openEl(row)">编辑</el-button><el-button link size="small" type="danger" @click="delEl(row)">删除</el-button></template>
+          <el-table-column label="操作" width="190">
+            <template #default="{ row }"><el-button link size="small" type="primary" @click="openEl(row)">编辑</el-button><el-button link size="small" type="success" @click="openLand(row)">落标</el-button><el-button link size="small" type="danger" @click="delEl(row)">删除</el-button></template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
@@ -224,6 +224,42 @@
         </el-table-column>
       </el-table>
     </el-dialog>
+
+    <!-- 标准落标 → 派生质量规则 -->
+    <el-dialog v-model="landDlg" :title="'标准落标 - ' + (curEl?.name || '')" width="640px">
+      <el-form :model="landForm" label-width="70px">
+        <el-form-item label="数据源">
+          <el-select v-model="landForm.dsId" placeholder="选择数据源（质量规则取数用）" style="width:100%">
+            <el-option v-for="d in datasources" :key="d.id" :label="d.name + ' (' + d.type + ' ' + d.host + ':' + d.port + ')'" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="表名">
+          <el-input v-model="landForm.tableName" placeholder="如 ods.dem_user" />
+        </el-form-item>
+        <el-form-item label="列名">
+          <el-input v-model="landForm.columnName" placeholder="如 gender" />
+        </el-form-item>
+      </el-form>
+      <div style="margin-bottom:8px"><el-button type="primary" size="small" @click="doLand">落标并生成质量规则</el-button></div>
+      <div v-if="derivedRules.length" class="muted" style="margin:4px 0">派生的质量规则</div>
+      <el-table :data="derivedRules" size="small" border max-height="120" style="margin-bottom:10px">
+        <el-table-column prop="name" label="规则" min-width="200" />
+        <el-table-column prop="dimension" label="维度" width="100" />
+        <el-table-column prop="expression" label="表达式" min-width="220" show-overflow-tooltip />
+      </el-table>
+      <div class="muted" style="margin:4px 0">已落标</div>
+      <el-table :data="landings" size="small" border max-height="180">
+        <el-table-column prop="ds_name" label="数据源" width="140" />
+        <el-table-column prop="table_name" label="表" min-width="130" />
+        <el-table-column prop="column_name" label="列" width="100" />
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }"><el-button link size="small" type="danger" @click="delLanding(row)">解除</el-button></template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="landDlg = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -354,6 +390,34 @@ async function editItem(row: any) {
 }
 async function delItem(row: any) {
   try { await api.govDeleteCodeItem(row.id); codeItems.value = await api.govCodeItems(curSet.value.id); await loadEl() }
+  catch (e:any) { ElMessage.error(errMsg(e)) }
+}
+
+// ===== 标准落标（标准→质量通道） =====
+const landDlg = ref(false)
+const landForm = reactive<any>({ dsId: null as number | null, tableName: '', columnName: '' })
+const datasources = ref<any[]>([])
+const landings = ref<any[]>([])
+const derivedRules = ref<any[]>([])
+async function openLand(row: any) {
+  curEl.value = row
+  Object.assign(landForm, { dsId: null, tableName: '', columnName: '' })
+  derivedRules.value = []
+  landDlg.value = true
+  try { if (!datasources.value.length) datasources.value = await api.govStdDatasources() } catch { datasources.value = [] }
+  try { landings.value = await api.govStdLandings(row.id) } catch { landings.value = [] }
+}
+async function doLand() {
+  if (!landForm.dsId || !landForm.tableName || !landForm.columnName) return ElMessage.warning('请填数据源/表名/列名')
+  try {
+    const r: any = await api.govStdLand({ elementId: curEl.value.id, dsId: landForm.dsId, tableName: landForm.tableName, columnName: landForm.columnName })
+    derivedRules.value = r.rules || []
+    ElMessage.success('已落标并派生 ' + (r.rules?.length || 0) + ' 条质量规则')
+    landings.value = await api.govStdLandings(curEl.value.id)
+  } catch (e:any) { ElMessage.error(errMsg(e)) }
+}
+async function delLanding(row: any) {
+  try { await api.govStdDeleteLanding(row.id); ElMessage.success('已解除'); landings.value = await api.govStdLandings(curEl.value.id) }
   catch (e:any) { ElMessage.error(errMsg(e)) }
 }
 

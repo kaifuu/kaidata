@@ -203,6 +203,11 @@ export const api = {
   govCodeItems: (setId: number) => http.get('/data-gov/std/code-item', { params: { setId } }).then((r) => r.data),
   govSaveCodeItem: (b: any) => save('/data-gov/std/code-item', b),
   govDeleteCodeItem: (id: number) => http.delete('/data-gov/std/code-item', { params: { id } }).then((r) => r.data),
+  // 标准落标 → 派生质量规则（标准↔质量通道）
+  govStdDatasources: () => http.get('/data-gov/std/datasources').then((r) => r.data),
+  govStdLand: (b: any) => http.post('/data-gov/std/element/land', b).then((r) => r.data),
+  govStdLandings: (elementId: number) => http.get('/data-gov/std/element/landings', { params: { elementId } }).then((r) => r.data),
+  govStdDeleteLanding: (id: number) => http.delete('/data-gov/std/landing', { params: { id } }).then((r) => r.data),
   // 数据模型
   govModels: (domain?: string) => http.get('/data-gov/model/list', { params: domain ? { domain } : {} }).then((r) => r.data),
   govSaveModel: (b: any) => save('/data-gov/model', b),

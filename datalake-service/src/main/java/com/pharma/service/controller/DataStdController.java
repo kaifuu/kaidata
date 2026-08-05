@@ -1,5 +1,6 @@
 package com.pharma.service.controller;
 
+import com.pharma.service.access.util.StarRocksDdlBuilder;
 import com.pharma.service.security.Authz;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -149,6 +150,133 @@ public class DataStdController {
         if (t == null) return "";
         int i = t.indexOf('(');
         return (i < 0 ? t : t.substring(0, i)).trim().toUpperCase();
+    }
+
+    // ==================== 标准落标 → 派生质量规则（标准↔质量通道） ====================
+
+    /** 可落标数据源下拉（质量规则执行取数用）。 */
+    @GetMapping("/datasources")
+    public List<Map<String, Object>> datasources() {
+        Authz.require(Authz.SYS_ADMIN);
+        return jdbc.queryForList("SELECT id, name, type, host, port, db_name FROM meta.ing_datasource ORDER BY id");
+    }
+
+    /**
+     * 落标：把数据元绑定到物理列，并按数据元特征派生可执行的质量规则。
+     * <p>code_set_id>0 → CONSISTENCY 枚举规则（{col} NOT IN 代码集）；否则 length>0 → VALIDITY 长度规则。
+     * 同(element,table,col)幂等刷新：先删旧派生规则与登记，再重建。
+     */
+    @PostMapping("/element/land")
+    public Map<String, Object> land(@RequestBody Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        long elementId = lng(b.get("elementId"));
+        long dsId = lng(b.get("dsId"));
+        String table = str(b.get("tableName"));
+        String col = str(b.get("columnName"));
+        if (elementId <= 0 || dsId <= 0 || table.isEmpty() || col.isEmpty()) {
+            throw new IllegalArgumentException("elementId/dsId/tableName/columnName 不能为空");
+        }
+        // 标识符校验（防注入）：列名单段；表名按 '.' 分段，至多两段
+        StarRocksDdlBuilder.ident(col);
+        String[] segs = table.split("\\.", -1);
+        if (segs.length < 1 || segs.length > 2) throw new IllegalArgumentException("非法表名: " + table);
+        for (String s : segs) StarRocksDdlBuilder.ident(s);
+
+        // 取数据元
+        Map<String, Object> el = jdbc.queryForMap(
+                "SELECT name, code_set_id, length, data_type, security_level FROM meta.gov_data_element WHERE id=?", elementId);
+        long codeSetId = lng(el.get("code_set_id"));
+        int length = num(el.get("length"));
+        String elName = str(el.get("name"));
+
+        // 幂等刷新：删同(element,table,col)旧登记及其派生规则
+        List<Map<String, Object>> old = jdbc.queryForList(
+                "SELECT rule_ids FROM meta.gov_std_landing WHERE element_id=? AND table_name=? AND column_name=?", elementId, table, col);
+        for (Map<String, Object> r : old) {
+            for (String rid : str(r.get("rule_ids")).split(",")) {
+                try { jdbc.update("DELETE FROM meta.gov_quality_rule WHERE id=?", Long.parseLong(rid.trim())); } catch (Exception ignored) {}
+            }
+        }
+        jdbc.update("DELETE FROM meta.gov_std_landing WHERE element_id=? AND table_name=? AND column_name=?", elementId, table, col);
+
+        // 派生规则（枚举优先，否则长度）
+        long id = System.currentTimeMillis();
+        Timestamp now = new Timestamp(id);
+        List<Long> ruleIds = new ArrayList<>();
+        List<Map<String, Object>> rules = new ArrayList<>();
+        String sev = severityOf(el.get("security_level"));
+        if (codeSetId > 0) {
+            List<Map<String, Object>> items = jdbc.queryForList(
+                    "SELECT code FROM meta.gov_code_item WHERE set_id=? AND is_enabled ORDER BY sort, id", codeSetId);
+            StringBuilder inList = new StringBuilder();
+            for (Map<String, Object> it : items) {
+                if (inList.length() > 0) inList.append(",");
+                inList.append("'").append(str(it.get("code")).replace("'", "''")).append("'");
+            }
+            String expr = inList.length() == 0 ? "" : col + " NOT IN (" + inList + ")";
+            String rname = "[落标] " + elName + " 枚举合规 @ " + table + "." + col;
+            jdbc.update("INSERT INTO meta.gov_quality_rule(id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, create_time) " +
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    id, rname, "CONSISTENCY", dsId, table, col, expr, 0.0, sev,
+                    "数据元[" + elName + "]落标自动派生：取值必须在代码集内", "ENABLED", now);
+            ruleIds.add(id);
+            rules.add(ruleView(id, rname, "CONSISTENCY", expr));
+        } else if (length > 0) {
+            String expr = "LENGTH(" + col + ") > " + length;
+            String rname = "[落标] " + elName + " 长度合规 @ " + table + "." + col;
+            jdbc.update("INSERT INTO meta.gov_quality_rule(id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, create_time) " +
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    id, rname, "VALIDITY", dsId, table, col, expr, 0.0, sev,
+                    "数据元[" + elName + "]落标自动派生：长度不得超过 " + length, "ENABLED", now);
+            ruleIds.add(id);
+            rules.add(ruleView(id, rname, "VALIDITY", expr));
+        }
+
+        // 登记落标
+        long landingId = id + 100;
+        String ruleCsv = ruleIds.stream().map(String::valueOf).reduce((x, y) -> x + "," + y).orElse("");
+        jdbc.update("INSERT INTO meta.gov_std_landing(id, element_id, ds_id, table_name, column_name, rule_ids, create_time) VALUES (?,?,?,?,?,?,?)",
+                landingId, elementId, dsId, table, col, ruleCsv, now);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("landingId", landingId);
+        out.put("ruleIds", ruleCsv);
+        out.put("rules", rules);
+        return out;
+    }
+
+    /** 某数据元的落标清单（关联数据源名，供前端展示）。 */
+    @GetMapping("/element/landings")
+    public List<Map<String, Object>> landings(@RequestParam long elementId) {
+        Authz.require(Authz.SYS_ADMIN);
+        return jdbc.queryForList(
+                "SELECT l.id, l.element_id, l.ds_id, l.table_name, l.column_name, l.rule_ids, l.create_time, " +
+                        "d.name AS ds_name FROM meta.gov_std_landing l " +
+                        "LEFT JOIN meta.ing_datasource d ON d.id=l.ds_id WHERE l.element_id=? ORDER BY l.id", elementId);
+    }
+
+    /** 解除落标：删登记 + 派生规则。 */
+    @DeleteMapping("/landing")
+    public Map<String, Object> deleteLanding(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT rule_ids FROM meta.gov_std_landing WHERE id=?", id);
+        for (Map<String, Object> r : rows) {
+            for (String rid : str(r.get("rule_ids")).split(",")) {
+                try { jdbc.update("DELETE FROM meta.gov_quality_rule WHERE id=?", Long.parseLong(rid.trim())); } catch (Exception ignored) {}
+            }
+        }
+        jdbc.update("DELETE FROM meta.gov_std_landing WHERE id=?", id);
+        return Map.of("success", true);
+    }
+
+    private static String severityOf(Object securityLevel) {
+        String s = securityLevel == null ? "" : String.valueOf(securityLevel);
+        return switch (s) { case "SENSITIVE" -> "CRITICAL"; case "INTERNAL" -> "MAJOR"; case "PUBLIC" -> "MINOR"; default -> "MAJOR"; };
+    }
+    private static Map<String, Object> ruleView(long id, String name, String dimension, String expression) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("dimension", dimension); m.put("expression", expression);
+        return m;
     }
 
     // ==================== 代码集 ====================

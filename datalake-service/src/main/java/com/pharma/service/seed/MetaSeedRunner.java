@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Timestamp;
 
+import com.pharma.service.access.util.CryptoUtil;
+
 /**
  * 元数据库（meta）初始化与种子数据。
  * <p>
@@ -22,7 +24,8 @@ import java.sql.Timestamp;
 public class MetaSeedRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbc;
-    public MetaSeedRunner(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    private final CryptoUtil crypto;
+    public MetaSeedRunner(JdbcTemplate jdbc, CryptoUtil crypto) { this.jdbc = jdbc; this.crypto = crypto; }
 
     @Override
     public void run(ApplicationArguments args) {
@@ -385,6 +388,17 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.portal_subscribe ADD COLUMN param_field VARCHAR(128)");
         exec("ALTER TABLE meta.data_open_grant ADD COLUMN used_count BIGINT");
         if (!m21) kvSet("schema_ver", "21");
+
+        // ============ 数据标准→质量通道（schema_ver=22，增量） ============
+        boolean m22 = "22".equals(kv("schema_ver"));
+        exec("CREATE DATABASE IF NOT EXISTS ods");   // 确保 ods 库存在
+        // 落标登记：数据元 ← 物理列 ← 派生质量规则（方向③：标准下沉到物理层）。
+        // 必须 PRIMARY KEY：/land 用 DELETE-then-INSERT 幂等刷新，DUPLICATE KEY 模型不支持 DELETE。
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_std_landing (" +
+                "id BIGINT, element_id BIGINT, ds_id BIGINT, table_name VARCHAR(255), column_name VARCHAR(128), " +
+                "rule_ids VARCHAR(255), create_time DATETIME" +
+                ") PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        if (!m22) kvSet("schema_ver", "22");
     }
 
     private void seedStd(String code, String name, int level, String desc) {
@@ -583,6 +597,83 @@ public class MetaSeedRunner implements ApplicationRunner {
         assignRole(101, 2);
         user(102, "audadmin", "audadmin123", "安全审计员(王工)", "NORMAL", 1, 12, now);
         assignRole(102, 3);
+
+        // ---------- 数据标准→质量通道 演示种子（一条端到端测试数据，id 固定便于引用） ----------
+        // 数据源：StarRocks 本机（镜像 app 主库 root/空密码），供质量规则执行取数。ing_datasource 目前无种子，故此处补一条。
+        if (cnt("SELECT COUNT(*) FROM meta.ing_datasource WHERE id=9201") == 0) {
+            jdbc.update("INSERT INTO meta.ing_datasource(id, name, type, host, port, db_name, username, password, props, status, tenant_id, create_by, create_time, update_time) " +
+                            "VALUES (9201, '演示-StarRocks', 'starrocks', '127.0.0.1', 9030, 'ods', 'root', ?, '', 'ENABLED', 0, 'system', ?, ?)",
+                    crypto.encrypt(""), now, now);
+        }
+        // 代码集：性别
+        if (cnt("SELECT COUNT(*) FROM meta.gov_code_set WHERE id=9001") == 0) {
+            jdbc.update("INSERT INTO meta.gov_code_set(id, code, name, category, description, status, create_time) " +
+                    "VALUES (9001, 'CS_GENDER', '性别', '枚举', '性别代码集（演示）', 'NORMAL', ?)", now);
+        }
+        // 代码项：1=男 2=女 0=未知（启用）
+        if (cnt("SELECT COUNT(*) FROM meta.gov_code_item WHERE id=9001") == 0)
+            jdbc.update("INSERT INTO meta.gov_code_item(id, set_id, code, name, sort, is_enabled, remark) VALUES (9001, 9001, '1', '男', 1, true, '')");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_code_item WHERE id=9002") == 0)
+            jdbc.update("INSERT INTO meta.gov_code_item(id, set_id, code, name, sort, is_enabled, remark) VALUES (9002, 9001, '2', '女', 2, true, '')");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_code_item WHERE id=9003") == 0)
+            jdbc.update("INSERT INTO meta.gov_code_item(id, set_id, code, name, sort, is_enabled, remark) VALUES (9003, 9001, '0', '未知', 3, true, '')");
+        // 数据元：性别代码（引用代码集，VARCHAR(2)）
+        if (cnt("SELECT COUNT(*) FROM meta.gov_data_element WHERE id=9101") == 0) {
+            jdbc.update("INSERT INTO meta.gov_data_element(id, code, name, en_name, category, data_type, length, precision_, scale_, " +
+                            "unit, data_format, security_level, owner, code_set_id, definition, value_domain, version, status, create_time, update_time) " +
+                            "VALUES (9101, 'GENDER', '性别代码', 'gender', '人员', 'VARCHAR', 2, 0, 0, '', '', 'PUBLIC', '治理演示', 9001, '性别代码（引用性别代码集）', ?, 1, 'NORMAL', ?, ?)",
+                    "1=男, 2=女, 0=未知", now, now);
+        }
+        // 物理演示表 + 3 行合法数据（gender ∈ 1/2/0）。落标后派生 CONSISTENCY 规则，跑质量应 PASS。
+        exec("CREATE TABLE IF NOT EXISTS ods.dem_user (id BIGINT, name VARCHAR(64), gender VARCHAR(4)) " +
+                "PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        try {
+            jdbc.update("INSERT INTO ods.dem_user(id, name, gender) VALUES (9301, '演示-张三', '1')");
+            jdbc.update("INSERT INTO ods.dem_user(id, name, gender) VALUES (9302, '演示-李四', '2')");
+            jdbc.update("INSERT INTO ods.dem_user(id, name, gender) VALUES (9303, '演示-王五', '0')");
+        } catch (Exception ignored) {} // PRIMARY KEY 模型重跑 upsert，幂等
+
+        // ---------- 全链路演示：数据模型(挂标准) → 元数据 → 资产(通过) → 数据服务(开放) ----------
+        // ① 数据模型：用户域模型 + dem_user 表，gender 字段挂「性别代码」标准(element_id=9101)
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model WHERE id=1001") == 0)
+            jdbc.update("INSERT INTO meta.gov_model(id, name, domain, model_type, description, status, create_time) VALUES (1001, '用户', '主数据', '逻辑模型', '全链路演示-用户域模型', 'NORMAL', ?)", now);
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_table WHERE id=2001") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_table(id, model_id, name, layer, description) VALUES (2001, 1001, 'dem_user', 'ods', '全链路演示-用户表')");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE id=3001") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (3001, 2001, 'id', 'BIGINT', 0, true, false, '主键')");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE id=3002") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (3002, 2001, 'name', 'VARCHAR(128)', 0, false, true, '姓名')");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE id=3003") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (3003, 2001, 'gender', 'VARCHAR(4)', 9101, false, true, '性别(挂性别代码标准)')");
+
+        // ② 元数据：登记 ods.dem_user 进 gov_meta_table（数据地图可见）。复用既有同表记录避免重复
+        long demMetaId;
+        java.util.List<java.util.Map<String, Object>> demEx = jdbc.queryForList(
+                "SELECT id FROM meta.gov_meta_table WHERE ds_id=9201 AND schema_name='ods' AND table_name='dem_user'");
+        if (demEx.isEmpty()) {
+            demMetaId = 9401;
+            jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, row_count, synced_time, layer_code, security_level, fill_percent, mount_status, current_version) " +
+                            "VALUES (9401, 9201, 'ods', 'dem_user', '全链路演示-用户表', ?, 3, ?, 'ods', 'PUBLIC', 0, 'NONE', 1)",
+                    "[{\"name\":\"id\",\"type\":\"BIGINT\",\"comment\":\"主键\",\"pos\":1},{\"name\":\"name\",\"type\":\"VARCHAR(128)\",\"comment\":\"姓名\",\"pos\":2},{\"name\":\"gender\",\"type\":\"VARCHAR(4)\",\"comment\":\"性别\",\"pos\":3}]", now);
+        } else {
+            demMetaId = ((Number) demEx.get(0).get("id")).longValue();
+        }
+
+        // ③ 资产：挂到演示目录并置「通过」(数据服务开放的必要前置)
+        if (cnt("SELECT COUNT(*) FROM meta.asset_catalog WHERE id=9501") == 0)
+            jdbc.update("INSERT INTO meta.asset_catalog(id, code, name, parent_id, node_type, sort) VALUES (9501, 'DEMO_CATALOG', '演示目录', 0, 'CATALOG', 99)");
+        if (cnt("SELECT COUNT(*) FROM meta.asset WHERE id=9601") == 0)
+            jdbc.update("INSERT INTO meta.asset(id, catalog_id, name, asset_type, source_type, source_id, owner, security_level, description, status, create_by, create_time) " +
+                    "VALUES (9601, 9501, '演示用户表', 'TABLE', 'meta_table', ?, 'admin', 'PUBLIC', '全链路演示-用户表(已审核通过)', '通过', 'system', ?)", demMetaId, now);
+        long demAssetId = 9601;
+
+        // ④ 数据服务(开放)：发布 SQL 服务 + appkey 授权(secret 加密)，/openapi/{appKey} 即可取数
+        if (cnt("SELECT COUNT(*) FROM meta.data_service WHERE id=9701") == 0)
+            jdbc.update("INSERT INTO meta.data_service(id, code, name, sql_text, datasource_id, method, params, path, auth, status, asset_id, description, owner, verified, create_time) " +
+                    "VALUES (9701, 'dem_user_open', '演示用户表开放', 'SELECT `id`,`name`,`gender` FROM `ods`.`dem_user` LIMIT 100', 9201, 'GET', '[]', '', true, 'PUBLISHED', ?, '全链路演示-资产开放API', 'system', true, ?)", demAssetId, now);
+        if (cnt("SELECT COUNT(*) FROM meta.data_open_grant WHERE id=9801") == 0)
+            jdbc.update("INSERT INTO meta.data_open_grant(id, name, asset_id, open_type, app_key, app_secret, grantee, fields_json, service_code, limit_count, limit_qps, expire_time, status, create_by, create_time) " +
+                    "VALUES (9801, '演示用户表开放授权', ?, 'API', 'demouserapikey001', ?, 'demo_consumer', '[\"id\",\"name\",\"gender\"]', 'dem_user_open', 0, 0, NULL, 'ACTIVE', 'system', ?)", demAssetId, crypto.encrypt("demousersecret001"), now);
     }
 
     // -------- 幂等插入助手（存在则跳过） --------

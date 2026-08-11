@@ -166,6 +166,7 @@ export default {
     'ops/cluster': '集群管理',
     'ops/executor': '执行器管理',
     'ops/connector': '连接器管理',
+    'ops/message': '消息管理',
     'security/std': '安全标准',
     'security/mask': '数据脱敏',
     'security/key': '密钥管理',

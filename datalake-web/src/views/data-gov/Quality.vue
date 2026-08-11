@@ -166,7 +166,7 @@
 
     <!-- ============ 结果弹窗（历史） ============ -->
     <el-dialog v-model="resDlg" :title="`质量结果 - ${cur?.name || ''}`" width="940px">
-      <el-table :data="results" size="small" border max-height="420">
+      <el-table :data="resultPaged" size="small" border max-height="420">
         <el-table-column prop="rule_name" label="规则" min-width="120" />
         <el-table-column label="维度" width="80"><template #default="{ row }">{{ dimLabel(row.dimension) }}</template></el-table-column>
         <el-table-column label="状态" width="70"><template #default="{ row }"><el-tag size="small" :type="row.status === 'PASS' ? 'success' : 'danger'">{{ row.status }}</el-tag></template></el-table-column>
@@ -177,6 +177,11 @@
         <el-table-column prop="error_msg" label="错误" min-width="120" show-overflow-tooltip />
         <el-table-column prop="run_time" label="执行时间" width="155" />
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="resultPage.page" :page-size="resultPage.size" :total="results.length"
+          :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next, jumper"
+          @size-change="(s) => { resultPage.size = s; resultPage.page = 1 }" @current-change="(p) => resultPage.page = p" />
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -202,6 +207,8 @@ const ruleDlg = ref(false); const ruleForm = reactive<any>({ id: null, name: '',
 const taskDlg = ref(false); const taskForm = reactive<any>({ name: '', ruleIds: [] as number[], cron: '' })
 const running = ref<number | null>(null)
 const resDlg = ref(false); const cur = ref<any>(null); const results = ref<any[]>([])
+const resultPage = reactive({ page: 1, size: 10 })
+const resultPaged = computed(() => results.value.slice((resultPage.page - 1) * resultPage.size, resultPage.page * resultPage.size))
 
 // 报告
 const reportTaskId = ref<number | null>(null)
@@ -271,7 +278,7 @@ function openTask() { Object.assign(taskForm, { name: '', ruleIds: [], cron: '' 
 async function saveTask() { if (!taskForm.name || !taskForm.ruleIds.length) return ElMessage.warning('填名称与规则'); try { await api.govSaveTask({ name: taskForm.name, rule_ids: taskForm.ruleIds.join(','), cron: taskForm.cron }); ElMessage.success('保存成功'); taskDlg.value = false; await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function delTask(row: any) { try { await api.govDeleteTask(row.id); await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function run(row: any) { running.value = row.id; try { const r: any = await api.govRunQuality(row.id); ElMessage.success(`执行完成：通过 ${r.pass}/${r.total}，失败 ${r.fail}，得分 ${r.overallScore}`) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { running.value = null } }
-async function openResult(row: any) { cur.value = row; resDlg.value = true; try { results.value = await api.govQualityResult(row.id) } catch { results.value = [] } }
+async function openResult(row: any) { cur.value = row; resDlg.value = true; resultPage.page = 1; try { results.value = await api.govQualityResult(row.id) } catch { results.value = [] } }
 
 // 报告
 async function loadReport() { if (!reportTaskId.value) { report.value = null; return } try { report.value = await api.govQualityReport(reportTaskId.value) } catch (e: any) { ElMessage.error(errMsg(e)); report.value = null } }

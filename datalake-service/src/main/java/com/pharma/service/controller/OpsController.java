@@ -134,6 +134,29 @@ public class OpsController {
         return out;
     }
 
+    /** ⑨消息管理：聚合待办（未处理告警 / 待审资产 / 质量异常）为统一消息列表；只读，状态随业务表实时变化。 */
+    @GetMapping("/messages")
+    public List<Map<String, Object>> messages() {
+        Authz.require(Authz.SYS_ADMIN);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : safeList(() -> jdbc.queryForList(
+                "SELECT id, message, level, status, created_time FROM meta.sec_alert_event WHERE status = '未处理'"))) {
+            out.add(msg("ALERT", r.get("id"), trunc(str(r.get("message")), 80),
+                    "告警级别：" + str(r.get("level")), str(r.get("level")), str(r.get("status")), str(r.get("created_time")), "/security/alert"));
+        }
+        for (Map<String, Object> r : safeList(() -> jdbc.queryForList(
+                "SELECT id, name, description, security_level, status, create_time FROM meta.asset WHERE status = '待审'"))) {
+            out.add(msg("ASSET", r.get("id"), str(r.get("name")), str(r.get("description")),
+                    str(r.get("security_level")), str(r.get("status")), str(r.get("create_time")), "/asset/audit"));
+        }
+        for (Map<String, Object> r : safeList(() -> jdbc.queryForList(
+                "SELECT id, table_name, error_msg, severity, status, run_time FROM meta.gov_quality_result WHERE status = 'FAIL'"))) {
+            out.add(msg("QUALITY", r.get("id"), str(r.get("table_name")), str(r.get("error_msg")),
+                    str(r.get("severity")), str(r.get("status")), str(r.get("run_time")), "/data-gov/quality"));
+        }
+        return out;
+    }
+
     // -------- 助手 --------
     private void addTasks(List<Map<String, Object>> out, String domain, String sql) {
         for (Map<String, Object> r : safeList(() -> jdbc.queryForList(sql))) {
@@ -172,4 +195,31 @@ public class OpsController {
     private List<Map<String, Object>> safeList(Q q) { try { return q.run(); } catch (Exception e) { return List.of(); } }
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
     private static long lng(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).longValue(); try { return Long.parseLong(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
+    /** 构造一条统一消息记录（各源字段差异在此归一）。 */
+    private static Map<String, Object> msg(String source, Object refId, String title, String summary,
+                                           String severityRaw, String status, String createTime, String handlePath) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("source", source);
+        m.put("refId", refId);
+        m.put("title", title);
+        m.put("summary", summary);
+        m.put("severity", normSeverity(severityRaw));
+        m.put("status", status);
+        m.put("createTime", createTime);
+        m.put("handlePath", handlePath);
+        return m;
+    }
+    private static String trunc(String s, int max) { if (s == null) return ""; return s.length() <= max ? s : s.substring(0, max) + "…"; }
+    /** 各源的级别/安全等级五花八门（严重/高/机密/HIGH/P0…），归一成 HIGH/MEDIUM/LOW 供前端统一上色。 */
+    private static String normSeverity(String s) {
+        if (s == null || s.isEmpty()) return "LOW";
+        String u = s.toUpperCase();
+        if (u.contains("严重") || u.contains("绝密") || u.contains("机密") || u.contains("高")
+                || u.contains("HIGH") || u.contains("CRITICAL") || u.contains("FATAL")
+                || u.contains("SECRET") || u.contains("TOP") || u.contains("P0") || u.contains("P1"))
+            return "HIGH";
+        if (u.contains("中") || u.contains("内部") || u.contains("MEDIUM") || u.contains("WARN") || u.contains("P2") || u.contains("MAJOR"))
+            return "MEDIUM";
+        return "LOW";
+    }
 }

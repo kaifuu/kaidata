@@ -66,7 +66,17 @@ public class SecurityController {
     @GetMapping("/alert/event")
     public List<Map<String, Object>> listAlertEvent(@RequestParam(required = false) String status) { Authz.require(Authz.SYS_ADMIN); if (status == null || status.isEmpty()) return jdbc.queryForList("SELECT id, def_id, level, message, status, created_time FROM meta.sec_alert_event ORDER BY id DESC LIMIT 200"); return jdbc.queryForList("SELECT id, def_id, level, message, status, created_time FROM meta.sec_alert_event WHERE status=? ORDER BY id DESC LIMIT 200", status); }
     @PostMapping("/alert/handle")
-    public Map<String, Object> handleAlert(@RequestParam long id) { Authz.require(Authz.SYS_ADMIN); jdbc.update("UPDATE meta.sec_alert_event SET status='已处理' WHERE id=?", id); return Map.of("success", true); }
+    public Map<String, Object> handleAlert(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        // sec_alert_event 为明细模型(DUPLICATE KEY)，StarRocks 不支持 UPDATE；用 DELETE+INSERT 等效标记“已处理”
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT id, def_id, level, message, created_time FROM meta.sec_alert_event WHERE id=?", id);
+        if (rows.isEmpty()) return Map.of("success", false, "message", "告警事件不存在或已处理");
+        Map<String, Object> r = rows.get(0);
+        jdbc.update("DELETE FROM meta.sec_alert_event WHERE id=?", id);
+        jdbc.update("INSERT INTO meta.sec_alert_event(id, def_id, level, message, status, created_time) VALUES (?,?,?,?,?,?)",
+                r.get("id"), r.get("def_id"), r.get("level"), r.get("message"), "已处理", r.get("created_time"));
+        return Map.of("success", true);
+    }
     /** 供其他模块（探查/质量）触发告警事件。 */
     public void raiseEvent(Long defId, String level, String message) { try { jdbc.update("INSERT INTO meta.sec_alert_event(id, def_id, level, message, status, created_time) VALUES (?,?,?,?,?,?)", System.currentTimeMillis(), defId == null ? 0 : defId, level, message, "未处理", new Timestamp(System.currentTimeMillis())); } catch (Exception ignored) {} }
 

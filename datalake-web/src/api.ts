@@ -384,6 +384,7 @@ export const api = {
   opsCluster: () => http.get('/ops/cluster').then((r) => r.data),
   opsExecutors: () => http.get('/ops/executors').then((r) => r.data),
   opsConnectors: () => http.get('/ops/connectors').then((r) => r.data),
+  opsMessages: () => http.get('/ops/messages').then((r) => r.data),
 
   // ===== 数据安全 [SYS_ADMIN] =====
   secStandards: () => http.get('/security/std/list').then((r) => r.data),

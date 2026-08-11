@@ -399,6 +399,14 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "rule_ids VARCHAR(255), create_time DATETIME" +
                 ") PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         if (!m22) kvSet("schema_ver", "22");
+
+        // ============ 运维中心·消息管理菜单（schema_ver=23，仅菜单种子，无新表） ============
+        boolean m23 = "23".equals(kv("schema_ver"));
+        if (!m23) {
+            menu(72, 35, "消息管理", "/ops/message", "Bell", "ops:message", "MENU", 9);
+            grantMenu(1, 72);
+            kvSet("schema_ver", "23");
+        }
     }
 
     private void seedStd(String code, String name, int level, String desc) {

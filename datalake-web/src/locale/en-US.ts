@@ -166,6 +166,7 @@ export default {
     'ops/cluster': 'Cluster',
     'ops/executor': 'Executors',
     'ops/connector': 'Connectors',
+    'ops/message': 'Message Center',
     'security/std': 'Security Std',
     'security/mask': 'Masking',
     'security/key': 'Keys',

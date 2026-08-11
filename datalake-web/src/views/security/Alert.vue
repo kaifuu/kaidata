@@ -14,13 +14,18 @@
         </el-table>
       </el-tab-pane>
       <el-tab-pane label="告警事件" name="event">
-        <el-table :data="events" size="small" stripe border>
+        <el-table :data="eventPaged" size="small" stripe border>
           <el-table-column prop="created_time" label="时间" width="160" />
           <el-table-column prop="level" label="级别" width="80"><template #default="{ row }"><el-tag size="small" :type="row.level === '高' ? 'danger' : 'warning'">{{ row.level }}</el-tag></template></el-table-column>
           <el-table-column prop="message" label="告警内容" min-width="280" show-overflow-tooltip />
           <el-table-column prop="status" label="状态" width="80"><template #default="{ row }"><el-tag size="small" :type="row.status === '未处理' ? 'danger' : 'success'">{{ row.status }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="80"><template #default="{ row }"><el-button v-if="row.status === '未处理'" link size="small" type="primary" @click="handle(row)">处理</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="eventPage.page" :page-size="eventPage.size" :total="events.length"
+            :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next, jumper"
+            @size-change="(s) => { eventPage.size = s; eventPage.page = 1 }" @current-change="(p) => eventPage.page = p" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -37,12 +42,14 @@
   </div>
 </template>
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 const tab = ref('def')
 const defs = ref<any[]>([]); const events = ref<any[]>([]); const loading = ref(false)
+const eventPage = reactive({ page: 1, size: 10 })
+const eventPaged = computed(() => events.value.slice((eventPage.page - 1) * eventPage.size, eventPage.page * eventPage.size))
 const defDlg = ref(false); const defForm = reactive<any>({ id: null, name: '', source: 'profile', condition_cfg: '', notify_channels: '', enabled: true })
 async function load() { loading.value = true; try { defs.value = await api.secAlertDefs(); events.value = await api.secAlertEvents() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 function openDef(row?: any) { Object.assign(defForm, { id: null, name: '', source: 'profile', condition_cfg: '', notify_channels: '', enabled: true }, row ? { ...row, enabled: !!row.enabled } : {}); defDlg.value = true }

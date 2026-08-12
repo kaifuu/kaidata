@@ -48,6 +48,18 @@ public class OpsController {
         out.put("exports", cnt("SELECT COUNT(*) FROM meta.dev_export"));
         out.put("datasourceByType", safeList(() -> jdbc.queryForList("SELECT type, COUNT(*) c FROM meta.ing_datasource GROUP BY type")));
         out.put("assetByStatus", safeList(() -> jdbc.queryForList("SELECT status, COUNT(*) c FROM meta.asset GROUP BY status")));
+        // 数据接入：离线/实时作业计数 + 接入方式分布 + 实时作业状态分布
+        long offlineJobs = cnt("SELECT COUNT(*) FROM meta.ing_offline_job");
+        long streamJobs = cnt("SELECT COUNT(*) FROM meta.ing_stream_job");
+        out.put("offlineJobs", offlineJobs);
+        out.put("streamJobs", streamJobs);
+        out.put("accessJobs", offlineJobs + streamJobs);
+        out.put("streamJobsRunning", cnt("SELECT COUNT(*) FROM meta.ing_stream_job WHERE status='RUNNING'"));
+        out.put("accessByMode", safeList(() -> jdbc.queryForList(
+                "SELECT 'OFFLINE' AS mode, COUNT(*) c FROM meta.ing_offline_job" +
+                " UNION ALL SELECT 'KAFKA_TO_SR', COUNT(*) c FROM meta.ing_stream_job WHERE type='KAFKA_TO_SR'" +
+                " UNION ALL SELECT 'JDBC_TO_KAFKA', COUNT(*) c FROM meta.ing_stream_job WHERE type='JDBC_TO_KAFKA'")));
+        out.put("streamByStatus", safeList(() -> jdbc.queryForList("SELECT status, COUNT(*) c FROM meta.ing_stream_job GROUP BY status")));
         return out;
     }
 

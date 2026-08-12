@@ -112,9 +112,13 @@ export default {
       dsType: '数据源类型分布',
       tasks: '各域任务数',
       success: '任务执行成功率',
-      assets: '资产状态分布'
+      assets: '资产状态分布',
+      accessMode: '数据接入方式分布',
+      streamStatus: '实时接入作业状态'
     },
     ringCenter: '数据源',
+    ringCenterMode: '接入作业',
+    ringCenterStream: '实时作业',
     domain: {
       profile: '探查',
       quality: '质量',

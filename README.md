@@ -12,9 +12,35 @@
 
 ![Java](https://img.shields.io/badge/Java-17-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.4-green) ![Vue](https://img.shields.io/badge/Vue-3.4-42b883) ![Element Plus](https://img.shields.io/badge/Element%20Plus-2.6-409eff) ![StarRocks](https://img.shields.io/badge/StarRocks-3.3.10-blue) ![Kafka](https://img.shields.io/badge/Kafka-3.7.231000) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)
 
+<br>
+<img src="docs/screenshots/02_home.png" width="900" alt="kaidata 数据中台 · 首页门户·数据总览">
+
 </div>
 
 ---
+
+## 📸 系统截图预览
+
+> 浅色（DIFY 风格）/ 暗色（霓虹科技）双主题，9 大域 50+ 子模块。以下为部分页面，点击图片可查看原图。
+
+|  |  |
+|:---:|:---:|
+| <img src="docs/screenshots/01_login.png" width="420"> | <img src="docs/screenshots/02_home.png" width="420"> |
+| **① 登录** | **② 首页门户 · 数据总览** |
+| <img src="docs/screenshots/03_da_source.png" width="420"> | <img src="docs/screenshots/04_gov_datamap.png" width="420"> |
+| **③ 数据接入 · 数据源管理** | **④ 数据治理 · 数据地图** |
+| <img src="docs/screenshots/05_gov_quality.png" width="420"> | <img src="docs/screenshots/06_dev_offline.png" width="420"> |
+| **⑤ 数据治理 · 数据质量评分** | **⑥ 数据开发 · 离线开发** |
+| <img src="docs/screenshots/07_dag_studio.png" width="420"> | <img src="docs/screenshots/08_asset_catalog.png" width="420"> |
+| **⑦ DAG 工作流编排** | **⑧ 数据资产 · 资产编目** |
+| <img src="docs/screenshots/09_sec_mask.png" width="420"> | <img src="docs/screenshots/10_ds_service.png" width="420"> |
+| **⑨ 数据安全 · 数据脱敏** | **⑩ 数据服务 · 服务管理** |
+| <img src="docs/screenshots/11_market_dataset.png" width="420"> | <img src="docs/screenshots/12_market_subscribe.png" width="420"> |
+| **⑪ 数据集市 · 数据集** | **⑫ 数据集市 · 订阅审核** |
+| <img src="docs/screenshots/13_ops_overview.png" width="420"> | <img src="docs/screenshots/14_ops_cluster.png" width="420"> |
+| **⑬ 运维中心 · 数据概览** | **⑭ 运维中心 · 集群管理** |
+
+📖 完整功能说明与操作流程见 [`docs/数据中台-用户手册.pdf`](docs/数据中台-用户手册.pdf)。
 
 ## 一、项目简介
 
@@ -24,6 +50,19 @@ kaidata 是一套**面向企业的湖仓一体数据中台**，覆盖数据从"�
 - **全链路真实流转**：离线/实时管道端到端入仓可验证
 - **三员分立 RBAC**：系统 / 安全 / 审计管理员 + 全量操作审计
 - **中英双语 + 双主题**：vue-i18n 国际化，浅色 / 暗色双主题切换
+
+## ✨ 为什么选择 kaidata
+
+很多数据团队的现实是：**接入、治理、开发、服务各用一套工具，数据在系统间断层**。kaidata 把数据从「接入」到「消费」的完整生命周期打通成一条真实可跑的链路：
+
+- 🔁 **全链路真实流转，而非 Demo 拼装** —— 24 类数据源 → Kafka 总线 → StarRocks 实时数仓 → 治理 / 开发 / 服务 / 安全 → 门户，每一段都能端到端验证
+- 🏗️ **9 大域 50+ 子模块开箱即用** —— 企业数据中台标准域全覆盖，业务库表接入即可流转
+- 🪶 **单机一键部署** —— `bash start.sh` 拉起大数据栈 + 前后端，个人也能本地跑通湖仓
+- 🎨 **双主题 + 中英双语** —— 浅色 DIFY / 暗色霓虹科技，国际化内置
+
+> **适合谁**：企业数据团队搭建中台底座 · 个人学习湖仓 + 数据治理全流程 · 二次开发做行业垂直中台。
+>
+> 🌐 **在线演示**：_筹备中_ · 本地一行 `bash start.sh` 即可体验全部功能（账号 `admin / admin123`）。
 
 ## 二、总体架构
 

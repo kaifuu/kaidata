@@ -12,9 +12,35 @@ External sources → Kafka bus → StarRocks real-time warehouse → governance 
 
 ![Java](https://img.shields.io/badge/Java-17-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.4-green) ![Vue](https://img.shields.io/badge/Vue-3.4-42b883) ![Element Plus](https://img.shields.io/badge/Element%20Plus-2.6-409eff) ![StarRocks](https://img.shields.io/badge/StarRocks-3.3.10-blue) ![Kafka](https://img.shields.io/badge/Kafka-3.7.231000) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)
 
+<br>
+<img src="docs/screenshots/02_home.png" width="900" alt="kaidata data middle platform · home portal overview">
+
 </div>
 
 ---
+
+## 📸 Screenshots
+
+> Light (DIFY style) / Dark (neon-tech) themes · 9 domains · 50+ modules. A selection of pages — click any image for full size.
+
+|  |  |
+|:---:|:---:|
+| <img src="docs/screenshots/01_login.png" width="420"> | <img src="docs/screenshots/02_home.png" width="420"> |
+| **① Login** | **② Home Portal · Overview** |
+| <img src="docs/screenshots/03_da_source.png" width="420"> | <img src="docs/screenshots/04_gov_datamap.png" width="420"> |
+| **③ Data Access · Data Sources** | **④ Governance · Data Map** |
+| <img src="docs/screenshots/05_gov_quality.png" width="420"> | <img src="docs/screenshots/06_dev_offline.png" width="420"> |
+| **⑤ Governance · Data Quality Scoring** | **⑥ Development · Offline Jobs** |
+| <img src="docs/screenshots/07_dag_studio.png" width="420"> | <img src="docs/screenshots/08_asset_catalog.png" width="420"> |
+| **⑦ DAG Workflow Studio** | **⑧ Assets · Catalog** |
+| <img src="docs/screenshots/09_sec_mask.png" width="420"> | <img src="docs/screenshots/10_ds_service.png" width="420"> |
+| **⑨ Security · Data Masking** | **⑩ Data Service · API Management** |
+| <img src="docs/screenshots/11_market_dataset.png" width="420"> | <img src="docs/screenshots/12_market_subscribe.png" width="420"> |
+| **⑪ Marketplace · Datasets** | **⑫ Marketplace · Subscribe & Approve** |
+| <img src="docs/screenshots/13_ops_overview.png" width="420"> | <img src="docs/screenshots/14_ops_cluster.png" width="420"> |
+| **⑬ Ops · Overview Dashboard** | **⑭ Ops · Cluster Management** |
+
+📖 Full features & walkthroughs: [`docs/数据中台-用户手册.pdf`](docs/数据中台-用户手册.pdf) *(user manual, Chinese)*.
 
 ## 1. Overview
 
@@ -24,6 +50,19 @@ kaidata is an **enterprise lakehouse data middle platform** covering the full da
 - **Real end-to-end pipelines**: offline and streaming ingestion verified to actually land data
 - **Three-role RBAC**: System / Security / Audit administrators + full operation audit
 - **Bilingual + dual theme**: vue-i18n (zh/en), light (DIFY) / dark (neon) theme switch
+
+## ✨ Why kaidata
+
+The reality for many data teams: **ingestion, governance, development and serving each run on a separate tool, and data falls through the cracks between systems.** kaidata connects the full lifecycle — from *ingestion* to *consumption* — into one pipeline that actually runs end-to-end:
+
+- 🔁 **Real end-to-end flow, not a stitched demo** — 24 source types → Kafka bus → StarRocks real-time warehouse → governance / dev / serving / security → portal, every stage verifiable
+- 🏗️ **9 domains · 50+ modules, out of the box** — full standard coverage of an enterprise data middle platform; plug in your business tables and data starts flowing
+- 🪶 **One-click single-node deploy** — `bash start.sh` brings up the whole big-data stack + front/back end, so individuals can run a lakehouse locally
+- 🎨 **Dual theme + bilingual** — light DIFY / dark neon-tech, i18n built in
+
+> **Who it's for**: teams building a data-middle-platform base · individuals learning lakehouse + data governance end-to-end · developers forking an industry-vertical platform.
+>
+> 🌐 **Live demo**: _coming soon_ · run `bash start.sh` locally to try every feature (account `admin / admin123`).
 
 ## 2. Architecture
 

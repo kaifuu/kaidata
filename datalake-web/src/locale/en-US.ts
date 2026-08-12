@@ -112,9 +112,13 @@ export default {
       dsType: 'Data source types',
       tasks: 'Tasks by domain',
       success: 'Task success rate',
-      assets: 'Asset status'
+      assets: 'Asset status',
+      accessMode: 'Ingestion by mode',
+      streamStatus: 'Streaming job status'
     },
     ringCenter: 'Sources',
+    ringCenterMode: 'Ingestion',
+    ringCenterStream: 'Streaming',
     domain: {
       profile: 'Profile',
       quality: 'Quality',

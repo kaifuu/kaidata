@@ -36,6 +36,18 @@
       </div>
     </div>
 
+    <!-- 数据接入 -->
+    <div class="chart-row">
+      <div class="dl-card chart-card">
+        <div class="ct"><el-icon><Connection /></el-icon> {{ $t('home.chart.accessMode') }}<span class="ct-sub">INGESTION</span></div>
+        <v-chart :option="accessModeOption" :theme="chartTheme" autoresize class="chart" />
+      </div>
+      <div class="dl-card chart-card">
+        <div class="ct"><el-icon><DataLine /></el-icon> {{ $t('home.chart.streamStatus') }}<span class="ct-sub">STREAMING</span></div>
+        <v-chart :option="streamStatusOption" :theme="chartTheme" autoresize class="chart" />
+      </div>
+    </div>
+
     <div class="flow-hint"><el-icon><InfoFilled /></el-icon> {{ $t('home.footer') }}</div>
   </div>
 </template>
@@ -43,7 +55,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Connection, List, CircleCheck, Box, InfoFilled } from '@element-plus/icons-vue'
+import { Connection, List, CircleCheck, Box, InfoFilled, DataLine } from '@element-plus/icons-vue'
 import { VChart } from '@/echarts'
 import { api } from '@/api'
 import { theme } from '@/theme'
@@ -111,26 +123,31 @@ function roll(key: string, to: number) {
 }
 watch(kpis, (ks) => ks.forEach((k) => roll(k.key, k.value)), { deep: true, immediate: true })
 
-// 数据源类型分布（精致环图 + 中心总数）
-const dsTypeOption = computed(() => {
+// 精致环图（中心总数 + 标签）—— 数据源类型 / 接入方式 / 实时作业状态 共用
+function ringPie(rows: { name: string; value: number }[], centerLabel: string) {
   const c = C.value
-  const total = (ov.value.datasourceByType || []).reduce((s: number, d: any) => s + Number(d.c || 0), 0)
+  const total = rows.reduce((s: number, r: { value: number }) => s + (r.value || 0), 0)
   return {
-    tooltip: { trigger: 'item' },
-    legend: { bottom: 4, textStyle: { color: c.muted }, itemWidth: 10, itemHeight: 10 },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    legend: { bottom: 4, type: 'scroll', textStyle: { color: c.muted }, itemWidth: 10, itemHeight: 10 },
     graphic: [
       { type: 'text', left: 'center', top: '40%', style: { text: String(total), fill: c.ink, font: 'bold 30px system-ui, sans-serif', textAlign: 'center' } },
-      { type: 'text', left: 'center', top: '52%', style: { text: t('home.ringCenter'), fill: c.muted, font: '12px system-ui, sans-serif', textAlign: 'center' } }
+      { type: 'text', left: 'center', top: '52%', style: { text: centerLabel, fill: c.muted, font: '12px system-ui, sans-serif', textAlign: 'center' } }
     ],
     series: [{
-      type: 'pie', radius: ['52%', '72%'], center: ['50%', '46%'],
+      type: 'pie', radius: ['52%', '72%'], center: ['50%', '46%'], avoidLabelOverlap: true,
       itemStyle: { borderColor: c.panelBorder, borderWidth: 2, shadowBlur: isDark.value ? 16 : 0, shadowColor: c.glow },
       label: { color: c.muted, formatter: '{b} {c}' }, labelLine: { lineStyle: { color: c.axis } },
       emphasis: { itemStyle: { shadowBlur: isDark.value ? 28 : 8, shadowColor: c.glow } },
-      data: (ov.value.datasourceByType || []).map((d: any, i: number) => ({ name: d.type, value: d.c, itemStyle: { color: fill(i) } }))
+      data: rows.map((r, i) => ({ name: r.name, value: r.value, itemStyle: { color: fill(i) } }))
     }]
   }
-})
+}
+const ACCESS_MODE_LABEL: Record<string, string> = { OFFLINE: '离线接入', KAFKA_TO_SR: 'Kafka → StarRocks', JDBC_TO_KAFKA: 'JDBC → Kafka' }
+const STREAM_STATUS_LABEL: Record<string, string> = { RUNNING: '运行中', STOPPED: '已停止' }
+const dsTypeOption = computed(() => ringPie((ov.value.datasourceByType || []).map((d: any) => ({ name: d.type || '未知', value: Number(d.c) || 0 })), t('home.ringCenter')))
+const accessModeOption = computed(() => ringPie((ov.value.accessByMode || []).map((d: any) => ({ name: ACCESS_MODE_LABEL[d.mode] || d.mode || '未知', value: Number(d.c) || 0 })), t('home.ringCenterMode')))
+const streamStatusOption = computed(() => ringPie((ov.value.streamByStatus || []).map((d: any) => ({ name: STREAM_STATUS_LABEL[d.status] || d.status || '未知', value: Number(d.c) || 0 })), t('home.ringCenterStream')))
 
 // 各域任务数（圆角柱 · 浅色纯色 / 暗色渐变发光）
 const taskDomainOption = computed(() => {

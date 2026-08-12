@@ -64,6 +64,28 @@
       </el-col>
     </el-row>
 
+    <!-- 数据接入 -->
+    <el-row :gutter="14">
+      <el-col :span="12">
+        <div class="dl-card ov-card chart-card">
+          <div class="card-head">
+            <span class="card-head-title">数据接入方式分布</span>
+            <span class="count-badge">作业数</span>
+          </div>
+          <v-chart class="chart" :option="accessModeOption" :theme="chartTheme" autoresize />
+        </div>
+      </el-col>
+      <el-col :span="12">
+        <div class="dl-card ov-card chart-card">
+          <div class="card-head">
+            <span class="card-head-title">实时接入作业状态</span>
+            <span class="count-badge">运行中 <b>{{ data.streamJobsRunning ?? 0 }}</b> / {{ data.streamJobs ?? 0 }}</span>
+          </div>
+          <v-chart class="chart" :option="streamStatusOption" :theme="chartTheme" autoresize />
+        </div>
+      </el-col>
+    </el-row>
+
     <!-- 模块规模 -->
     <div class="dl-card ov-card chart-card">
       <div class="card-head">
@@ -80,7 +102,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Coin, FolderOpened, Grid, Files, CircleCheck, Search, SetUp,
-  Share, Document, Promotion, Refresh, DataBoard
+  Share, Document, Promotion, Refresh, DataBoard, Connection
 } from '@element-plus/icons-vue'
 import { VChart } from '@/echarts'
 import { theme } from '@/theme'
@@ -94,6 +116,7 @@ const lastUpd = ref('')
 // KPI 元信息：图标 + 强调色（补齐后端返回的 filestores / exports）
 const kpiMeta = [
   { key: 'datasources', label: '数据源', icon: Coin, color: 'var(--tech-primary)' },
+  { key: 'accessJobs', label: '接入作业', icon: Connection, color: 'var(--tech-accent)' },
   { key: 'filestores', label: '文件存储', icon: FolderOpened, color: 'var(--tech-primary-2)' },
   { key: 'metaTables', label: '元数据表', icon: Grid, color: 'var(--tech-accent)' },
   { key: 'assets', label: '资产总数', icon: Files, color: 'var(--tech-primary)' },
@@ -132,6 +155,12 @@ function pieOption(rows: { name: string; value: number }[]) {
 }
 const dsTypeOption = computed(() => pieOption((data.value.datasourceByType || []).map((d: any) => ({ name: d.type || '未知', value: num(d.c) }))))
 const assetStatusOption = computed(() => pieOption((data.value.assetByStatus || []).map((d: any) => ({ name: ASSET_STATUS_LABEL[d.status] || d.status || '未知', value: num(d.c) }))))
+
+// 数据接入方式 / 实时作业状态
+const ACCESS_MODE_LABEL: Record<string, string> = { OFFLINE: '离线接入', KAFKA_TO_SR: 'Kafka → StarRocks', JDBC_TO_KAFKA: 'JDBC → Kafka' }
+const STREAM_STATUS_LABEL: Record<string, string> = { RUNNING: '运行中', STOPPED: '已停止' }
+const accessModeOption = computed(() => pieOption((data.value.accessByMode || []).map((d: any) => ({ name: ACCESS_MODE_LABEL[d.mode] || d.mode || '未知', value: num(d.c) }))))
+const streamStatusOption = computed(() => pieOption((data.value.streamByStatus || []).map((d: any) => ({ name: STREAM_STATUS_LABEL[d.status] || d.status || '未知', value: num(d.c) }))))
 
 // 资产通过率（dashboard 环）
 const approvalRate = computed(() => {

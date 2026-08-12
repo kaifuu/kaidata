@@ -101,9 +101,13 @@ public class KafkaAdminHolder {
                     .collect(Collectors.toList());
             c.assign(tps);
             Map<TopicPartition, Long> ends = c.endOffsets(tps, Duration.ofSeconds(10));
+            // 用 beginningOffsets 钳制下界：Kafka 清理早期消息后 logStartOffset 会 >0，
+            // 此时 seek 到硬编码的 0 会越界，被重置到 endOffset（队尾）→ 一条也拉不到。
+            Map<TopicPartition, Long> begins = c.beginningOffsets(tps, Duration.ofSeconds(10));
             for (TopicPartition tp : tps) {
                 long end = ends.getOrDefault(tp, 0L);
-                long start = Math.max(0, end - max);
+                long begin = begins.getOrDefault(tp, 0L);
+                long start = Math.max(begin, end - max);
                 if (start < end) c.seek(tp, start);
             }
             int empty = 0;

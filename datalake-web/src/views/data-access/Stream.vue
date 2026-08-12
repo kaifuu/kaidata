@@ -1,19 +1,38 @@
 <template>
   <div>
     <!-- ROUTINE LOAD 概览 -->
-    <div class="dl-card" style="margin-bottom:14px">
+    <div class="dl-card rl-overview" style="margin-bottom:14px">
       <div class="card-title">
         <span class="ct-left"><el-icon class="title-icon"><DataLine /></el-icon>StarRocks ROUTINE LOAD 概览</span>
         <el-button size="small" link @click="loadRl"><el-icon><Refresh /></el-icon>刷新</el-button>
       </div>
-      <div v-if="!rls.length" class="muted">暂无 ROUTINE LOAD 作业</div>
-      <div v-else style="display:flex;flex-wrap:wrap;gap:10px">
-        <div v-for="r in rls" :key="r.Name" class="rl-chip">
-          <div class="rl-name">{{ r.Name }} · {{ r.DbName }}.{{ r.TableName }}</div>
-          <div class="rl-line">
-            <el-tag size="small" :type="rlType(r.State)">{{ r.State }}</el-tag>
-            <span class="rl-stat">已入仓 <b>{{ parseStat(r.Statistic).loadedRows }}</b></span>
-            <span v-if="parseStat(r.Statistic).errorRows > 0" class="rl-stat err">错误 <b>{{ parseStat(r.Statistic).errorRows }}</b></span>
+
+      <!-- 汇总指标 -->
+      <div class="rl-kpis">
+        <div class="kpi"><div class="kpi-label">作业总数</div><div class="kpi-val">{{ rlSummary.total }}</div></div>
+        <div class="kpi"><div class="kpi-label">运行中</div><div class="kpi-val ok">{{ rlSummary.running }}</div></div>
+        <div class="kpi"><div class="kpi-label">累计入仓行数</div><div class="kpi-val">{{ formatNum(rlSummary.loaded) }}</div></div>
+        <div class="kpi"><div class="kpi-label">错误行数</div><div class="kpi-val" :class="{ err: rlSummary.errors > 0 }">{{ formatNum(rlSummary.errors) }}</div></div>
+      </div>
+
+      <!-- 作业卡片 -->
+      <div v-if="!rls.length" class="muted rl-empty">暂无 ROUTINE LOAD 作业</div>
+      <div v-else class="rl-grid">
+        <div v-for="r in rls" :key="r.Name" class="rl-card" :class="'rl-' + rlClass(r.State)">
+          <div class="rl-card-head">
+            <span class="rl-card-name" :title="r.Name">{{ r.Name }}</span>
+            <el-tag size="small" :type="rlType(r.State)" effect="light" round>{{ r.State }}</el-tag>
+          </div>
+          <div class="rl-card-table"><el-icon><Coin /></el-icon><span class="rl-tname">{{ r.DbName }}.{{ r.TableName }}</span></div>
+          <div class="rl-card-stats">
+            <div class="rl-metric">
+              <div class="rm-num">{{ formatNum(parseStat(r.Statistic).loadedRows) }}</div>
+              <div class="rm-label">已入仓</div>
+            </div>
+            <div class="rl-metric" :class="{ err: parseStat(r.Statistic).errorRows > 0 }">
+              <div class="rm-num">{{ formatNum(parseStat(r.Statistic).errorRows) }}</div>
+              <div class="rm-label">错误</div>
+            </div>
           </div>
         </div>
       </div>
@@ -223,7 +242,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, InfoFilled, Delete, Right, DataLine, Connection, Refresh } from '@element-plus/icons-vue'
+import { Plus, InfoFilled, Delete, Right, DataLine, Connection, Refresh, Coin } from '@element-plus/icons-vue'
 import { api, errMsg, type StreamJobRow, type DataSourceRow } from '@/api'
 
 const COL_TYPES = ['VARCHAR(255)', 'VARCHAR(100)', 'VARCHAR(50)', 'BIGINT', 'INT', 'DOUBLE', 'DATE', 'DATETIME', 'BOOLEAN', 'DECIMAL(18,4)']
@@ -264,6 +283,13 @@ function parseStat(s: any) {
   try { const o = typeof s === 'string' ? JSON.parse(s) : (s || {}); return { loadedRows: o.loadedRows || 0, errorRows: o.errorRows || 0 } }
   catch { return { loadedRows: 0, errorRows: 0 } }
 }
+function formatNum(n: number) { return (n || 0).toLocaleString() }
+function rlClass(s: string) { return s === 'RUNNING' ? 'run' : (s === 'PAUSED' || s === 'STOPPED' || s === 'NEED_SCHEDULE' ? 'pause' : (s === 'CANCELLED' ? 'cancel' : 'other')) }
+const rlSummary = computed(() => {
+  let running = 0, loaded = 0, errors = 0
+  rls.value.forEach(r => { if (r.State === 'RUNNING') running++; const s = parseStat(r.Statistic); loaded += s.loadedRows; errors += s.errorRows })
+  return { total: rls.value.length, running, loaded, errors }
+})
 
 async function load() {
   loading.value = true
@@ -359,13 +385,32 @@ onMounted(load)
 .json-box { background: var(--el-fill-color-light); padding: 12px; border-radius: 6px; max-height: 460px; overflow: auto; font-size: 12px; white-space: pre-wrap; color: var(--tech-text); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 2px; }
 
-/* ROUTINE LOAD 概览 chip */
-.rl-chip { border: 1px solid var(--tech-panel-border); border-radius: 8px; padding: 8px 12px; min-width: 200px; background: var(--el-fill-color-blank); }
-.rl-name { font-weight: 600; margin-bottom: 4px; }
-.rl-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.rl-stat { color: var(--tech-text-muted); }
-.rl-stat b { color: var(--tech-text); }
-.rl-stat.err b { color: var(--el-color-danger); }
+/* ROUTINE LOAD 概览：KPI 汇总 + 作业卡片 */
+.rl-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.kpi { position: relative; border: 1px solid var(--tech-panel-border); border-radius: 10px; padding: 14px 16px; background: var(--el-fill-color-blank); overflow: hidden; }
+.kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--tech-primary); opacity: .5; }
+.kpi-label { font-size: 12px; color: var(--tech-text-muted); }
+.kpi-val { font-size: 24px; font-weight: 700; margin-top: 6px; color: var(--tech-text); letter-spacing: .5px; }
+.kpi-val.ok { color: var(--el-color-success); }
+.kpi-val.err { color: var(--el-color-danger); }
+
+.rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.rl-card { position: relative; border: 1px solid var(--tech-panel-border); border-radius: 10px; padding: 12px 14px; background: var(--el-fill-color-blank); overflow: hidden; transition: border-color .2s, box-shadow .2s, transform .2s; }
+.rl-card:hover { border-color: var(--tech-primary); box-shadow: 0 4px 14px rgba(0,0,0,.08); transform: translateY(-1px); }
+.rl-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.rl-card.rl-run::before { background: var(--el-color-success); }
+.rl-card.rl-pause::before { background: var(--el-color-warning); }
+.rl-card.rl-cancel::before { background: var(--el-color-danger); }
+.rl-card.rl-other::before { background: var(--el-color-info); }
+.rl-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rl-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-card-table { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--tech-text-muted); margin-bottom: 10px; }
+.rl-card-table .rl-tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-card-stats { display: flex; gap: 22px; padding-top: 10px; border-top: 1px dashed var(--tech-panel-border); }
+.rl-metric .rm-num { font-size: 19px; font-weight: 700; color: var(--tech-primary); line-height: 1.2; }
+.rl-metric.err .rm-num { color: var(--el-color-danger); }
+.rl-metric .rm-label { font-size: 11px; color: var(--tech-text-muted); margin-top: 3px; }
+.rl-empty { text-align: center; padding: 22px; }
 
 /* 流向内联 */
 .flow-inline { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }

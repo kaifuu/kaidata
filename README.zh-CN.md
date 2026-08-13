@@ -6,7 +6,7 @@
 
 ### 现代湖仓架构的企业级数据中台 · 9 大域 · 50+ 子模块
 
-[English](README.md) | 中文
+🌐 [个人官网](https://www.kainfer.cn/) · [English](README.md) | 中文
 
 多源接入 → Kafka 总线 → StarRocks 实时数仓 → 治理 / 开发 / 服务 / 安全 → 前端门户，全链路真实流转
 

@@ -6,7 +6,7 @@
 
 ### An enterprise-grade data middle platform on a modern lakehouse architecture · 9 domains · 50+ modules
 
-English | **[中文](README.zh-CN.md)**
+🌐 [Website](https://www.kainfer.cn/) · English | **[中文](README.zh-CN.md)**
 
 External sources → Kafka bus → StarRocks real-time warehouse → governance / development / serving / security → web portal — a fully working, end-to-end data pipeline
 

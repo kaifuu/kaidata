@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 通用 JDBC 适配器：一个类覆盖 mysql/starrocks/doris/postgresql/greenplum/opengauss/
- * clickhouse/sqlserver/oracle/tdengine/hive 等 11 种 MySQL/标准/方言数据库。
+ * 通用 JDBC 适配器：一个类覆盖 mysql/starrocks/doris/postgresql/greenplum/opengauss/kingbase/
+ * clickhouse/sqlserver/oracle/tdengine/hive 等 12 种 MySQL/标准/方言数据库。
  * <p>
  * 驱动 jar 缺失时 {@link #driverAvailable} 为 false，自动降级为占位（不阻断构建/启动）。
  * 元数据查询：默认走 information_schema；oracle 用 ALL_*，tdengine/hive 用 SHOW。
@@ -46,6 +46,7 @@ public class JdbcAdapter implements DataSourceAdapter {
             case "postgresql":  return new JdbcAdapter("postgresql", "org.postgresql.Driver", 5432);
             case "greenplum":   return new JdbcAdapter("greenplum", "org.postgresql.Driver", 5432);
             case "opengauss":   return new JdbcAdapter("opengauss", "org.postgresql.Driver", 5432);
+            case "kingbase":    return new JdbcAdapter("kingbase", "org.postgresql.Driver", 54321);
             case "clickhouse":  return new JdbcAdapter("clickhouse", "com.clickhouse.jdbc.ClickHouseDriver", 8123);
             case "sqlserver":   return new JdbcAdapter("sqlserver", "com.microsoft.sqlserver.jdbc.SQLServerDriver", 1433);
             case "oracle":      return new JdbcAdapter("oracle", "oracle.jdbc.OracleDriver", 1521);
@@ -69,7 +70,7 @@ public class JdbcAdapter implements DataSourceAdapter {
             case "mysql": case "starrocks": case "doris":
                 return "jdbc:mysql://" + h + ":" + port + "/" + db
                         + "?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8";
-            case "postgresql": case "greenplum": case "opengauss":
+            case "postgresql": case "greenplum": case "opengauss": case "kingbase":
                 return "jdbc:postgresql://" + h + ":" + port + "/" + db;
             case "clickhouse":
                 return "jdbc:ch://" + h + ":" + port + "/" + db;
@@ -110,6 +111,8 @@ public class JdbcAdapter implements DataSourceAdapter {
     @Override
     public List<Map<String, Object>> listTables(DataSource pool, String schema) {
         switch (type) {
+            case "postgresql": case "greenplum": case "opengauss": case "kingbase":
+                return query(pool, pgTablesSql(schema));
             case "oracle":
                 return query(pool, oracleTablesSql(schema));
             case "tdengine":
@@ -123,6 +126,8 @@ public class JdbcAdapter implements DataSourceAdapter {
     @Override
     public List<Map<String, Object>> describeTable(DataSource pool, String schema, String table) {
         switch (type) {
+            case "postgresql": case "greenplum": case "opengauss": case "kingbase":
+                return query(pool, pgColumnsSql(schema, table));
             case "oracle":
                 return query(pool, oracleColumnsSql(schema, table));
             case "tdengine":
@@ -154,6 +159,33 @@ public class JdbcAdapter implements DataSourceAdapter {
             base += " AND owner='" + schema.toUpperCase() + "'";
         }
         return base + " ORDER BY column_id";
+    }
+
+    /** PG 系（postgresql/greenplum/opengauss/kingbase）列源表：information_schema 无 TABLE_COMMENT。 */
+    private static String pgTablesSql(String schema) {
+        String sql = "SELECT table_name AS name, table_schema AS schema_name, '' AS comment " +
+                "FROM information_schema.tables WHERE table_type='BASE TABLE'";
+        if (schema != null && !schema.isEmpty()) {
+            SqlBuilder.ident(schema);
+            sql += " AND table_schema='" + schema + "'";
+        } else {
+            // 排除 PG/Kingbase 系统内置 schema（Kingbase 另有 sys/sysmac/sys_hm 等）
+            sql += " AND lower(table_schema) NOT IN ('pg_catalog','information_schema','sys','sysmac','sys_hm','sys_audit')";
+        }
+        return sql + " ORDER BY table_schema, table_name";
+    }
+
+    /** PG 系（含 Kingbase）列字段：information_schema.columns 无 COLUMN_COMMENT。 */
+    private static String pgColumnsSql(String schema, String table) {
+        SqlBuilder.ident(table);
+        String sql = "SELECT column_name AS name, data_type AS type, '' AS comment, ordinal_position AS pos, " +
+                "numeric_precision AS precision_, numeric_scale AS scale_ " +
+                "FROM information_schema.columns WHERE table_name='" + table + "'";
+        if (schema != null && !schema.isEmpty()) {
+            SqlBuilder.ident(schema);
+            sql += " AND table_schema='" + schema + "'";
+        }
+        return sql + " ORDER BY ordinal_position";
     }
 
     // ---------------- 执行助手 ----------------

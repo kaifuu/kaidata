@@ -28,7 +28,8 @@ public class AdapterConfig {
 
     // ---- 国产占位（驱动需手动放置） ----
     @Bean DataSourceAdapter damengAdapter() { return new PlaceholderAdapter("dameng", "达梦 DmJdbcDriver18.jar"); }
-    @Bean DataSourceAdapter kingbaseAdapter() { return new PlaceholderAdapter("kingbase", "人大金仓 kingbase8-8.6.0.jar"); }
+    // 人大金仓 Kingbase 兼容 PostgreSQL 线协议，复用 pg 驱动即可真实连通
+    @Bean DataSourceAdapter kingbaseAdapter() { return JdbcAdapter.of("kingbase"); }
     @Bean DataSourceAdapter gbaseAdapter() { return new PlaceholderAdapter("gbase", "南大通用 gbase-connector-java.jar"); }
 
     // ---- 登记型占位（大数据 / 消息 / 文件 / 缓存 / 对象存储）：经对应客户端/管道接入，此处仅登记 ----

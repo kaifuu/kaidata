@@ -127,6 +127,10 @@ export const api = {
   daTestSource: (b: any) => http.post('/data-access/source/test', b).then((r) => r.data),
   daSourceTables: (id: number, schema?: string) => http.get('/data-access/source/tables', { params: { id, schema } }).then((r) => r.data),
   daSourceColumns: (id: number, table: string, schema?: string) => http.get('/data-access/source/columns', { params: { id, table, schema } }).then((r) => r.data),
+  daSourceData: (id: number, schema: string | undefined, table: string, page = 1, size = 50, where?: string) =>
+    http.get('/data-access/source/data', { params: { id, schema, table, page, size, where } }).then((r) => r.data),
+  daSourceDdl: (id: number, schema: string | undefined, table: string) =>
+    http.get('/data-access/source/ddl', { params: { id, schema, table } }).then((r) => r.data),
 
   // ===== 文件管理 [SYS_ADMIN] =====
   daStores: () => http.get<FilestoreRow[]>('/data-access/file/store/list').then((r) => r.data),

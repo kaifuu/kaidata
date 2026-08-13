@@ -5,12 +5,19 @@ import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.ElasticsearchAdapter;
 import com.pharma.service.access.util.CryptoUtil;
+import com.pharma.service.access.util.SqlBuilder;
 import com.pharma.service.security.AccessDeniedException;
 import com.pharma.service.security.Authz;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.*;
 
@@ -173,8 +180,9 @@ public class DataSourceController {
             r.put("indices", ((ElasticsearchAdapter) a).listIndices(ds));
             return r;
         }
-        // schema 为空时按数据源配置的 db_name 过滤：避免整个实例所有库表涌入（配了 ods 就只看 ods 库）
-        String effectiveSchema = (schema != null && !schema.isEmpty()) ? schema : ds.dbName;
+        // schema 为空时：MySQL 系按 db_name 过滤（库即 schema）；PG 系(含 Kingbase) 库≠schema，不按库名过滤（列全部用户 schema）
+        String effectiveSchema = (schema != null && !schema.isEmpty()) ? schema
+                : (isPgFamily(ds.type) ? null : ds.dbName);
         return a.listTables(registry.getPool(ds), effectiveSchema);
     }
 
@@ -186,6 +194,114 @@ public class DataSourceController {
         DataSourceDescriptor ds = loadDs(id);
         DataSourceAdapter a = registry.adapter(ds.type);
         return a.describeTable(registry.getPool(ds), schema, table);
+    }
+
+    // ==================== 表数据 / DDL（Navicat 风格对象浏览器） ====================
+
+    /** 分页查看表数据：LIMIT/OFFSET + COUNT（Navicat 风格「数据」Tab）。 */
+    @GetMapping("/data")
+    public Map<String, Object> data(@RequestParam long id,
+                                    @RequestParam(required = false) String schema,
+                                    @RequestParam String table,
+                                    @RequestParam(defaultValue = "1") int page,
+                                    @RequestParam(defaultValue = "50") int size,
+                                    @RequestParam(required = false) String where) {
+        Authz.require(Authz.SYS_ADMIN);
+        String fq = qualify(schema, table);
+        String whereClause = (where != null && !where.isBlank()) ? " WHERE " + where : "";
+        DataSourceDescriptor ds = loadDs(id);
+        DataSource pool = registry.getPool(ds);
+        int p = Math.max(page, 1);
+        int s = Math.min(Math.max(size, 1), 500);
+        int offset = (p - 1) * s;
+
+        // 总数（best-effort：某些表/方言 COUNT 可能慢或出错，失败则 total=null，前端不显示总数）
+        Long total = null;
+        try {
+            total = new JdbcTemplate(pool).queryForObject("SELECT COUNT(*) FROM " + fq + whereClause, Long.class);
+        } catch (Exception ignored) {}
+
+        List<String> cols = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (Connection c = pool.getConnection();
+             Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT * FROM " + fq + whereClause + " LIMIT " + s + " OFFSET " + offset)) {
+            ResultSetMetaData md = rs.getMetaData();
+            int n = md.getColumnCount();
+            for (int i = 1; i <= n; i++) cols.add(md.getColumnLabel(i));
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (int i = 1; i <= n; i++) row.put(cols.get(i - 1), rs.getObject(i));
+                rows.add(row);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("表数据查询失败：" + rootMsg(e), e);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("columns", cols);
+        out.put("rows", rows);
+        out.put("total", total);
+        out.put("page", p);
+        out.put("size", s);
+        return out;
+    }
+
+    /** 建表语句：先试原生 SHOW CREATE TABLE，失败则按字段重建（best-effort）。 */
+    @GetMapping("/ddl")
+    public Map<String, Object> ddl(@RequestParam long id,
+                                   @RequestParam(required = false) String schema,
+                                   @RequestParam String table) {
+        Authz.require(Authz.SYS_ADMIN);
+        String fq = qualify(schema, table);
+        DataSourceDescriptor ds = loadDs(id);
+        DataSource pool = registry.getPool(ds);
+        // 先试原生 SHOW CREATE TABLE（MySQL/StarRocks/Kingbase 等支持，返回第二列为 DDL 文本）
+        try (Connection c = pool.getConnection();
+             Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SHOW CREATE TABLE " + fq)) {
+            if (rs.next()) {
+                ResultSetMetaData md = rs.getMetaData();
+                int ddlIdx = md.getColumnCount() >= 2 ? 2 : 1;
+                String ddl = rs.getString(ddlIdx);
+                if (ddl != null && !ddl.isBlank()) {
+                    return Map.of("ddl", ddl, "source", "native");
+                }
+            }
+        } catch (SQLException ignored) {}
+        // 回退：按字段元数据重建
+        DataSourceAdapter a = registry.adapter(ds.type);
+        List<Map<String, Object>> cols;
+        try {
+            cols = a.describeTable(pool, schema, table);
+        } catch (Exception e) {
+            return Map.of("ddl", "-- 无法获取建表语句：" + rootMsg(e), "source", "reconstructed");
+        }
+        StringBuilder sb = new StringBuilder("CREATE TABLE ").append(fq).append(" (\n");
+        for (int i = 0; i < cols.size(); i++) {
+            Map<String, Object> col = cols.get(i);
+            if (i > 0) sb.append(",\n");
+            sb.append("  ").append(col.get("name")).append(" ").append(col.get("type"));
+        }
+        sb.append("\n);");
+        return Map.of("ddl", sb.toString(), "source", "reconstructed");
+    }
+
+    /** 校验表名合法性并拼成 schema.table（各段均走标识符校验，防注入）。 */
+    private static String qualify(String schema, String table) {
+        if (table == null || !table.matches("[a-zA-Z0-9_.]+")) {
+            throw new IllegalArgumentException("非法表名: " + table);
+        }
+        if (table.contains(".")) return table;   // 已限定 schema
+        if (schema != null && !schema.isEmpty()) {
+            SqlBuilder.ident(schema);
+            return schema + "." + table;
+        }
+        return table;
+    }
+
+    /** PG 系（postgresql/greenplum/opengauss/kingbase）：database ≠ schema，源表列表不应按 db_name 过滤。 */
+    private boolean isPgFamily(String type) {
+        return "postgresql".equals(type) || "greenplum".equals(type) || "opengauss".equals(type) || "kingbase".equals(type);
     }
 
     // ==================== 助手 ====================
@@ -240,6 +356,14 @@ public class DataSourceController {
         ds.password = crypto.decrypt(String.valueOf(row.getOrDefault("password", "")));
         ds.props = String.valueOf(row.getOrDefault("props", ""));
         return ds;
+    }
+
+    /** 取异常根因信息（与 JdbcAdapter 同款，用于 /data /ddl 失败提示）。 */
+    private static String rootMsg(Throwable e) {
+        Throwable cur = e;
+        for (int i = 0; i < 6 && cur.getCause() != null && cur.getCause() != cur; i++) cur = cur.getCause();
+        String m = cur.getMessage();
+        return m == null ? cur.getClass().getSimpleName() : (cur.getClass().getSimpleName() + ": " + m);
     }
 
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }

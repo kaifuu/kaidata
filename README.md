@@ -2,172 +2,172 @@
 
 <img src="logo.svg" width="128" alt="kaidata LOGO">
 
-# 数据中台 · kaidata
+# Data Middle Platform · kaidata
 
-### 现代湖仓架构的企业级数据中台 · 9 大域 · 50+ 子模块
+### An enterprise-grade data middle platform on a modern lakehouse architecture · 9 domains · 50+ modules
 
-[English](README.en.md) | 中文
+English | **[中文](README.zh-CN.md)**
 
-多源接入 → Kafka 总线 → StarRocks 实时数仓 → 治理 / 开发 / 服务 / 安全 → 前端门户，全链路真实流转
+External sources → Kafka bus → StarRocks real-time warehouse → governance / development / serving / security → web portal — a fully working, end-to-end data pipeline
 
 ![Java](https://img.shields.io/badge/Java-17-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.4-green) ![Vue](https://img.shields.io/badge/Vue-3.4-42b883) ![Element Plus](https://img.shields.io/badge/Element%20Plus-2.6-409eff) ![StarRocks](https://img.shields.io/badge/StarRocks-3.3.10-blue) ![Kafka](https://img.shields.io/badge/Kafka-3.7.231000) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)
 
 <br>
-<img src="docs/screenshots/02_home.png" width="900" alt="kaidata 数据中台 · 首页门户·数据总览">
+<img src="docs/screenshots/02_home.png" width="900" alt="kaidata data middle platform · home portal overview">
 
 </div>
 
 ---
 
-## 📸 系统截图预览
+## 📸 Screenshots
 
-> 浅色（DIFY 风格）/ 暗色（霓虹科技）双主题，9 大域 50+ 子模块。以下为部分页面，点击图片可查看原图。
+> Light (DIFY style) / Dark (neon-tech) themes · 9 domains · 50+ modules. A selection of pages — click any image for full size.
 
 |  |  |
 |:---:|:---:|
 | <img src="docs/screenshots/01_login.png" width="420"> | <img src="docs/screenshots/02_home.png" width="420"> |
-| **① 登录** | **② 首页门户 · 数据总览** |
+| **① Login** | **② Home Portal · Overview** |
 | <img src="docs/screenshots/03_da_source.png" width="420"> | <img src="docs/screenshots/04_gov_datamap.png" width="420"> |
-| **③ 数据接入 · 数据源管理** | **④ 数据治理 · 数据地图** |
+| **③ Data Access · Data Sources** | **④ Governance · Data Map** |
 | <img src="docs/screenshots/05_gov_quality.png" width="420"> | <img src="docs/screenshots/06_dev_offline.png" width="420"> |
-| **⑤ 数据治理 · 数据质量评分** | **⑥ 数据开发 · 离线开发** |
+| **⑤ Governance · Data Quality Scoring** | **⑥ Development · Offline Jobs** |
 | <img src="docs/screenshots/07_dag_studio.png" width="420"> | <img src="docs/screenshots/08_asset_catalog.png" width="420"> |
-| **⑦ DAG 工作流编排** | **⑧ 数据资产 · 资产编目** |
+| **⑦ DAG Workflow Studio** | **⑧ Assets · Catalog** |
 | <img src="docs/screenshots/09_sec_mask.png" width="420"> | <img src="docs/screenshots/10_ds_service.png" width="420"> |
-| **⑨ 数据安全 · 数据脱敏** | **⑩ 数据服务 · 服务管理** |
+| **⑨ Security · Data Masking** | **⑩ Data Service · API Management** |
 | <img src="docs/screenshots/11_market_dataset.png" width="420"> | <img src="docs/screenshots/12_market_subscribe.png" width="420"> |
-| **⑪ 数据集市 · 数据集** | **⑫ 数据集市 · 订阅审核** |
+| **⑪ Marketplace · Datasets** | **⑫ Marketplace · Subscribe & Approve** |
 | <img src="docs/screenshots/13_ops_overview.png" width="420"> | <img src="docs/screenshots/14_ops_cluster.png" width="420"> |
-| **⑬ 运维中心 · 数据概览** | **⑭ 运维中心 · 集群管理** |
+| **⑬ Ops · Overview Dashboard** | **⑭ Ops · Cluster Management** |
 
-📖 完整功能说明与操作流程见 [`docs/数据中台-用户手册.pdf`](docs/数据中台-用户手册.pdf)。
+📖 Full features & walkthroughs: [`docs/数据中台-用户手册.pdf`](docs/数据中台-用户手册.pdf) *(user manual, Chinese)*.
 
-## 一、项目简介
+## 1. Overview
 
-kaidata 是一套**面向企业的湖仓一体数据中台**，覆盖数据从"接入"到"消费"的完整生命周期。它不是 Demo 拼装——每一条链路都是真实可跑的：外部数据源经适配器进入 Kafka 总线，落到 StarRocks 实时数仓分层存储，再由治理、开发、资产、安全、服务、集市等域加工、管控并对外发布，最终在前端门户呈现。
+kaidata is an **enterprise lakehouse data middle platform** covering the full data lifecycle — from *ingestion* to *consumption*. It is not a stitched-together demo: every pipeline runs for real. External sources flow through adapters into a Kafka bus, land in the StarRocks real-time warehouse (layered storage), then get refined, governed, secured and published by the governance, development, asset, security, serving and marketplace domains — finally surfacing in the web portal.
 
-- **单机一键部署**：Docker Compose 拉起 MinIO + Kafka + Flink + StarRocks + Hop
-- **全链路真实流转**：离线/实时管道端到端入仓可验证
-- **三员分立 RBAC**：系统 / 安全 / 审计管理员 + 全量操作审计
-- **中英双语 + 双主题**：vue-i18n 国际化，浅色 / 暗色双主题切换
+- **One-click single-node deploy**: Docker Compose brings up MinIO + Kafka + Flink + StarRocks + Hop
+- **Real end-to-end pipelines**: offline and streaming ingestion verified to actually land data
+- **Three-role RBAC**: System / Security / Audit administrators + full operation audit
+- **Bilingual + dual theme**: vue-i18n (zh/en), light (DIFY) / dark (neon) theme switch
 
-## ✨ 为什么选择 kaidata
+## ✨ Why kaidata
 
-很多数据团队的现实是：**接入、治理、开发、服务各用一套工具，数据在系统间断层**。kaidata 把数据从「接入」到「消费」的完整生命周期打通成一条真实可跑的链路：
+The reality for many data teams: **ingestion, governance, development and serving each run on a separate tool, and data falls through the cracks between systems.** kaidata connects the full lifecycle — from *ingestion* to *consumption* — into one pipeline that actually runs end-to-end:
 
-- 🔁 **全链路真实流转，而非 Demo 拼装** —— 24 类数据源 → Kafka 总线 → StarRocks 实时数仓 → 治理 / 开发 / 服务 / 安全 → 门户，每一段都能端到端验证
-- 🏗️ **9 大域 50+ 子模块开箱即用** —— 企业数据中台标准域全覆盖，业务库表接入即可流转
-- 🪶 **单机一键部署** —— `bash start.sh` 拉起大数据栈 + 前后端，个人也能本地跑通湖仓
-- 🎨 **双主题 + 中英双语** —— 浅色 DIFY / 暗色霓虹科技，国际化内置
+- 🔁 **Real end-to-end flow, not a stitched demo** — 24 source types → Kafka bus → StarRocks real-time warehouse → governance / dev / serving / security → portal, every stage verifiable
+- 🏗️ **9 domains · 50+ modules, out of the box** — full standard coverage of an enterprise data middle platform; plug in your business tables and data starts flowing
+- 🪶 **One-click single-node deploy** — `bash start.sh` brings up the whole big-data stack + front/back end, so individuals can run a lakehouse locally
+- 🎨 **Dual theme + bilingual** — light DIFY / dark neon-tech, i18n built in
 
-> **适合谁**：企业数据团队搭建中台底座 · 个人学习湖仓 + 数据治理全流程 · 二次开发做行业垂直中台。
+> **Who it's for**: teams building a data-middle-platform base · individuals learning lakehouse + data governance end-to-end · developers forking an industry-vertical platform.
 >
-> 🌐 **在线演示**：_筹备中_ · 本地一行 `bash start.sh` 即可体验全部功能（账号 `admin / admin123`）。
+> 🌐 **Live demo**: _coming soon_ · run `bash start.sh` locally to try every feature (account `admin / admin123`).
 
-## 二、总体架构
+## 2. Architecture
 
 ```
-外部数据源 / 文件 / 接口 / Kafka
+External sources / files / APIs / Kafka
         │
-        ▼  数据接入（24 类适配器 + 离线全量/增量 + 实时 JDBC→Kafka→StarRocks）
-        ├─▶ StarRocks 实时数仓（MySQL 协议 9030，分层 ODS / DWD / DWS / ADS / DIM）
+        ▼  Data Access (24 adapters + offline full/incremental + streaming JDBC→Kafka→StarRocks)
+        ├─▶ StarRocks real-time warehouse (MySQL protocol :9030, layers ODS / DWD / DWS / ADS / DIM)
         │
-        ▼  数据治理 · 数据开发 · 数据资产 · 数据安全 · 数据服务 · 数据集市
+        ▼  Governance · Development · Asset · Security · Serving · Marketplace
         │
-        ▼  datalake-service（Spring Boot REST API，9 大域）
+        ▼  datalake-service (Spring Boot REST API, 9 domains)
         │
-        ▼  datalake-web（Vue3 门户 + 数据地图 + 数据总览）
+        ▼  datalake-web (Vue3 portal + data map + overview)
 ```
 
-## 三、功能矩阵（9 大域 50+ 子模块）
+## 3. Feature Matrix (9 domains, 50+ modules)
 
-| 域 | 子模块 | 能力要点 |
+| Domain | Modules | Highlights |
 |---|---|---|
-| **数据接入** | 数据源管理 / 文件管理 / 离线接入 / 实时接入 / 数据探查 / 接口管理 | 24 类数据源适配器（含国产库 SPI 占位）；FTP/SFTP/CSV 文件；离线全量+增量、**多目标库写入**；实时 **JDBC→Kafka→StarRocks ROUTINE LOAD** 入仓；探查结构变化感知+自动建模 |
-| **数据治理** | 数据标准 / 数据模型 / 数据仓库 / 数据质量 / 元数据 / 数据标签 / 主数据 | **数据质量 6 维度**（完整/唯一/有效/及时/准确/一致）+ 严重度加权评分（0-100 / A-D）+ **Word 质量报告导出**；标准/模型/分层仓库/标签/主数据全治理 |
-| **数据开发** | 离线开发 / 实时开发 / 脚本开发 / 函数管理 / 任务日志 | SQL(JDBC)/Python/Java/Shell/Scala 脚本执行；任务日志四源聚合 |
-| **数据资产** | 资产编目 / 资产挂载 / 资产审核 / 生命周期 | 资产审批状态机（草稿→待审→通过/驳回）；上/下线、解绑零级联安全 |
-| **运维中心** | 交互式分析 / 数据概览 / 任务中心 / 任务概览 / 资源监控 / 集群管理 / 执行器 / 连接器 | 运维监控看板，集群探活 + 适配器可用性验证 |
-| **数据安全** | 安全标准 / 数据脱敏 / 密钥管理 / 告警 / 黑白名单 / 敏感数据 / 数据权限 | 密钥 CryptoUtil 加密存储；脱敏登记；表级数据权限 |
-| **数据服务** | 服务管理 / 数据开放 | SQL 封装 REST；**资产驱动「数据开放」**：appkey 鉴权 + /openapi 端点 + 内存限次/限流/限时 |
-| **数据集市** | 数据集 / 资源概览 | 消费方门户：浏览已审核资产 → 全文/分类/标签检索 → 订阅 → 审核 → **通过自动建开放授权 appkey** |
-| **系统管理** | 用户 / 组织 / 租户 / 角色 / 菜单 / 日志 | 三员分立 RBAC（SYS/SEC/AUDIT_ADMIN）+ 审计；MyBatis-Plus |
+| **Data Access** | Datasource / File / Offline / Streaming / Profiling / API | 24 datasource adapters (incl. domestic-DB SPI placeholders); FTP/SFTP/CSV; offline full+incremental with **multi-target write**; streaming **JDBC→Kafka→StarRocks ROUTINE LOAD**; profiling with schema-change detection + auto-modeling |
+| **Data Governance** | Standard / Model / Warehouse / Quality / Metadata / Tag / Master Data | **6-dimension quality** (completeness/uniqueness/validity/timeliness/accuracy/consistency) + severity-weighted scoring (0-100 / A-D) + **Word report export**; full governance stack |
+| **Data Development** | Offline / Streaming / Script / Function / Task Log | SQL(JDBC)/Python/Java/Shell/Scala script execution; unified task-log aggregation |
+| **Data Asset** | Catalog / Mount / Approval / Lifecycle | Approval state machine (draft→pending→approved/rejected); safe online/offline/unbind with zero-cascade |
+| **Ops Center** | Interactive Analysis / Overview / Task Center / Task Stats / Resource Monitor / Cluster / Executor / Connector | Ops dashboards, cluster liveness + adapter availability checks |
+| **Data Security** | Security Standard / Masking / Key / Alert / Allow-Deny List / Sensitive Data / Permission | Keys encrypted via CryptoUtil; masking registration; table-level permissions |
+| **Data Serving** | Service / Data Open | Wrap SQL as REST; **asset-driven "Data Open"**: appkey auth + /openapi endpoints + in-memory rate/limit/quota |
+| **Data Marketplace** | Dataset / Resource Overview | Consumer portal: browse approved assets → full-text/category/tag search → subscribe → approve → **auto-grant open appkey on approval** |
+| **System** | User / Org / Tenant / Role / Menu / Log | Three-role RBAC (SYS/SEC/AUDIT_ADMIN) + audit; MyBatis-Plus |
 
-> 另有 **数据地图**（检索 + 类目树 + 三类资产 + 血缘）与 **数据总览** 首页门户。
+> Plus a **Data Map** (search + category tree + 3 asset types + lineage) and a **Data Overview** home portal.
 
-## 四、技术栈
+## 4. Tech Stack
 
-**后端** (`datalake-service`)
-- Spring Boot 3.2.4 · Java 17 · JdbcTemplate 直查（治理/开发/资产/服务/安全/运维/接入/集市域）+ **MyBatis-Plus 3.5.5**（系统管理域）
-- HikariCP 动态数据源 · HMAC-SHA256 无状态令牌鉴权 · 图形验证码 · Apache POI 5.2.5（Word 报告）· Spring Scheduling
+**Backend** (`datalake-service`)
+- Spring Boot 3.2.4 · Java 17 · JdbcTemplate direct queries (governance/dev/asset/serving/security/ops/access/marketplace) + **MyBatis-Plus 3.5.5** (system domain)
+- HikariCP dynamic datasources · HMAC-SHA256 stateless token auth · captcha · Apache POI 5.2.5 (Word reports) · Spring Scheduling
 
-**前端** (`datalake-web`)
-- Vue 3.4 + Element Plus 2.6 + ECharts 5.5（vue-echarts）+ vue-i18n 9 + vue-router 4 + axios + TypeScript + Vite 5
-- 浅色(DIFY 风格) / 暗色(霓虹科技) 双主题
+**Frontend** (`datalake-web`)
+- Vue 3.4 + Element Plus 2.6 + ECharts 5.5 (vue-echarts) + vue-i18n 9 + vue-router 4 + axios + TypeScript + Vite 5
+- Light (DIFY) / dark (neon) dual theme
 
-**大数据组件** (`docker/`)
-- StarRocks 3.3.10（实时数仓，MySQL 协议）/ Kafka 3.7.0（KRaft）/ Flink 1.18 / MinIO / Apache Hop 2.10
+**Big Data** (`docker/`)
+- StarRocks 3.3.10 (real-time warehouse, MySQL protocol) / Kafka 3.7.0 (KRaft) / Flink 1.18 / MinIO / Apache Hop 2.10
 
-**部署**：Docker Compose 单机一键
+**Deploy**: Docker Compose, single-node one-click
 
-## 五、快速开始
+## 5. Quick Start
 
 ```bash
-# 方式一：一键启动（推荐）—— 拉起大数据栈 + 后端(8090) + 前端(5173)，幂等
+# Option A: one-click (recommended) — brings up the big-data stack + backend(:8090) + frontend(:5173), idempotent
 bash start.sh
 
-# 方式二：分步手动
-cd docker && bash bring-up.sh                 # ① 大数据组件 + 建数仓分层库
-cd ../datalake-service && mvn -DskipTests package && java -jar target/datalake-service.jar  # ② 后端
-cd ../datalake-web && npm install && npm run dev                                            # ③ 前端
+# Option B: step by step
+cd docker && bash bring-up.sh                 # ① big-data components + warehouse layers
+cd ../datalake-service && mvn -DskipTests package && java -jar target/datalake-service.jar  # ② backend
+cd ../datalake-web && npm install && npm run dev                                            # ③ frontend
 ```
 
-打开 **http://localhost:5173** → 登录 **admin / admin123**
+Open **http://localhost:5173** → log in with **admin / admin123**
 
-> 停服：`bash stop.sh`（`bash stop.sh --all` 连大数据栈一起停）
+> Stop: `bash stop.sh` (`bash stop.sh --all` also stops the big-data stack)
 
-## 六、端口速查
+## 6. Ports
 
-| 服务 | 端口 |
+| Service | Port |
 |---|---|
-| 前端 (Vite) | 5173 |
-| 服务层 API | 8090 |
-| StarRocks FE（MySQL 协议 / Web） | 9030 / 8030 |
-| Kafka（宿主机 / 容器内） | 9094 / 9092 |
+| Frontend (Vite) | 5173 |
+| Backend API | 8090 |
+| StarRocks FE (MySQL protocol / Web) | 9030 / 8030 |
+| Kafka (host / internal) | 9094 / 9092 |
 | Flink Web | 8081 |
-| MinIO 控制台 | 9001 |
+| MinIO Console | 9001 |
 | Hop Server | 8082 |
 
-## 七、目录结构
+## 7. Project Structure
 
 ```
 kaidata/
-├── datalake-service/   # 后端：Spring Boot REST（9 大域）
-├── datalake-web/       # 前端：Vue3 + Element Plus 门户
-├── docker/             # 大数据组件编排（compose + bring-up.sh + DDL）
-├── docs/               # 文档
-├── start.sh / stop.sh  # 一键启停
+├── datalake-service/   # Backend: Spring Boot REST (9 domains)
+├── datalake-web/       # Frontend: Vue3 + Element Plus portal
+├── docker/             # Big-data orchestration (compose + bring-up.sh + DDL)
+├── docs/               # Documentation
+├── start.sh / stop.sh  # One-click start / stop
 └── logo.svg
 ```
 
-## 八、亮点功能
+## 8. Highlights
 
-- 🔌 **24 类数据源适配器**：开源驱动实测（PG/ClickHouse/SQLServer/Oracle/TDengine/MySQL…）+ 国产库（达梦/人大金仓/南大通用）SPI 占位框架
-- 🔄 **真实实时入仓**：JDBC 轮询 → Kafka → StarRocks ROUTINE LOAD，OFFSET_BEGINNING 逐分区消费根治"入仓 0 行"，主键去重
-- 📊 **数据质量评分体系**：6 维度 + 严重度加权 → 综合质量分 + 等级（BLOCKER 失败封顶 D），一键导出 **Word(.docx) 质量报告** + 页内雷达图仪表盘
-- 🔍 **数据探查**：结构快照 + 版本比对 + 首次自动建模到目标分层
-- 🌐 **数据开放**：资产驱动 appkey 鉴权 + /openapi 端点 + 内存级限流限次限时
-- 🛒 **数据集市订阅**：浏览 → 检索 → 订阅 → 审核 → 通过自动建开放授权
-- 🔐 **三员分立**：SYS / SEC / AUDIT 管理员 RBAC + 全量操作审计
-- 🌏 **中英双语 + 双主题**：vue-i18n 国际化，浅色 / 暗色统一
+- 🔌 **24 datasource adapters**: real open-source drivers (PG/ClickHouse/SQLServer/Oracle/TDengine/MySQL…) + domestic-DB (Dameng/Kingbase/GBase) SPI placeholder framework
+- 🔄 **Real streaming ingestion**: JDBC polling → Kafka → StarRocks ROUTINE LOAD; OFFSET_BEGINNING per-partition consumption fixes "zero rows landed"; primary-key dedup
+- 📊 **Quality scoring system**: 6 dimensions + severity weighting → overall score + grade (BLOCKER failure caps at D); one-click **Word(.docx) report export** + in-page radar/dashboard
+- 🔍 **Data profiling**: schema snapshots + version diff + first-run auto-modeling into target layer
+- 🌐 **Data Open**: asset-driven appkey auth + /openapi endpoints + in-memory rate/limit/quota
+- 🛒 **Marketplace subscription**: browse → search → subscribe → approve → auto-grant open appkey
+- 🔐 **Three-role separation**: SYS / SEC / AUDIT administrator RBAC + full operation audit
+- 🌏 **Bilingual + dual theme**: vue-i18n (zh/en), unified light / dark
 
-## 九、默认账户
+## 9. Default Account
 
-| 用户 | 密码 | 角色 |
+| User | Password | Role |
 |---|---|---|
-| admin | admin123 | 超级管理员（SYS + SEC + AUDIT） |
+| admin | admin123 | Super administrator (SYS + SEC + AUDIT) |
 
-> ⚠️ 生产部署请务必修改默认密码并启用 HTTPS。
+> ⚠️ Change the default password and enable HTTPS for production deployments.
 
 ## License
 

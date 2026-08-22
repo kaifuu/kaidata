@@ -28,6 +28,7 @@
       </el-menu>
       <div class="aside-foot">
         <div class="led" /><span>{{ $t('layout.lakehouseRunning') }}</span>
+        <a class="kaifuu" href="https://www.kainfer.cn/" target="_blank" rel="noopener">{{ $t('app.byKaifuu') }}</a>
       </div>
     </el-aside>
 
@@ -175,6 +176,8 @@ html.dark .aside :deep(.el-menu-item.is-active .el-icon) { filter: drop-shadow(0
 
 /* 侧栏底栏 */
 .aside-foot { padding: 12px 18px; color: var(--tech-text-muted); font-size: 12px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--tech-panel-border); }
+.aside-foot .kaifuu { margin-left: auto; color: var(--tech-primary); text-decoration: none; letter-spacing: 1px; opacity: .85; transition: opacity .2s ease, text-shadow .2s ease; }
+.aside-foot .kaifuu:hover { opacity: 1; text-shadow: var(--tech-glow); }
 .led { width: 8px; height: 8px; border-radius: 50%; background: var(--tech-success); box-shadow: 0 0 8px var(--tech-success); animation: pulse 1.6s infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
 

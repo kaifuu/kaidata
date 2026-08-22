@@ -35,3 +35,6 @@ docker/hop-output/
 
 # 容器构建产物（全栈镜像 tar 输出，单文件可达数百 MB）
 data/
+
+# 发版产物（release.sh 输出）
+release-out/

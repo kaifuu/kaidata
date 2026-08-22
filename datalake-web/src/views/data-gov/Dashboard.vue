@@ -29,6 +29,39 @@
       <div class="panel"><div class="ct"><el-icon><Box /></el-icon> 资产状态分布<span class="ct-sub">ASSETS</span></div><v-chart :option="assetOption" :theme="chartTheme" autoresize class="ch" /></div>
     </div>
 
+    <div class="chart-row trend-row" v-if="s">
+      <div class="panel">
+        <div class="ct"><el-icon><TrendCharts /></el-icon> 质量分趋势<span class="ct-sub">LAST 30 DAYS</span></div>
+        <v-chart v-if="trend.length" :option="trendOption" :theme="chartTheme" autoresize class="ch" />
+        <el-empty v-else description="近 30 天无质量报告，先到「数据质量」执行检测任务" :image-size="60" />
+      </div>
+      <div class="panel todo-panel">
+        <div class="ct"><el-icon><Bell /></el-icon> 治理待办<span class="ct-sub">TODO</span></div>
+        <el-tabs v-model="todoTab" class="todo-tabs">
+          <el-tab-pane :label="`质量工单 (${todo.issues?.length || 0})`" name="issue">
+            <div v-if="!todo.issues?.length" class="todo-empty">无未结质量工单 ✓</div>
+            <div v-else class="todo-list">
+              <div v-for="i in todo.issues" :key="i.id" class="todo-item">
+                <el-tag size="small" :type="sevType(i.severity)">{{ sevText(i.severity) }}</el-tag>
+                <span class="todo-main"><code>{{ i.table_name }}</code> · {{ dimText(i.dimension) }}</span>
+                <span class="todo-meta muted">{{ i.violate_count }} 条违规 · {{ i.status === 'OPEN' ? '待处理' : '已派单 ' + (i.assignee || '-') }}</span>
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane :label="`安全告警 (${todo.alerts?.length || 0})`" name="alert">
+            <div v-if="!todo.alerts?.length" class="todo-empty">无未处理告警 ✓</div>
+            <div v-else class="todo-list">
+              <div v-for="a in todo.alerts" :key="a.id" class="todo-item">
+                <el-tag size="small" :type="a.level === 'CRITICAL' ? 'danger' : a.level === 'MAJOR' ? 'warning' : 'info'">{{ a.level }}</el-tag>
+                <span class="todo-main alert-msg">{{ a.message }}</span>
+                <span class="todo-meta muted">{{ (a.created_time || '').replace('T', ' ').slice(0, 19) }}</span>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </div>
+
     <div class="panel detail" v-if="s">
       <div class="ct"><el-icon><DataLine /></el-icon> 明细指标<span class="ct-sub">DETAIL</span></div>
       <div class="mini-kpis">
@@ -45,7 +78,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
-import { DataBoard, CircleCheck, Connection, Box, Coin, EditPen, Share, DataLine } from '@element-plus/icons-vue'
+import { DataBoard, CircleCheck, Connection, Box, Coin, EditPen, Share, DataLine, TrendCharts, Bell } from '@element-plus/icons-vue'
 import { VChart } from '@/echarts'
 import { api } from '@/api'
 import { theme } from '@/theme'
@@ -98,7 +131,34 @@ const assetOption = computed(() => {
 })
 
 async function load() { try { s.value = await api.govDashboardStats() } catch { /* */ } }
-onMounted(() => { load() })
+
+// P2：质量趋势线 + 治理待办
+const trend = ref<any[]>([])
+const todo = ref<any>({ issues: [], alerts: [] })
+const todoTab = ref('issue')
+function sevText(s: string) { return ({ BLOCKER: '致命', CRITICAL: '严重', MAJOR: '主要', MINOR: '次要' } as any)[s] || s }
+function sevType(s: string) { return s === 'BLOCKER' || s === 'CRITICAL' ? 'danger' : s === 'MAJOR' ? 'warning' : 'info' }
+function dimText(d: string) { return ({ COMPLETENESS: '完整性', UNIQUENESS: '唯一性', TIMELINESS: '及时性', VALIDITY: '规范性', ACCURACY: '准确性', CONSISTENCY: '一致性' } as any)[d] || d }
+const trendOption = computed(() => {
+  const c = C.value
+  return {
+    grid: { left: 40, right: 16, top: 20, bottom: 24 },
+    xAxis: { type: 'category', data: trend.value.map((t: any) => String(t.day).slice(5)), axisLine: { lineStyle: { color: c.muted } }, axisLabel: { color: c.muted, fontSize: 11 } },
+    yAxis: { type: 'value', min: 0, max: 100, splitLine: { lineStyle: { color: c.track } }, axisLabel: { color: c.muted, fontSize: 11 } },
+    tooltip: { trigger: 'axis', valueFormatter: (v: any) => v + ' 分' },
+    series: [{
+      type: 'line', data: trend.value.map((t: any) => Number(t.score)), smooth: true, symbolSize: 6,
+      lineStyle: { width: 2.5, color: c.palette[0] }, itemStyle: { color: c.palette[0] },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+        { offset: 0, color: c.palette[0] + '55' }, { offset: 1, color: c.palette[0] + '05' }] } },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: c.muted, type: 'dashed' }, label: { color: c.muted, formatter: '及格 60' }, data: [{ yAxis: 60 }] }
+    }]
+  }
+})
+async function loadTrend() { try { trend.value = await api.govDashboardQualityTrend() } catch { trend.value = [] } }
+async function loadTodo() { try { todo.value = await api.govDashboardTodo() } catch { todo.value = { issues: [], alerts: [] } } }
+
+onMounted(() => { load(); loadTrend(); loadTodo() })
 </script>
 <style scoped>
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
@@ -122,6 +182,18 @@ onMounted(() => { load() })
 .ct .el-icon { color: var(--tech-primary); }
 .ct-sub { margin-left: auto; font-size: 11px; letter-spacing: 2px; color: var(--tech-text-muted); opacity: .55; font-weight: 400; }
 .ch { width: 100%; height: 200px; }
+.trend-row { grid-template-columns: 3fr 2fr; }
+.todo-panel :deep(.el-tabs__header) { margin-bottom: 6px; }
+.todo-panel :deep(.el-tabs__item) { font-size: 12px; }
+.todo-list { max-height: 200px; overflow-y: auto; }
+.todo-item { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 1px dashed var(--tech-panel-border); font-size: 12px; }
+.todo-item:last-child { border-bottom: none; }
+.todo-main { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-main code { color: var(--tech-primary); }
+.alert-msg { font-size: 11px; color: var(--tech-text-muted); }
+.todo-meta { flex-shrink: 0; font-size: 11px; }
+.todo-empty { color: var(--tech-text-muted); font-size: 13px; padding: 24px 0; text-align: center; }
+.muted { color: var(--tech-text-muted); }
 .mini-kpis { display: flex; gap: 28px; flex-wrap: wrap; padding: 6px 2px; color: var(--tech-text-muted); font-size: 13px; }
 .mini-kpis b { color: var(--tech-text); font-size: 16px; font-weight: 600; margin-left: 4px; }
 </style>

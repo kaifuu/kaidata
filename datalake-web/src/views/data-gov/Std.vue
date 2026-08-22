@@ -14,7 +14,10 @@
           </el-select>
           <el-input v-model="f.keyword" placeholder="编码/名称/英文名" clearable size="small" style="width:200px" @keyup.enter="loadEl" />
           <el-button size="small" type="primary" @click="loadEl">搜索</el-button>
-          <el-button size="small" type="primary" @click="openEl()" style="margin-left:auto">
+          <el-button size="small" @click="exportExcel" style="margin-left:auto">导出 Excel</el-button>
+          <el-button size="small" @click="importClick">导入 Excel</el-button>
+          <input ref="importInput" type="file" accept=".xlsx,.xls" style="display:none" @change="doImport" />
+          <el-button size="small" type="primary" @click="openEl()">
             <el-icon><Plus /></el-icon> 新增数据元
           </el-button>
         </div>
@@ -35,8 +38,8 @@
           <el-table-column label="引用" width="70">
             <template #default="{ row }"><el-link v-if="row.ref_cnt > 0" type="primary" @click="openElRefs(row)">{{ row.ref_cnt }}</el-link><span v-else class="muted">0</span></template>
           </el-table-column>
-          <el-table-column label="操作" width="190">
-            <template #default="{ row }"><el-button link size="small" type="primary" @click="openEl(row)">编辑</el-button><el-button link size="small" type="success" @click="openLand(row)">落标</el-button><el-button link size="small" type="danger" @click="delEl(row)">删除</el-button></template>
+          <el-table-column label="操作" width="230">
+            <template #default="{ row }"><el-button link size="small" type="primary" @click="openEl(row)">编辑</el-button><el-button link size="small" type="success" @click="openLand(row)">落标</el-button><el-button link size="small" @click="openVersions(row)">版本</el-button><el-button link size="small" type="danger" @click="delEl(row)">删除</el-button></template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
@@ -86,11 +89,30 @@
           <el-table :data="landing?.unlanded || []" size="small" border max-height="200">
             <el-table-column prop="field" label="字段" min-width="120" /><el-table-column prop="data_type" label="类型" width="110" /><el-table-column prop="table_name" label="模型表" min-width="120" /><el-table-column prop="model_name" label="模型" min-width="120" />
           </el-table>
-          <div style="margin:12px 0 6px"><span class="muted">合规扫描（字段类型 vs 数据元类型基名）</span><el-button link size="small" type="primary" @click="loadCompliance" style="margin-left:8px">开始扫描</el-button></div>
-          <div v-if="compliance" class="muted">共 {{ compliance.total }} 个已落标字段，类型一致 {{ compliance.pass }}，不一致 {{ compliance.fail }}</div>
-          <el-table :data="compliance?.failList || []" size="small" border max-height="200" style="margin-top:6px">
-            <el-table-column prop="field" label="字段" min-width="120" /><el-table-column prop="field_type" label="字段类型" width="110" /><el-table-column prop="element" label="数据元" min-width="120" /><el-table-column prop="element_type" label="数据元类型" width="110" /><el-table-column prop="table_name" label="模型表" min-width="120" />
-          </el-table>
+          <div style="margin:12px 0 6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+            <span class="muted">合规扫描（类型/长度静态检查 + 真实数据活体检查）</span>
+            <el-checkbox v-model="complianceLive" size="small">活体扫描（按落标连接查真实数据）</el-checkbox>
+            <el-button link size="small" type="primary" @click="loadCompliance">开始扫描</el-button>
+            <el-button link size="small" type="success" @click="openRecommend" style="margin-left:auto">落标推荐</el-button>
+          </div>
+          <template v-if="compliance">
+            <div class="muted">
+              静态：共 {{ compliance.total }} 个已落标字段，通过 {{ compliance.pass }}，
+              <span :style="compliance.fail ? 'color:#e54d4d' : ''">不一致 {{ compliance.fail }}</span>
+              <template v-if="compliance.live"> · 活体：检查 {{ compliance.liveChecked }} 项，
+                <span :style="compliance.liveFail ? 'color:#e54d4d' : ''">违规 {{ compliance.liveFail }}</span>
+              </template>
+            </div>
+            <el-table :data="compliance.failList || []" size="small" border max-height="200" style="margin-top:6px">
+              <el-table-column prop="field" label="字段" min-width="110" /><el-table-column prop="field_type" label="字段类型" width="100" /><el-table-column prop="element" label="数据元" min-width="110" /><el-table-column prop="element_type" label="数据元类型" width="100" /><el-table-column prop="table_name" label="模型表" min-width="110" /><el-table-column label="检查项" width="80"><template #default="{ row }"><el-tag size="small" type="warning">{{ row.check_type }}</el-tag></template></el-table-column><el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+            </el-table>
+            <template v-if="compliance.live && (compliance.liveFailList || []).length">
+              <div class="muted" style="margin:10px 0 4px">活体扫描违规（真实数据不符合标准）</div>
+              <el-table :data="compliance.liveFailList" size="small" border max-height="200">
+                <el-table-column prop="table_name" label="表" min-width="130" /><el-table-column prop="column_name" label="列" width="110" /><el-table-column prop="element" label="数据元" min-width="110" /><el-table-column label="检查项" width="80"><template #default="{ row }"><el-tag size="small" type="danger">{{ row.check_type }}</el-tag></template></el-table-column><el-table-column prop="violate" label="违规行数" width="90" /><el-table-column prop="reason" label="说明" min-width="180" show-overflow-tooltip />
+              </el-table>
+            </template>
+          </template>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -260,6 +282,62 @@
         <el-button @click="landDlg = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 数据元版本历史 + 对比 -->
+    <el-dialog v-model="verDlg" :title="'版本历史 - ' + (verEl?.name || '')" width="720px">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+        <el-select v-model="verA" size="small" placeholder="版本 A" style="width:140px"><el-option v-for="v in versions" :key="v.version_n" :label="'v' + v.version_n" :value="v.version_n" /></el-select>
+        <span class="muted">对比</span>
+        <el-select v-model="verB" size="small" placeholder="版本 B" style="width:140px"><el-option v-for="v in versions" :key="v.version_n" :label="'v' + v.version_n" :value="v.version_n" /></el-select>
+        <el-button size="small" type="primary" :disabled="!verA || !verB || verA === verB" @click="compareVersions">对比</el-button>
+        <span class="muted" style="margin-left:auto">编辑数据元自动生成"修改前快照"</span>
+      </div>
+      <el-table :data="versions" size="small" border max-height="180">
+        <el-table-column prop="version_n" label="版本" width="70"><template #default="{ row }">v{{ row.version_n }}</template></el-table-column>
+        <el-table-column prop="change_detail" label="说明" min-width="120" />
+        <el-table-column prop="create_by" label="操作人" width="90" />
+        <el-table-column prop="create_time" label="时间" width="160" />
+      </el-table>
+      <template v-if="verDiff">
+        <div class="muted" style="margin:10px 0 4px">v{{ verDiff.v1 }} → v{{ verDiff.v2 }} 差异（{{ verDiff.changed.length }} 项）</div>
+        <el-table :data="verDiff.changed" size="small" border max-height="200">
+          <el-table-column prop="field" label="字段" width="130" />
+          <el-table-column prop="old" label="旧值" min-width="140"><template #default="{ row }"><span class="muted">{{ row.old || '(空)' }}</span></template></el-table-column>
+          <el-table-column prop="new" label="新值" min-width="140" />
+        </el-table>
+      </template>
+    </el-dialog>
+
+    <!-- 落标推荐 -->
+    <el-dialog v-model="recDlg" title="落标推荐（列名 ↔ 数据元相似度）" width="860px">
+      <div style="display:flex; gap:8px; margin-bottom:10px">
+        <el-select v-model="recMetaId" filterable placeholder="选择元数据表（先在元数据采集登记）" size="small" style="width:340px" @change="loadRecommend">
+          <el-option v-for="m in metaTables" :key="m.id" :label="(m.schema_name ? m.schema_name + '.' : '') + m.table_name" :value="m.id" />
+        </el-select>
+        <el-button size="small" type="primary" :disabled="!recMetaId" :loading="recLoading" @click="loadRecommend">分析</el-button>
+      </div>
+      <template v-if="recData">
+        <div class="muted" style="margin-bottom:6px">{{ recData.tableName }} · 相似度 ≥60 才推荐，确认后一键落标</div>
+        <el-table :data="recData.columns" size="small" border max-height="420">
+          <el-table-column prop="column" label="列" width="130" />
+          <el-table-column prop="type" label="类型" width="100" />
+          <el-table-column prop="comment" label="注释" width="130" show-overflow-tooltip />
+          <el-table-column label="推荐数据元（Top3）" min-width="420">
+            <template #default="{ row }">
+              <template v-if="row.suggestions?.length">
+                <div v-for="s in row.suggestions" :key="s.id" class="rec-item">
+                  <el-tag size="small" :type="s.score >= 90 ? 'success' : 'info'">{{ s.score }}</el-tag>
+                  <span>{{ s.name }}（{{ s.code }} · {{ s.data_type }}）</span>
+                  <el-button link size="small" type="primary" @click="landFromRec(s, row)">落标</el-button>
+                </div>
+              </template>
+              <span v-else class="muted">无匹配</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+      <template #footer><el-button @click="recDlg = false">关闭</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -423,15 +501,73 @@ async function delLanding(row: any) {
 
 // ===== 落标概况 =====
 const theme = 'tech-dark'
-const landing = ref<any>(null); const landingLoading = ref(false); const compliance = ref<any>(null)
+const landing = ref<any>(null); const landingLoading = ref(false); const compliance = ref<any>(null); const complianceLive = ref(false)
 async function loadLanding() { landingLoading.value = true; try { landing.value = await api.govStdLandingStats() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { landingLoading.value = false } }
-async function loadCompliance() { try { compliance.value = await api.govStdComplianceScan() } catch (e: any) { ElMessage.error(errMsg(e)) } }
+async function loadCompliance() { try { compliance.value = await api.govStdComplianceScan(complianceLive.value) } catch (e: any) { ElMessage.error(errMsg(e)) } }
 const rateOption = computed(() => {
   const v = landing.value?.rate || 0
   return { title: { text: v + '%', left: 'center', top: '34%', textStyle: { fontSize: 20, color: '#e6ecff' } },
     series: [{ type: 'pie', radius: ['60%', '78%'], silent: true, label: { show: false }, data: [{ value: v, itemStyle: { color: '#2ee6a6' } }, { value: 100 - v, itemStyle: { color: '#26314f' } }] }] }
 })
 watch(tab, (t) => { if (t === 'landing' && !landing.value) loadLanding() })
+
+// ===== P1：Excel 导入导出 =====
+const importInput = ref<HTMLInputElement | null>(null)
+async function exportExcel() {
+  try {
+    const blob: Blob = await api.govElementExcel()
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = `数据元_${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+    ElMessage.success('Excel 已下载')
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+function importClick() { importInput.value?.click() }
+async function doImport(ev: Event) {
+  const file = (ev.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  try {
+    const r: any = await api.govElementImport(file)
+    ElMessage.success(`导入完成：新增 ${r.inserted ?? 0}，更新 ${r.updated ?? 0}，跳过 ${r.skipped ?? 0}`)
+    await loadEl(); await loadCs()
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+  (ev.target as HTMLInputElement).value = ''
+}
+
+// ===== P1：版本快照 =====
+const verDlg = ref(false); const verEl = ref<any>(null); const versions = ref<any[]>([])
+const verA = ref<number | null>(null); const verB = ref<number | null>(null); const verDiff = ref<any>(null)
+async function openVersions(row: any) {
+  verEl.value = row; verDlg.value = true; verDiff.value = null; verA.value = null; verB.value = null
+  try { versions.value = await api.govElementVersions(row.id) } catch { versions.value = [] }
+  if (versions.value.length >= 2) { verA.value = versions.value[versions.value.length - 1].version_n; verB.value = versions.value[0].version_n }
+}
+async function compareVersions() {
+  if (!verEl.value || !verA.value || !verB.value) return
+  try { verDiff.value = await api.govElementVersionCompare(verEl.value.id, verA.value, verB.value) }
+  catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+
+// ===== P1：落标推荐 =====
+const recDlg = ref(false); const recMetaId = ref<number | null>(null); const recLoading = ref(false)
+const metaTables = ref<any[]>([]); const recData = ref<any>(null)
+async function openRecommend() {
+  recDlg.value = true
+  if (!metaTables.value.length) { try { metaTables.value = await api.govMetaList({}) } catch { metaTables.value = [] } }
+}
+async function loadRecommend() {
+  if (!recMetaId.value) return
+  recLoading.value = true
+  try { recData.value = await api.govElementRecommend(recMetaId.value) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { recLoading.value = false }
+}
+async function landFromRec(s: any, col: any) {
+  if (!recData.value?.dsId) return ElMessage.warning('元数据缺数据源信息')
+  const tableName = recData.value.tableName
+  try {
+    await api.govStdLand({ elementId: s.id, dsId: recData.value.dsId, tableName, columnName: col.column })
+    ElMessage.success(`已落标：${col.column} → ${s.name}`)
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
 
 onMounted(() => { loadEl(); loadCs() })
 </script>
@@ -440,4 +576,5 @@ onMounted(() => { loadEl(); loadCs() })
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .muted { color: var(--tech-text-muted); font-size: 12px; }
 .filter-bar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+.rec-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; }
 </style>

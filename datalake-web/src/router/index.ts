@@ -55,6 +55,7 @@ const routes = [
       { path: 'ops/executor', name: 'OpsExecutor', component: () => import('@/views/ops/Executor.vue'), meta: { title: '执行器管理', icon: 'Setting' } },
       { path: 'ops/connector', name: 'OpsConnector', component: () => import('@/views/ops/Connector.vue'), meta: { title: '连接器管理', icon: 'Connection' } },
       { path: 'ops/message', name: 'OpsMessage', component: () => import('@/views/ops/Message.vue'), meta: { title: '消息管理', icon: 'Bell' } },
+      { path: 'ops/ticket', name: 'OpsTicket', component: () => import('@/views/ops/Ticket.vue'), meta: { title: '工单中心', icon: 'Tickets' } },
       // 数据安全
       { path: 'security/std', name: 'SecStd', component: () => import('@/views/security/Std.vue'), meta: { title: '安全标准', icon: 'Medal' } },
       { path: 'security/mask', name: 'SecMask', component: () => import('@/views/security/Mask.vue'), meta: { title: '数据脱敏', icon: 'Hide' } },

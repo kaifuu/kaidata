@@ -1,9 +1,10 @@
 package com.pharma.service.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
-import com.pharma.service.access.adapter.DataSourceDescriptor;
-import com.pharma.service.access.adapter.DataSourceLoader;
+import com.pharma.service.access.quality.QualityExecutor;
+import com.pharma.service.access.quality.QualityScheduler;
+import com.pharma.service.access.util.StarRocksDdlBuilder;
+import com.pharma.service.security.AuthContext;
 import com.pharma.service.security.Authz;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -17,13 +18,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import javax.sql.DataSource;
 import java.io.ByteArrayOutputStream;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Timestamp;
 import java.net.URLEncoder;
+import java.sql.Timestamp;
 import java.util.*;
 
 /**
@@ -31,6 +28,8 @@ import java.util.*;
  * <p>标准 6 维度：完整性 COMPLETENESS / 唯一性 UNIQUENESS / 有效性 VALIDITY /
  * 及时性 TIMELINESS / 准确性 ACCURACY / 一致性 CONSISTENCY。
  * <p>历史维度值（中文/旧英文）经 {@link #normalizeDim} 归一到标准 code，修「维度中英文不一致导致假性 PASS」的 bug。
+ * <p>P0 升级：规则 ident 校验（表/列防注入）+ sample_rows 采样 + /rule/dry-run 试运行 +
+ * 问题工单闭环（/issue/list·assign·resolve·sample-csv）。
  */
 @RestController
 @RequestMapping("/api/data-gov/quality")
@@ -38,10 +37,8 @@ import java.util.*;
 public class DataQualityController {
 
     @Autowired private JdbcTemplate jdbc;
-    @Autowired private DataSourceLoader loader;
-    @Autowired private DataSourceAdapterRegistry registry;
-    @Autowired private com.pharma.service.access.quality.QualityExecutor qualityExecutor;
-    @Autowired private com.pharma.service.access.quality.QualityScheduler qualityScheduler;
+    @Autowired private QualityExecutor qualityExecutor;
+    @Autowired private QualityScheduler qualityScheduler;
     private final ObjectMapper json = new ObjectMapper();
 
     /** 维度 code → 中文 label（顺序即下拉顺序）。 */
@@ -68,7 +65,7 @@ public class DataQualityController {
     @GetMapping("/rule")
     public List<Map<String, Object>> listRule(@RequestParam(required = false) String dimension) {
         Authz.require(Authz.SYS_ADMIN);
-        String sql = "SELECT id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, create_time FROM meta.gov_quality_rule";
+        String sql = "SELECT id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, sample_rows, create_time FROM meta.gov_quality_rule";
         if (dimension == null || dimension.isEmpty())
             return jdbc.queryForList(sql + " ORDER BY id");
         return jdbc.queryForList(sql + " WHERE dimension=? ORDER BY id", dimension);
@@ -76,21 +73,25 @@ public class DataQualityController {
     @PostMapping("/rule")
     public Map<String, Object> createRule(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
+        validateIdents(str(b.get("table_name")), str(b.get("column_name")));
         long id = System.currentTimeMillis();
-        jdbc.update("INSERT INTO meta.gov_quality_rule(id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, create_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.gov_quality_rule(id, name, dimension, ds_id, table_name, column_name, expression, threshold, severity, description, status, sample_rows, create_time) " +
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), normalizeDim(str(b.get("dimension"))), lng(b.get("ds_id")), str(b.get("table_name")),
                 str(b.get("column_name")), str(b.get("expression")), dbl(b.get("threshold")),
-                strOrDefault(b.get("severity"), "MAJOR"), str(b.get("description")), strOrDefault(b.get("status"), "ENABLED"), new Timestamp(id));
+                strOrDefault(b.get("severity"), "MAJOR"), str(b.get("description")), strOrDefault(b.get("status"), "ENABLED"),
+                lng(b.get("sample_rows")), new Timestamp(id));
         return Map.of("success", true, "id", id);
     }
     @PutMapping("/rule")
     public Map<String, Object> updateRule(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
-        jdbc.update("UPDATE meta.gov_quality_rule SET name=?, dimension=?, ds_id=?, table_name=?, column_name=?, expression=?, threshold=?, severity=?, description=?, status=? WHERE id=?",
+        validateIdents(str(b.get("table_name")), str(b.get("column_name")));
+        jdbc.update("UPDATE meta.gov_quality_rule SET name=?, dimension=?, ds_id=?, table_name=?, column_name=?, expression=?, threshold=?, severity=?, description=?, status=?, sample_rows=? WHERE id=?",
                 str(b.get("name")), normalizeDim(str(b.get("dimension"))), lng(b.get("ds_id")), str(b.get("table_name")),
                 str(b.get("column_name")), str(b.get("expression")), dbl(b.get("threshold")),
-                strOrDefault(b.get("severity"), "MAJOR"), str(b.get("description")), strOrDefault(b.get("status"), "ENABLED"), lng(b.get("id")));
+                strOrDefault(b.get("severity"), "MAJOR"), str(b.get("description")), strOrDefault(b.get("status"), "ENABLED"),
+                lng(b.get("sample_rows")), lng(b.get("id")));
         return Map.of("success", true);
     }
     @DeleteMapping("/rule")
@@ -98,6 +99,214 @@ public class DataQualityController {
         Authz.require(Authz.SYS_ADMIN);
         jdbc.update("DELETE FROM meta.gov_quality_rule WHERE id=?", id);
         return Map.of("success", true);
+    }
+
+    /** 试运行：按请求体规则（不必先保存）执行一次，返回指标 + 违规行样例；不落结果不动工单。 */
+    @PostMapping("/rule/dry-run")
+    public Map<String, Object> dryRun(@RequestBody Map<String, Object> b) throws Exception {
+        Authz.require(Authz.SYS_ADMIN);
+        validateIdents(str(b.get("table_name")), str(b.get("column_name")));
+        return qualityExecutor.dryRun(b);
+    }
+
+    /** 表名/列名 ident 校验（防注入；与落标通道同一套规则）。表名按 '.' 分段至多两段。 */
+    private static void validateIdents(String table, String col) {
+        if (table == null || table.isEmpty()) throw new IllegalArgumentException("table_name 不能为空");
+        String[] segs = table.split("\\.", -1);
+        if (segs.length > 2) throw new IllegalArgumentException("非法表名: " + table);
+        for (String s : segs) StarRocksDdlBuilder.ident(s);
+        if (col != null && !col.isEmpty()) StarRocksDdlBuilder.ident(col);
+    }
+
+    // ===== 问题工单（派单闭环：OPEN→ASSIGNED→PROCESSING→RESOLVED→CLOSED，可驳回/重开，全程流转日志） =====
+
+    /** 工单列表：status 空=全部；keyword 模糊匹配 表/规则/处理人；overdue=1 只看超期（未结且 deadline 已过）。 */
+    @GetMapping("/issue/list")
+    public List<Map<String, Object>> issueList(@RequestParam(required = false) String status,
+                                               @RequestParam(required = false) Long taskId,
+                                               @RequestParam(required = false) String severity,
+                                               @RequestParam(required = false) String keyword,
+                                               @RequestParam(required = false, defaultValue = "0") int overdue) {
+        Authz.require(Authz.SYS_ADMIN);
+        StringBuilder sql = new StringBuilder(
+                "SELECT i.id, i.task_id, i.rule_id, i.table_name, i.dimension, i.severity, i.status, i.assignee, i.deadline, " +
+                "i.violate_count, i.sample_json, i.create_time, i.resolve_time, i.resolve_comment, " +
+                "(CASE WHEN i.deadline IS NOT NULL AND i.deadline < NOW() AND i.status IN ('OPEN','ASSIGNED','PROCESSING') THEN 1 ELSE 0 END) AS overdue, " +
+                "r.name AS rule_name, r.expression, t.name AS task_name " +
+                "FROM meta.gov_quality_issue i " +
+                "LEFT JOIN meta.gov_quality_rule r ON r.id=i.rule_id " +
+                "LEFT JOIN meta.gov_quality_task t ON t.id=i.task_id WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (status != null && !status.isEmpty()) { sql.append(" AND i.status=?"); args.add(status); }
+        if (taskId != null && taskId > 0) { sql.append(" AND i.task_id=?"); args.add(taskId); }
+        if (severity != null && !severity.isEmpty()) { sql.append(" AND i.severity=?"); args.add(severity); }
+        if (keyword != null && !keyword.isEmpty()) {
+            sql.append(" AND (i.table_name LIKE ? OR r.name LIKE ? OR i.assignee LIKE ?)");
+            String like = "%" + keyword + "%";
+            args.add(like); args.add(like); args.add(like);
+        }
+        if (overdue == 1) sql.append(" AND i.deadline IS NOT NULL AND i.deadline < NOW() AND i.status IN ('OPEN','ASSIGNED','PROCESSING')");
+        sql.append(" ORDER BY i.id DESC LIMIT 300");
+        return jdbc.queryForList(sql.toString(), args.toArray());
+    }
+
+    /** 工单统计：各状态数 + 超期数 + 按严重度/维度分布（工单中心顶部卡片）。 */
+    @GetMapping("/issue/stats")
+    public Map<String, Object> issueStats() {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue"));
+        out.put("open", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE status='OPEN'"));
+        out.put("assigned", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE status='ASSIGNED'"));
+        out.put("processing", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE status='PROCESSING'"));
+        out.put("resolved", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE status='RESOLVED'"));
+        out.put("closed", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE status='CLOSED'"));
+        out.put("overdue", cnt("SELECT COUNT(*) FROM meta.gov_quality_issue WHERE deadline IS NOT NULL AND deadline < NOW() AND status IN ('OPEN','ASSIGNED','PROCESSING')"));
+        out.put("bySeverity", jdbc.queryForList("SELECT severity, COUNT(*) cnt FROM meta.gov_quality_issue GROUP BY severity"));
+        out.put("byDimension", jdbc.queryForList("SELECT dimension, COUNT(*) cnt FROM meta.gov_quality_issue GROUP BY dimension"));
+        return out;
+    }
+
+    /** 可派单人员：启用状态的系统用户（派单下拉）。 */
+    @GetMapping("/issue/users")
+    public List<Map<String, Object>> issueUsers() {
+        Authz.require(Authz.SYS_ADMIN);
+        return jdbc.queryForList("SELECT username, name FROM meta.sys_user WHERE status IN ('NORMAL','ENABLED','启用') ORDER BY username LIMIT 200");
+    }
+
+    /** 流转日志（工单详情时间线）。 */
+    @GetMapping("/issue/log")
+    public List<Map<String, Object>> issueLog(@RequestParam long issueId) {
+        Authz.require(Authz.SYS_ADMIN);
+        return jdbc.queryForList("SELECT id, action, operator, comment, create_time FROM meta.gov_quality_issue_log WHERE issue_id=? ORDER BY id", issueId);
+    }
+
+    /** 派单：OPEN（或驳回后重开）→ ASSIGNED，记处理人与期望完成时间。 */
+    @PostMapping("/issue/assign")
+    public Map<String, Object> issueAssign(@RequestParam long id, @RequestParam String assignee,
+                                           @RequestParam(required = false) String deadline,
+                                           @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET assignee=?, status='ASSIGNED', deadline=? WHERE id=? AND status IN ('OPEN','ASSIGNED')",
+                assignee, parseTs(deadline), id);
+        if (n == 0) return Map.of("success", false, "msg", "仅待派单/已派单状态可派单");
+        issueLog(id, "ASSIGN", "指派给 " + assignee + (comment.isEmpty() ? "" : "：" + comment));
+        return Map.of("success", true);
+    }
+
+    /** 批量派单：一次把多条待派单工单派给同一人。 */
+    @PostMapping("/issue/batch-assign")
+    public Map<String, Object> issueBatchAssign(@RequestParam String ids, @RequestParam String assignee,
+                                                @RequestParam(required = false) String deadline,
+                                                @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = 0;
+        for (String s : ids.split(",")) {
+            long id = Long.parseLong(s.trim());
+            int k = jdbc.update("UPDATE meta.gov_quality_issue SET assignee=?, status='ASSIGNED', deadline=? WHERE id=? AND status IN ('OPEN','ASSIGNED')",
+                    assignee, parseTs(deadline), id);
+            if (k > 0) { issueLog(id, "ASSIGN", "批量指派给 " + assignee + (comment.isEmpty() ? "" : "：" + comment)); n += k; }
+        }
+        return Map.of("success", true, "count", n);
+    }
+
+    /** 开始处理：ASSIGNED → PROCESSING。 */
+    @PostMapping("/issue/process")
+    public Map<String, Object> issueProcess(@RequestParam long id, @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET status='PROCESSING' WHERE id=? AND status IN ('ASSIGNED','PROCESSING')", id);
+        if (n == 0) return Map.of("success", false, "msg", "仅已派单状态可开始处理");
+        issueLog(id, "PROCESS", comment.isEmpty() ? "开始处理" : comment);
+        return Map.of("success", true);
+    }
+
+    /** 解决：PROCESSING/ASSIGNED → RESOLVED（记解决说明与时间）。 */
+    @PostMapping("/issue/resolve")
+    public Map<String, Object> issueResolve(@RequestParam long id, @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET status='RESOLVED', resolve_time=?, resolve_comment=? WHERE id=? AND status IN ('OPEN','ASSIGNED','PROCESSING')",
+                new Timestamp(System.currentTimeMillis()), comment, id);
+        if (n == 0) return Map.of("success", false, "msg", "该工单已解决或关闭");
+        issueLog(id, "RESOLVE", comment.isEmpty() ? "标记已解决" : comment);
+        return Map.of("success", true);
+    }
+
+    /** 关闭（验收）：RESOLVED → CLOSED。 */
+    @PostMapping("/issue/close")
+    public Map<String, Object> issueClose(@RequestParam long id, @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET status='CLOSED' WHERE id=? AND status='RESOLVED'", id);
+        if (n == 0) return Map.of("success", false, "msg", "仅已解决状态可验收关闭");
+        issueLog(id, "CLOSE", comment.isEmpty() ? "验收关闭" : comment);
+        return Map.of("success", true);
+    }
+
+    /** 驳回：ASSIGNED/PROCESSING → OPEN（处理人无法解决，退回重派），清空处理人。 */
+    @PostMapping("/issue/reject")
+    public Map<String, Object> issueReject(@RequestParam long id, @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET status='OPEN', assignee='' WHERE id=? AND status IN ('ASSIGNED','PROCESSING')", id);
+        if (n == 0) return Map.of("success", false, "msg", "仅已派单/处理中状态可驳回");
+        issueLog(id, "REJECT", comment.isEmpty() ? "驳回重派" : comment);
+        return Map.of("success", true);
+    }
+
+    /** 重开：RESOLVED/CLOSED → OPEN（问题复现）。 */
+    @PostMapping("/issue/reopen")
+    public Map<String, Object> issueReopen(@RequestParam long id, @RequestParam(required = false, defaultValue = "") String comment) {
+        Authz.require(Authz.SYS_ADMIN);
+        int n = jdbc.update("UPDATE meta.gov_quality_issue SET status='OPEN', assignee='', resolve_time=NULL, resolve_comment='' WHERE id=? AND status IN ('RESOLVED','CLOSED')", id);
+        if (n == 0) return Map.of("success", false, "msg", "仅已解决/已关闭状态可重开");
+        issueLog(id, "REOPEN", comment.isEmpty() ? "问题复现，重开工单" : comment);
+        return Map.of("success", true);
+    }
+
+    /** 写流转日志（operator 取当前登录人）。id 用 MAX(id)+1 保证同毫秒多条也严格保序。 */
+    private void issueLog(long issueId, String action, String comment) {
+        try {
+            Long max = jdbc.queryForObject("SELECT MAX(id) FROM meta.gov_quality_issue_log", Long.class);
+            jdbc.update("INSERT INTO meta.gov_quality_issue_log(id, issue_id, action, operator, comment, create_time) VALUES (?,?,?,?,?,?)",
+                    (max == null ? 0 : max) + 1, issueId, action, AuthContext.username(), comment, new Timestamp(System.currentTimeMillis()));
+        } catch (Exception ignored) {}
+    }
+
+    /** "yyyy-MM-dd HH:mm:ss" / "yyyy-MM-ddTHH:mm" → Timestamp；空/非法返回 null。 */
+    private static Timestamp parseTs(String s) {
+        if (s == null || s.isEmpty()) return null;
+        try { return Timestamp.valueOf(s.replace('T', ' ').length() == 16 ? s.replace('T', ' ') + ":00" : s.replace('T', ' ')); }
+        catch (Exception e) { return null; }
+    }
+
+    private long cnt(String sql) {
+        Long v = jdbc.queryForObject(sql, Long.class);
+        return v == null ? 0 : v;
+    }
+
+    /** 问题数据明细 CSV：sample_json 平铺导出（UTF-8 BOM，Excel 直开）。 */
+    @GetMapping("/issue/sample-csv")
+    public ResponseEntity<byte[]> issueSampleCsv(@RequestParam long id) throws Exception {
+        Authz.require(Authz.SYS_ADMIN);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT sample_json, table_name FROM meta.gov_quality_issue WHERE id=?", id);
+        if (rows.isEmpty()) return ResponseEntity.notFound().build();
+        List<Map<String, Object>> sample = List.of();
+        try { @SuppressWarnings("unchecked") List<Map<String, Object>> s = json.readValue(str(rows.get(0).get("sample_json")), List.class); sample = s; } catch (Exception ignored) {}
+        StringBuilder sb = new StringBuilder("﻿");
+        if (!sample.isEmpty()) {
+            List<String> cols = new ArrayList<>(sample.get(0).keySet());
+            sb.append(String.join(",", cols.stream().map(DataQualityController::csvCell).toList())).append("\r\n");
+            for (Map<String, Object> r : sample) {
+                sb.append(cols.stream().map(c -> csvCell(str(r.get(c)))).reduce((a, b) -> a + "," + b).orElse("")).append("\r\n");
+            }
+        }
+        String filename = "问题数据_" + str(rows.get(0).get("table_name")) + "_" + id + ".csv";
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, "UTF-8").replace("+", "%20"))
+                .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                .body(sb.toString().getBytes("UTF-8"));
+    }
+    private static String csvCell(Object v) {
+        String s = v == null ? "" : String.valueOf(v).replace("\r", " ").replace("\n", " ");
+        return s.contains(",") || s.contains("\"") ? "\"" + s.replace("\"", "\"\"") + "\"" : s;
     }
 
     // ===== 任务 =====
@@ -141,157 +350,12 @@ public class DataQualityController {
 
     /**
      * 执行任务下所有规则：逐规则算 metric/score/状态 → 聚合总分/等级/维度·表摘要 → 落 gov_quality_report。
-     * 返回体含历史兼容字段 total/pass/fail 与本次报告摘要。
+     * FAIL 规则自动生成/刷新问题工单（含违规行样例），复检 PASS 自动核销。
      */
     @PostMapping("/run")
     public Map<String, Object> run(@RequestParam long taskId) {
         Authz.require(Authz.SYS_ADMIN);
         return qualityExecutor.run(taskId);
-    }
-
-    /**
-     * 单规则执行：按维度算 metric∈[0,1]（1=满分），score=round(metric*100)，并据阈值判定 PASS/FAIL。
-     * <ul>
-     *   <li>COMPLETENESS：空率 = COUNT(col IS NULL)/total；threshold=最大允许空率；metric=1-空率</li>
-     *   <li>UNIQUENESS：唯一率 = COUNT(DISTINCT col)/total；threshold=最低唯一率；metric=唯一率</li>
-     *   <li>TIMELINESS：最新数据距今小时 = TIMESTAMPDIFF(HOUR, MAX(col), NOW())；threshold=最大允许延迟小时</li>
-     *   <li>VALIDITY/ACCURACY/CONSISTENCY：expression 当 WHERE 统计违规数；threshold=最大违规数；metric=1-违规率</li>
-     * </ul>
-     */
-    private boolean runRule(long taskId, long ruleId) throws Exception {
-        Map<String, Object> r = jdbc.queryForMap(
-                "SELECT dimension, ds_id, table_name, column_name, expression, threshold, severity FROM meta.gov_quality_rule WHERE id=?", ruleId);
-        String dim = normalizeDim(str(r.get("dimension")));
-        String table = str(r.get("table_name"));
-        String col = str(r.get("column_name"));
-        String sev = strOrDefault(r.get("severity"), "MAJOR");
-        double threshold = dbl(r.get("threshold"));
-        DataSourceDescriptor ds = loader.load(lng(r.get("ds_id")));
-        registry.adapter(ds.type);   // fail-fast：适配器不存在即在此抛错（被上层捕获记 ERROR）
-        DataSource pool = registry.getPool(ds);
-
-        long total = qLong(pool, "SELECT COUNT(*) FROM " + table);
-        double value;
-        long violate;
-        double metric;
-        boolean ok;
-        switch (dim) {
-            case "COMPLETENESS" -> {
-                long nulls = qLong(pool, "SELECT COUNT(*) FROM " + table + " WHERE " + col + " IS NULL");
-                violate = nulls;
-                value = total == 0 ? 0 : (double) nulls / total;
-                ok = value <= threshold;
-                metric = total == 0 ? 1 : 1 - value;
-            }
-            case "UNIQUENESS" -> {
-                long distinct = qLong(pool, "SELECT COUNT(DISTINCT " + col + ") FROM " + table);
-                violate = total - distinct;
-                value = total == 0 ? 1 : (double) distinct / total;
-                ok = value >= threshold;
-                metric = value;
-            }
-            case "TIMELINESS" -> {
-                double hours = qDouble(pool, "SELECT TIMESTAMPDIFF(HOUR, MAX(" + col + "), NOW()) FROM " + table);
-                value = hours;
-                violate = hours <= threshold ? 0 : 1;
-                ok = hours <= threshold;
-                metric = ok ? 1 : Math.max(0, 1 - (hours - threshold) / Math.max(threshold, 1));
-            }
-            default -> {   // VALIDITY / ACCURACY / CONSISTENCY
-                String expr = str(r.get("expression"));
-                violate = expr.isEmpty() ? 0 : qLong(pool, "SELECT COUNT(*) FROM " + table + " WHERE " + expr);
-                value = violate;
-                ok = violate <= threshold;
-                metric = total == 0 ? 1 : 1 - (double) violate / total;
-            }
-        }
-        int score = (int) Math.round(metric * 100);
-        record(taskId, ruleId, ok ? "PASS" : "FAIL", value, threshold, violate, total, score, table, sev, "");
-        return ok;
-    }
-
-    private void record(long taskId, long ruleId, String status, double value, double threshold,
-                        long violate, long total, int score, String tableName, String severity, String err) {
-        jdbc.update("INSERT INTO meta.gov_quality_result(id, task_id, rule_id, status, value, threshold, violate_count, total_count, score, table_name, severity, error_msg, run_time) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                System.currentTimeMillis() + (long) (Math.random() * 1000),
-                taskId, ruleId, status, value, threshold, violate, total, score, tableName, severity, err, new Timestamp(System.currentTimeMillis()));
-    }
-
-    /** 聚合本次 run 结果：加权总分 = Σ(score*weight)/Σweight；落 gov_quality_report；返回报告摘要。 */
-    private Map<String, Object> aggregateAndSaveReport(long taskId, String taskName, int totalRules, int pass, int fail, int error) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT res.status, res.score, res.severity, res.table_name, r.dimension " +
-                        "FROM meta.gov_quality_result res LEFT JOIN meta.gov_quality_rule r ON r.id=res.rule_id " +
-                        "WHERE res.task_id=? ORDER BY res.id DESC LIMIT " + Math.max(totalRules, 1), taskId);
-        double wsum = 0, wtot = 0;
-        boolean blockerFail = false;
-        Map<String, double[]> dim = new LinkedHashMap<>();   // [wsum, wtot, pass, fail]
-        Map<String, double[]> tab = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows) {
-            String status = str(row.get("status"));
-            int score = row.get("score") == null ? 0 : ((Number) row.get("score")).intValue();
-            String sev = strOrDefault(row.get("severity"), "MAJOR");
-            int w = weightOf(sev);
-            if ("ERROR".equals(status)) score = 0;
-            if ("FAIL".equals(status) && "BLOCKER".equals(sev)) blockerFail = true;
-            wsum += score * (double) w; wtot += w;
-            acc(dim, normalizeDim(str(row.get("dimension"))), score, w, status);
-            acc(tab, emptyFallback(str(row.get("table_name")), "(未指定)"), score, w, status);
-        }
-        int overall = wtot == 0 ? 0 : (int) Math.round(wsum / wtot);
-        String grade = gradeOf(overall, blockerFail);
-        String dimSummary = summaryJson(dim);
-        String tableSummary = summaryJson(tab);
-
-        long reportId = System.currentTimeMillis();
-        Timestamp now = new Timestamp(System.currentTimeMillis());
-        jdbc.update("INSERT INTO meta.gov_quality_report(id, task_id, task_name, run_time, overall_score, grade, total_rules, pass_count, fail_count, error_count, dim_summary, table_summary) " +
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                reportId, taskId, taskName, now, overall, grade, totalRules, pass, fail, error, dimSummary, tableSummary);
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("reportId", reportId);
-        out.put("taskId", taskId);
-        out.put("taskName", taskName);
-        out.put("runTime", now);
-        out.put("overallScore", overall);
-        out.put("grade", grade);
-        out.put("totalRules", totalRules);
-        out.put("pass", pass);
-        out.put("fail", fail);
-        out.put("error", error);
-        out.put("blockerFail", blockerFail);
-        out.put("dimSummary", dimSummary);
-        out.put("tableSummary", tableSummary);
-        return out;
-    }
-
-    private void acc(Map<String, double[]> m, String key, int score, int w, String status) {
-        double[] a = m.computeIfAbsent(key, k -> new double[4]);
-        a[0] += score * (double) w; a[1] += w;
-        if ("PASS".equals(status)) a[2]++; else if ("FAIL".equals(status) || "ERROR".equals(status)) a[3]++;
-    }
-    private static String gradeOf(int overall, boolean blockerFail) {
-        if (blockerFail) return "D";
-        if (overall >= 90) return "A";
-        if (overall >= 80) return "B";
-        if (overall >= 60) return "C";
-        return "D";
-    }
-    private String summaryJson(Map<String, double[]> m) {
-        Map<String, Object> o = new LinkedHashMap<>();
-        for (Map.Entry<String, double[]> e : m.entrySet()) {
-            double[] a = e.getValue();
-            int sc = a[1] == 0 ? 0 : (int) Math.round(a[0] / a[1]);
-            Map<String, Object> v = new LinkedHashMap<>();
-            v.put("score", sc);
-            v.put("rules", (int) (a[2] + a[3]));
-            v.put("pass", (int) a[2]);
-            v.put("fail", (int) a[3]);
-            o.put(e.getKey(), v);
-        }
-        try { return json.writeValueAsString(o); } catch (Exception ex) { return "{}"; }
     }
 
     // ===== 报告 =====
@@ -472,16 +536,6 @@ public class DataQualityController {
     }
 
     // -------- 助手 --------
-    private long qLong(DataSource pool, String sql) throws Exception {
-        try (Connection c = pool.getConnection(); PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
-            return rs.next() ? rs.getLong(1) : 0;
-        }
-    }
-    private double qDouble(DataSource pool, String sql) throws Exception {
-        try (Connection c = pool.getConnection(); PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
-            return rs.next() ? rs.getDouble(1) : 0;
-        }
-    }
     /** 历史维度值归一到标准 code（修维度中英文不一致 bug）。 */
     private static String normalizeDim(String raw) {
         if (raw == null) return "VALIDITY";
@@ -492,20 +546,8 @@ public class DataQualityController {
             default -> raw.trim().toUpperCase();
         };
     }
-    private static int weightOf(String sev) {
-        if (sev == null) return 2;
-        return switch (sev) { case "BLOCKER" -> 4; case "CRITICAL" -> 3; case "MINOR" -> 1; default -> 2; };
-    }
-    private List<Long> parseIds(String csv) {
-        List<Long> out = new ArrayList<>();
-        if (csv == null || csv.isBlank()) return out;
-        for (String s : csv.split(",")) { try { out.add(Long.parseLong(s.trim())); } catch (Exception ignored) {} }
-        return out;
-    }
     private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
     private static String strOrDefault(Object o, String def) { String s = str(o); return s.isEmpty() ? def : s; }
-    private static String emptyFallback(String s, String def) { return (s == null || s.isBlank()) ? def : s; }
     private static long lng(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).longValue(); try { return Long.parseLong(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
     private static double dbl(Object o) { if (o == null) return 0; if (o instanceof Number) return ((Number) o).doubleValue(); try { return Double.parseDouble(String.valueOf(o).trim()); } catch (Exception e) { return 0; } }
-    private static String rootMsg(Throwable e) { Throwable c = e; for (int i = 0; i < 6 && c.getCause() != null && c.getCause() != c; i++) c = c.getCause(); String m = c.getMessage(); return m == null ? c.getClass().getSimpleName() : c.getClass().getSimpleName() + ": " + m; }
 }

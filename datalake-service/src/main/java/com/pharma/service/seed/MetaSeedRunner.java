@@ -407,6 +407,45 @@ public class MetaSeedRunner implements ApplicationRunner {
             grantMenu(1, 72);
             kvSet("schema_ver", "23");
         }
+
+        // ============ 数据治理 P0/P1/P2 升级（schema_ver=24，增量） ============
+        // P0 主数据：变更审计（记录 CREATE/UPDATE/DELETE 前后值，DUPLICATE 追加）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_master_audit (id BIGINT, master_id BIGINT, record_id BIGINT, action VARCHAR(16), old_json VARCHAR(16384), new_json VARCHAR(16384), operator VARCHAR(64), create_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // P0 质量：问题工单（每规则至多一条未核销；sample_json 存违规行样例，支撑问题数据明细/CSV导出）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_quality_issue (id BIGINT, task_id BIGINT, rule_id BIGINT, report_id BIGINT, table_name VARCHAR(255), dimension VARCHAR(32), severity VARCHAR(16), status VARCHAR(16), assignee VARCHAR(64), sample_json VARCHAR(16384), violate_count BIGINT, create_time DATETIME, resolve_time DATETIME, resolve_comment VARCHAR(1024)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // P0 质量：规则采样行数（0=全量；>0 时统计窗口限制在前 N 行，避免大表全扫）
+        exec("ALTER TABLE meta.gov_quality_rule ADD COLUMN sample_rows BIGINT");
+        // P1 标准：数据元版本快照（改版前存档，支持版本对比/回溯）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_std_element_version (id BIGINT, element_id BIGINT, version_n INT, snapshot_json VARCHAR(8192), change_detail VARCHAR(2048), create_by VARCHAR(64), create_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // P1 模型：表间关系（ER 图数据源）+ 模型版本快照
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_model_relation (id BIGINT, model_id BIGINT, table_a BIGINT, field_a VARCHAR(128), table_b BIGINT, field_b VARCHAR(128), relation_type VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_model_version (id BIGINT, model_id BIGINT, version_n INT, snapshot_json VARCHAR(65535), change_detail VARCHAR(2048), create_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // P1 数仓：分层命名规范正则（命名巡检用）
+        exec("ALTER TABLE meta.gov_layer ADD COLUMN naming_pattern VARCHAR(255)");
+        // P2 标签：规则打标（正则匹配表名/列名/列注释/类型 → 自动打标）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_tag_rule (id BIGINT, tag_id BIGINT, match_type VARCHAR(16), pattern VARCHAR(255), remark VARCHAR(256), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        boolean m24 = "24".equals(kv("schema_ver"));
+        if (!m24) {
+            // 分层默认命名规范种子（幂等：仅空值时补）
+            try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^ods_' WHERE code='ods' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
+            try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^dwd_' WHERE code='dwd' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
+            try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^dws_' WHERE code='dws' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
+            try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^ads_' WHERE code='ads' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
+            try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^dim_' WHERE code='dim' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
+            kvSet("schema_ver", "24");
+        }
+
+        // ============ 质量工单·派单闭环升级（schema_ver=25） ============
+        // 工单增加期望完成时间（SLA 超期判定）；流转日志表（创建/派单/开始处理/解决/关闭/驳回/重开 全程留痕）
+        exec("ALTER TABLE meta.gov_quality_issue ADD COLUMN deadline DATETIME");
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_quality_issue_log (id BIGINT, issue_id BIGINT, action VARCHAR(32), operator VARCHAR(64), comment VARCHAR(1024), create_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        boolean m25 = "25".equals(kv("schema_ver"));
+        if (!m25) {
+            // 运维中心·工单中心菜单（派单处理放运维，质量模块只负责生成）
+            menu(73, 35, "工单中心", "/ops/ticket", "Tickets", "ops:ticket", "MENU", 10);
+            grantMenu(1, 73);
+            kvSet("schema_ver", "25");
+        }
     }
 
     private void seedStd(String code, String name, int level, String desc) {

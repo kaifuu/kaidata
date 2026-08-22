@@ -6,7 +6,8 @@ export default {
     slogan: '现代湖仓 · Kafka → Flink → StarRocks → Spark',
     feature1: '采 · 多源接入 / 实时入湖',
     feature2: '算 · 流批一体分层加工',
-    feature3: '服 · 统一数据资产服务'
+    feature3: '服 · 统一数据资产服务',
+    byKaifuu: 'KAIFUU出品'
   },
   common: {
     ok: '确定',

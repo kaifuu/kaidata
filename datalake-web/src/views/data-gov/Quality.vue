@@ -125,6 +125,36 @@
           </div>
         </div>
       </el-tab-pane>
+      <!-- ============ 问题工单（概览，处理入口在运维中心·工单中心） ============ -->
+      <el-tab-pane :label="`问题工单${issueStats.open ? ' (' + issueStats.open + ')' : ''}`" name="issue">
+        <div class="issue-jump">
+          <div class="issue-jump-text">
+            <b>工单处理已升级为完整派单闭环</b>
+            <span class="muted">派单 / 处理 / 解决 / 验收关闭 / 驳回重开 / SLA 超期预警 / 流转日志，统一在 运维中心 · 工单中心 处理</span>
+          </div>
+          <el-button type="primary" size="small" @click="goTicket">进入工单中心</el-button>
+        </div>
+        <div class="issue-stat-row">
+          <span v-for="c in issueChips" :key="c.key" class="issue-chip">{{ c.label }}<b :class="c.cls">{{ issueStats[c.key] ?? 0 }}</b></span>
+        </div>
+        <el-table :data="issues.slice(0, 10)" size="small" stripe border v-loading="loadingIssue">
+          <el-table-column prop="id" label="工单号" width="150" />
+          <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag size="small" :type="row.status === 'OPEN' ? 'danger' : row.status === 'RESOLVED' || row.status === 'CLOSED' ? 'success' : 'warning'">{{ issueStatusText(row.status) }}</el-tag></template></el-table-column>
+          <el-table-column label="严重度" width="70"><template #default="{ row }"><el-tag size="small" :type="sevType(row.severity)">{{ sevLabel(row.severity) }}</el-tag></template></el-table-column>
+          <el-table-column prop="table_name" label="表" min-width="140"><template #default="{ row }"><code>{{ row.table_name }}</code></template></el-table-column>
+          <el-table-column label="维度" width="80"><template #default="{ row }">{{ dimLabel(row.dimension) }}</template></el-table-column>
+          <el-table-column prop="violate_count" label="违规数" width="80" align="center" />
+          <el-table-column prop="assignee" label="处理人" width="90"><template #default="{ row }">{{ row.assignee || '-' }}</template></el-table-column>
+          <el-table-column prop="create_time" label="发现时间" width="160" />
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button link size="small" type="primary" :disabled="!hasSample(row)" @click="viewSample(row)">明细</el-button>
+              <el-button link size="small" @click="goTicket">处理</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="hint-left muted" style="margin-top:8px">FAIL 规则自动生成工单并采样违规明细；复检 PASS 自动核销。此处仅展示最近 {{ Math.min(issues.length, 10) }} 条，完整处理请进工单中心。</div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- ============ 规则弹窗 ============ -->
@@ -149,9 +179,47 @@
           <el-input-number v-model="ruleForm.threshold" :min="0" :step="isRate(ruleForm.dimension) ? 0.05 : 1" controls-position="right" />
           <span class="muted" style="margin-left:8px">{{ thresholdHint(ruleForm.dimension) }}</span>
         </el-form-item>
+        <el-form-item label="采样行数">
+          <el-input-number v-model="ruleForm.sample_rows" :min="0" :step="1000" controls-position="right" placeholder="0" />
+          <span class="muted" style="margin-left:8px">0=全表；&gt;0 只检查前 N 行（大表防全扫）</span>
+        </el-form-item>
         <el-form-item label="说明"><el-input v-model="ruleForm.description" type="textarea" :rows="2" placeholder="规则描述（可选）" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="ruleDlg = false">取消</el-button><el-button type="primary" @click="saveRule">保存</el-button></template>
+      <template #footer>
+        <el-button @click="ruleDlg = false">取消</el-button>
+        <el-button type="warning" :loading="dryRunning" @click="dryRun">试运行</el-button>
+        <el-button type="primary" @click="saveRule">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ============ 试运行结果 ============ -->
+    <el-dialog v-model="dryDlg" title="试运行结果（不落库）" width="720px">
+      <template v-if="dryResult">
+        <div class="dry-kpis">
+          <span>总数 <b>{{ dryResult.total }}</b></span>
+          <span>违规 <b class="fail-num">{{ dryResult.violate }}</b>（{{ dryResult.violateRate }}%）</span>
+          <span>预估得分 <b :style="{ color: scoreColor(dryResult.score) }">{{ dryResult.score }}</b></span>
+        </div>
+        <el-table v-if="dryCols.length" :data="dryResult.sample" size="small" border max-height="300">
+          <el-table-column v-for="c in dryCols" :key="c" :prop="c" :label="c" min-width="110" show-overflow-tooltip />
+        </el-table>
+        <div v-else class="hint">无违规样例（或该维度不采样）</div>
+      </template>
+      <template #footer><el-button @click="dryDlg = false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- ============ 违规明细样例 ============ -->
+    <el-dialog v-model="sampleDlg" :title="`违规明细 - ${curIssue?.table_name || ''}`" width="860px">
+      <template v-if="sampleRows.length">
+        <el-table :data="sampleRows" size="small" border max-height="400">
+          <el-table-column v-for="c in sampleCols" :key="c" :prop="c" :label="c" min-width="120" show-overflow-tooltip />
+        </el-table>
+      </template>
+      <div v-else class="hint">无采样数据</div>
+      <template #footer>
+        <el-button @click="downloadSampleCsv" :disabled="!sampleRows.length">下载 CSV</el-button>
+        <el-button type="primary" @click="sampleDlg = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <!-- ============ 任务弹窗 ============ -->
@@ -188,11 +256,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, VideoPlay, Document } from '@element-plus/icons-vue'
 import { VChart } from '@/echarts'
 import { theme } from '@/theme'
 import { api, errMsg } from '@/api'
+
+const router = useRouter()
 
 const chartTheme = theme.chartTheme
 const tab = ref('rule')
@@ -203,7 +274,7 @@ const dimensions = ref<any[]>([{ code: 'COMPLETENESS', label: '完整性' }, { c
 const severityOptions = [
   { v: 'BLOCKER', l: '阻断(Blocker)' }, { v: 'CRITICAL', l: '严重(Critical)' }, { v: 'MAJOR', l: '主要(Major)' }, { v: 'MINOR', l: '次要(Minor)' }
 ]
-const ruleDlg = ref(false); const ruleForm = reactive<any>({ id: null, name: '', dimension: 'COMPLETENESS', ds_id: null, table_name: '', column_name: '', expression: '', threshold: 0.1, severity: 'MAJOR', description: '' })
+const ruleDlg = ref(false); const ruleForm = reactive<any>({ id: null, name: '', dimension: 'COMPLETENESS', ds_id: null, table_name: '', column_name: '', expression: '', threshold: 0.1, severity: 'MAJOR', sample_rows: 0, description: '' })
 const taskDlg = ref(false); const taskForm = reactive<any>({ name: '', ruleIds: [] as number[], cron: '' })
 const running = ref<number | null>(null)
 const resDlg = ref(false); const cur = ref<any>(null); const results = ref<any[]>([])
@@ -271,22 +342,73 @@ async function loadRules() { loadingRule.value = true; try { rules.value = await
 async function loadTasks() { loadingTask.value = true; try { tasks.value = await api.govTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingTask.value = false } }
 async function loadDs() { try { dsList.value = await api.daSources() } catch { dsList.value = [] } }
 async function loadDimensions() { try { dimensions.value = await api.govQualityDimensions() } catch { /* 用本地兜底 */ } }
-function openRule(row?: any) { Object.assign(ruleForm, { id: null, name: '', dimension: 'COMPLETENESS', ds_id: dsList.value[0]?.id || null, table_name: '', column_name: '', expression: '', threshold: 0.1, severity: 'MAJOR', description: '' }, row || {}); ruleDlg.value = true }
+function openRule(row?: any) { Object.assign(ruleForm, { id: null, name: '', dimension: 'COMPLETENESS', ds_id: dsList.value[0]?.id || null, table_name: '', column_name: '', expression: '', threshold: 0.1, severity: 'MAJOR', sample_rows: 0, description: '' }, row || {}); ruleDlg.value = true }
 async function saveRule() { if (!ruleForm.name || !ruleForm.table_name) return ElMessage.warning('填名称与表'); try { await api.govSaveRule({ ...ruleForm }); ElMessage.success('保存成功'); ruleDlg.value = false; await loadRules() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function delRule(row: any) { await ElMessageBox.confirm(`删除规则 ${row.name}？`, '提示', { type: 'warning' }); try { await api.govDeleteRule(row.id); await loadRules() } catch (e: any) { ElMessage.error(errMsg(e)) } }
+
+// ===== P0：试运行 =====
+const dryRunning = ref(false); const dryDlg = ref(false); const dryResult = ref<any>(null)
+const dryCols = computed(() => { const rows: any[] = dryResult.value?.sample || []; const ks: string[] = []; for (const r of rows) for (const k of Object.keys(r || {})) if (!ks.includes(k)) ks.push(k); return ks })
+async function dryRun() {
+  if (!ruleForm.table_name || !ruleForm.ds_id) return ElMessage.warning('先选数据源并填表')
+  dryRunning.value = true
+  try {
+    dryResult.value = await api.govQualityDryRun({ ...ruleForm })
+    dryDlg.value = true
+  } catch (e: any) { ElMessage.error(errMsg(e)) } finally { dryRunning.value = false }
+}
+
+// ===== P0：问题工单（概览；派单处理在运维中心·工单中心） =====
+const issues = ref<any[]>([]); const loadingIssue = ref(false)
+const issueStats = ref<any>({})
+const sampleDlg = ref(false); const curIssue = ref<any>(null)
+const sampleRows = ref<any[]>([])
+const sampleCols = computed(() => { const ks: string[] = []; for (const r of sampleRows.value) for (const k of Object.keys(r || {})) if (!ks.includes(k)) ks.push(k); return ks })
+const issueChips = [
+  { key: 'open', label: '待派单', cls: '' },
+  { key: 'assigned', label: '已派单', cls: 'c-primary' },
+  { key: 'processing', label: '处理中', cls: 'c-warn' },
+  { key: 'resolved', label: '已解决', cls: 'c-ok' },
+  { key: 'closed', label: '已关闭', cls: '' },
+  { key: 'overdue', label: '超期', cls: 'c-danger' },
+]
+function issueStatusText(s: string) { return ({ OPEN: '待派单', ASSIGNED: '已派单', PROCESSING: '处理中', RESOLVED: '已解决', CLOSED: '已关闭' } as any)[s] || s }
+function hasSample(row: any) { try { return (JSON.parse(row.sample_json || '[]')).length > 0 } catch { return false } }
+function goTicket() { router.push('/ops/ticket') }
+async function loadIssues() {
+  loadingIssue.value = true
+  try {
+    issues.value = await api.govQualityIssues({})
+    issueStats.value = await api.govQualityIssueStats()
+  } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingIssue.value = false }
+}
+function viewSample(row: any) {
+  curIssue.value = row
+  try { sampleRows.value = JSON.parse(row.sample_json || '[]') } catch { sampleRows.value = [] }
+  sampleDlg.value = true
+}
+async function downloadSampleCsv() {
+  if (!curIssue.value) return
+  try {
+    const blob: Blob = await api.govQualityIssueSampleCsv(curIssue.value.id)
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = `违规明细_${curIssue.value.table_name}_${curIssue.value.id}.csv`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
 function openTask() { Object.assign(taskForm, { name: '', ruleIds: [], cron: '' }); taskDlg.value = true }
 async function saveTask() { if (!taskForm.name || !taskForm.ruleIds.length) return ElMessage.warning('填名称与规则'); try { await api.govSaveTask({ name: taskForm.name, rule_ids: taskForm.ruleIds.join(','), cron: taskForm.cron }); ElMessage.success('保存成功'); taskDlg.value = false; await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function delTask(row: any) { try { await api.govDeleteTask(row.id); await loadTasks() } catch (e: any) { ElMessage.error(errMsg(e)) } }
-async function run(row: any) { running.value = row.id; try { const r: any = await api.govRunQuality(row.id); ElMessage.success(`执行完成：通过 ${r.pass}/${r.total}，失败 ${r.fail}，得分 ${r.overallScore}`) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { running.value = null } }
+async function run(row: any) { running.value = row.id; try { const r: any = await api.govRunQuality(row.id); ElMessage.success(`执行完成：通过 ${r.pass}/${r.total}，失败 ${r.fail}，得分 ${r.overallScore}`); await loadIssues() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { running.value = null } }
 async function openResult(row: any) { cur.value = row; resDlg.value = true; resultPage.page = 1; try { results.value = await api.govQualityResult(row.id) } catch { results.value = [] } }
 
 // 报告
 async function loadReport() { if (!reportTaskId.value) { report.value = null; return } try { report.value = await api.govQualityReport(reportTaskId.value) } catch (e: any) { ElMessage.error(errMsg(e)); report.value = null } }
-async function runAndReport() { if (!reportTaskId.value) return; runningReport.value = true; try { const r: any = await api.govRunQuality(reportTaskId.value); await loadReport(); ElMessage.success(`执行完成：得分 ${r.overallScore} / 等级 ${r.grade}`) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { runningReport.value = false } }
+async function runAndReport() { if (!reportTaskId.value) return; runningReport.value = true; try { const r: any = await api.govRunQuality(reportTaskId.value); await loadReport(); await loadIssues(); ElMessage.success(`执行完成：得分 ${r.overallScore} / 等级 ${r.grade}`) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { runningReport.value = false } }
 function goReport(row: any) { reportTaskId.value = row.id; tab.value = 'report'; loadReport() }
 async function exportWord() { if (!report.value) return; try { const blob: Blob = await api.govQualityReportWord(reportTaskId.value!); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `质量报告_${report.value.taskName || reportTaskId.value}.docx`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); ElMessage.success('Word 报告已下载') } catch (e: any) { ElMessage.error(errMsg(e)) } }
 
-onMounted(() => { loadRules(); loadTasks(); loadDs(); loadDimensions() })
+onMounted(() => { loadRules(); loadTasks(); loadDs(); loadDimensions(); loadIssues() })
 </script>
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
@@ -334,4 +456,17 @@ onMounted(() => { loadRules(); loadTasks(); loadDs(); loadDimensions() })
 
 .chart { width: 100%; height: 280px; }
 .chart.tall { height: 240px; }
+.hint-left { text-align: left; padding: 0; }
+.issue-jump { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--tech-primary, #2f6bff); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; background: color-mix(in srgb, var(--tech-primary, #2f6bff) 8%, transparent); flex-wrap: wrap; }
+.issue-jump-text { display: flex; flex-direction: column; gap: 2px; }
+.issue-stat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.issue-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tech-panel-border); border-radius: 12px; padding: 3px 12px; font-size: 12px; color: var(--tech-text-muted); }
+.issue-chip b { font-size: 14px; color: var(--tech-text); }
+.issue-chip b.c-primary { color: var(--tech-primary); }
+.issue-chip b.c-warn { color: var(--tech-warn); }
+.issue-chip b.c-ok { color: var(--tech-success); }
+.issue-chip b.c-danger { color: var(--tech-danger); }
+.dry-kpis { display: flex; gap: 26px; margin-bottom: 12px; font-size: 13px; color: var(--tech-text-muted); }
+.dry-kpis b { font-size: 18px; color: var(--tech-text); margin-left: 4px; }
+.dry-kpis .fail-num { color: #e54d4d; }
 </style>

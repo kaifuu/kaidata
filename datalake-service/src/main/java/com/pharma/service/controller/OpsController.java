@@ -164,7 +164,7 @@ public class OpsController {
         for (Map<String, Object> r : safeList(() -> jdbc.queryForList(
                 "SELECT id, table_name, error_msg, severity, status, run_time FROM meta.gov_quality_result WHERE status = 'FAIL'"))) {
             out.add(msg("QUALITY", r.get("id"), str(r.get("table_name")), str(r.get("error_msg")),
-                    str(r.get("severity")), str(r.get("status")), str(r.get("run_time")), "/data-gov/quality"));
+                    str(r.get("severity")), str(r.get("status")), str(r.get("run_time")), "/ops/ticket"));
         }
         return out;
     }

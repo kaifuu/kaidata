@@ -87,7 +87,11 @@
       </div>
     </div>
 
-    <div class="footer">{{ $t('login.footer') }}{{ $t('app.name') }} {{ $t('app.nameEn') }}</div>
+    <div class="footer">
+      {{ $t('login.footer') }}{{ $t('app.name') }} {{ $t('app.nameEn') }}
+      <span class="sep">·</span>
+      <a class="kaifuu" href="https://www.kainfer.cn/" target="_blank" rel="noopener">{{ $t('app.byKaifuu') }}</a>
+    </div>
   </div>
 </template>
 
@@ -295,6 +299,9 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 .qr-sub { margin-top: 4px; color: var(--tech-text-muted); font-size: 12px; }
 
 .footer { position: absolute; bottom: 18px; color: var(--tech-text-muted); font-size: 12px; z-index: 2; opacity: .7; }
+.footer .sep { margin: 0 6px; }
+.footer .kaifuu { color: var(--tech-primary); text-decoration: none; letter-spacing: 1px; }
+.footer .kaifuu:hover { text-shadow: var(--tech-glow); }
 
 @media (max-width: 880px) { .brand { display: none; } }
 </style>

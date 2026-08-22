@@ -39,6 +39,33 @@ public class DataGovDashboardController {
         return m;
     }
 
+    /** P2 升级：质量分趋势（近 30 天按天平均分，画折线用）。 */
+    @GetMapping("/quality/trend")
+    public List<Map<String, Object>> qualityTrend() {
+        Authz.require(Authz.SYS_ADMIN);
+        return safeList("SELECT DATE_FORMAT(run_time, '%Y-%m-%d') AS day, ROUND(AVG(overall_score)) AS score, COUNT(*) AS runs " +
+                "FROM meta.gov_quality_report WHERE run_time >= DATE_SUB(NOW(), INTERVAL 30 DAY) " +
+                "GROUP BY DATE_FORMAT(run_time, '%Y-%m-%d') ORDER BY day");
+    }
+
+    /** P2 升级：治理待办清单（未结质量工单 + 未处理安全告警），按时间倒序。 */
+    @GetMapping("/todo")
+    public Map<String, Object> todo() {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> issues = safeList(
+                "SELECT id, task_id, rule_id, table_name, dimension, severity, status, assignee, violate_count, create_time " +
+                        "FROM meta.gov_quality_issue WHERE status IN ('OPEN','ASSIGNED') ORDER BY create_time DESC LIMIT 50");
+        List<Map<String, Object>> alerts = safeList(
+                "SELECT id, level, message, status, created_time FROM meta.sec_alert_event WHERE status='未处理' " +
+                        "ORDER BY created_time DESC LIMIT 50");
+        out.put("issues", issues);
+        out.put("alerts", alerts);
+        out.put("issueCount", issues.size());
+        out.put("alertCount", alerts.size());
+        return out;
+    }
+
     private Map<String, Object> quality() {
         Map<String, Object> m = new LinkedHashMap<>();
         try {

@@ -6,7 +6,8 @@ export default {
     slogan: 'Modern Lakehouse · Kafka → Flink → StarRocks → Spark',
     feature1: 'Ingest · Multi-source / Real-time into lake',
     feature2: 'Compute · Unified stream & batch layered processing',
-    feature3: 'Serve · Unified data asset service'
+    feature3: 'Serve · Unified data asset service',
+    byKaifuu: 'by KAIFUU'
   },
   common: {
     ok: 'OK',

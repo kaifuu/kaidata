@@ -56,30 +56,65 @@ public class DataWhController {
     }
 
     /**
-     * 分层画像：每层物理表数 + 行数合计。主查 StarRocks information_schema（TABLE_SCHEMA=层编码），
-     * 失败（非 SR 环境/无权限）回退数 gov_meta_table 登记。
+     * 分层画像：每层 物理表数/行数/存储大小/最近更新（StarRocks information_schema 实测，
+     * 失败回退元数据登记）+ 命名合规（checked/violate）+ 绑定数据源数 + 最近采集时间。
      */
     @GetMapping("/layer/stats")
     public List<Map<String, Object>> layerStats() {
         Authz.require(Authz.SYS_ADMIN);
-        List<Map<String, Object>> layers = jdbc.queryForList("SELECT code, name, sort FROM meta.gov_layer ORDER BY sort");
+        List<Map<String, Object>> layers = jdbc.queryForList("SELECT code, name, sort, naming_pattern FROM meta.gov_layer ORDER BY sort");
         Map<String, Map<String, Object>> info = new LinkedHashMap<>();
         try {
             for (Map<String, Object> r : jdbc.queryForList(
-                    "SELECT TABLE_SCHEMA, COUNT(*) AS tables_cnt, COALESCE(SUM(TABLE_ROWS), 0) AS rows_cnt " +
+                    "SELECT TABLE_SCHEMA, COUNT(*) AS tables_cnt, COALESCE(SUM(TABLE_ROWS), 0) AS rows_cnt, " +
+                            "COALESCE(SUM(DATA_LENGTH), 0) AS size_bytes, MAX(UPDATE_TIME) AS last_update " +
                             "FROM information_schema.tables WHERE TABLE_TYPE='BASE TABLE' GROUP BY TABLE_SCHEMA")) {
                 Map<String, Object> m = new HashMap<>();
                 m.put("tables", ((Number) r.get("tables_cnt")).longValue());
                 m.put("rows", ((Number) r.get("rows_cnt")).longValue());
+                m.put("size_bytes", ((Number) r.get("size_bytes")).longValue());
+                m.put("last_update", r.get("last_update"));
                 info.put(str(r.get("TABLE_SCHEMA")).toLowerCase(), m);
             }
         } catch (Exception ignored) {}
-        // 元数据登记数（info 缺层时兜底展示）
+        // 元数据登记数 + 最近采集（info 缺层时兜底展示）
         Map<String, Long> metaCnt = new HashMap<>();
+        Map<String, Object> lastSync = new HashMap<>();
         try {
             for (Map<String, Object> r : jdbc.queryForList(
-                    "SELECT COALESCE(layer_code, schema_name) AS layer, COUNT(*) AS c FROM meta.gov_meta_table GROUP BY COALESCE(layer_code, schema_name)")) {
-                metaCnt.put(str(r.get("layer")).toLowerCase(), ((Number) r.get("c")).longValue());
+                    "SELECT COALESCE(layer_code, schema_name) AS layer, COUNT(*) AS c, MAX(synced_time) AS st " +
+                            "FROM meta.gov_meta_table GROUP BY COALESCE(layer_code, schema_name)")) {
+                String k = str(r.get("layer")).toLowerCase();
+                metaCnt.put(k, ((Number) r.get("c")).longValue());
+                lastSync.put(k, r.get("st"));
+            }
+        } catch (Exception ignored) {}
+        // 命名合规统计（每层 checked/violate，与 naming-check 同规则）
+        Map<String, long[]> naming = new HashMap<>();
+        try {
+            List<Map<String, Object>> metaTables = jdbc.queryForList(
+                    "SELECT table_name, COALESCE(layer_code, schema_name) AS layer FROM meta.gov_meta_table");
+            for (Map<String, Object> l : layers) {
+                String pattern = str(l.get("naming_pattern"));
+                String code = str(l.get("code"));
+                if (pattern.isEmpty()) continue;
+                Pattern p;
+                try { p = Pattern.compile(pattern); } catch (Exception e) { continue; }
+                long checked = 0, violate = 0;
+                for (Map<String, Object> t : metaTables) {
+                    if (!code.equalsIgnoreCase(str(t.get("layer")))) continue;
+                    checked++;
+                    if (!p.matcher(str(t.get("table_name"))).find()) violate++;
+                }
+                naming.put(code.toLowerCase(), new long[]{checked, violate});
+            }
+        } catch (Exception ignored) {}
+        // 每层绑定数据源数
+        Map<String, Long> dsCnt = new HashMap<>();
+        try {
+            for (Map<String, Object> r : jdbc.queryForList(
+                    "SELECT layer_code, COUNT(*) AS c FROM meta.gov_layer_datasource GROUP BY layer_code")) {
+                dsCnt.put(str(r.get("layer_code")).toLowerCase(), ((Number) r.get("c")).longValue());
             }
         } catch (Exception ignored) {}
         List<Map<String, Object>> out = new ArrayList<>();
@@ -87,12 +122,40 @@ public class DataWhController {
             Map<String, Object> row = new LinkedHashMap<>(l);
             String code = str(l.get("code")).toLowerCase();
             Map<String, Object> st = info.get(code);
-            row.put("tables", st == null ? metaCnt.getOrDefault(code, 0L) : st.get("tables"));
-            row.put("rows", st == null ? 0L : st.get("rows"));
-            row.put("source", st == null ? "meta" : "physical");
+            if (st != null) {
+                row.put("tables", st.get("tables"));
+                row.put("rows", st.get("rows"));
+                row.put("size_bytes", st.get("size_bytes"));
+                row.put("last_update", st.get("last_update"));
+            } else {
+                row.put("tables", metaCnt.getOrDefault(code, 0L));
+                row.put("rows", 0L);
+                row.put("size_bytes", 0L);
+                row.put("last_update", null);
+            }
+            row.put("ds_count", dsCnt.getOrDefault(code, 0L));
+            row.put("last_sync", lastSync.get(code));
+            long[] nm = naming.get(code);
+            row.put("naming_checked", nm == null ? 0L : nm[0]);
+            row.put("naming_violate", nm == null ? 0L : nm[1]);
+            row.put("source", st != null ? "physical" : "meta");
             out.add(row);
         }
         return out;
+    }
+
+    /** 层内表清单（画像钻取）：information_schema 实测行数/大小/更新时间 + 元数据注释/采集时间。 */
+    @GetMapping("/layer/tables")
+    public List<Map<String, Object>> layerTables(@RequestParam String code) {
+        Authz.require(Authz.SYS_ADMIN);
+        String sql = "SELECT t.TABLE_NAME AS name, COALESCE(t.TABLE_ROWS, 0) AS rows_cnt, " +
+                "COALESCE(t.DATA_LENGTH, 0) AS size_bytes, t.UPDATE_TIME AS last_update, t.CREATE_TIME AS create_time, " +
+                "m.comment AS comment, m.synced_time AS synced_time " +
+                "FROM information_schema.tables t " +
+                "LEFT JOIN meta.gov_meta_table m ON m.schema_name = t.TABLE_SCHEMA AND m.table_name = t.TABLE_NAME " +
+                "WHERE t.TABLE_TYPE = 'BASE TABLE' AND LOWER(t.TABLE_SCHEMA) = LOWER(?) " +
+                "ORDER BY COALESCE(t.TABLE_ROWS, 0) DESC, t.TABLE_NAME";
+        return jdbc.queryForList(sql, code);
     }
 
     /**

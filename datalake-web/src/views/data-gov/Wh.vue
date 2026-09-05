@@ -92,16 +92,45 @@
         </div>
       </el-tab-pane>
       <el-tab-pane label="分层画像" name="stats">
-        <el-row :gutter="10" v-loading="loadingStats">
+        <!-- 顶部：占比图 + 行数分布 -->
+        <div class="stats-charts" v-loading="loadingStats">
+          <div class="chart-panel">
+            <div class="cp-t"><el-icon><PieChart /></el-icon> 各层表数占比<span class="muted">共 {{ statTotalTables }} 张</span></div>
+            <v-chart :option="pieOption" :theme="theme.chartTheme" autoresize class="ch" />
+          </div>
+          <div class="chart-panel">
+            <div class="cp-t"><el-icon><Histogram /></el-icon> 各层行数分布<span class="muted">共 {{ fmtNum(statTotalRows) }} 行</span></div>
+            <v-chart :option="barOption" :theme="theme.chartTheme" autoresize class="ch" />
+          </div>
+        </div>
+        <!-- 画像卡片（点击钻取表清单） -->
+        <el-row :gutter="10">
           <el-col v-for="s in stats" :key="s.code" :span="6" style="margin-bottom:10px">
-            <div class="stat-card">
-              <div class="stat-head"><b>{{ s.code }}</b><span class="muted">{{ s.name }}</span></div>
-              <div class="stat-row"><span>物理表</span><b>{{ s.tables }}</b></div>
+            <div class="stat-card stat-click" @click="openLayerTables(s)">
+              <div class="stat-head">
+                <b>{{ s.code }}</b><span class="muted">{{ s.name }}</span>
+                <el-tag size="small" :type="s.source === 'physical' ? 'success' : 'info'" effect="plain">{{ s.source === 'physical' ? '实测' : '登记' }}</el-tag>
+              </div>
+              <div class="stat-row"><span>物理表</span><b>{{ s.tables }}<span class="unit">张</span></b></div>
               <div class="stat-row"><span>行数合计</span><b>{{ fmtNum(s.rows) }}</b></div>
-              <div class="stat-src muted">{{ s.source === 'physical' ? '来源：information_schema 实测' : '来源：元数据登记' }}</div>
+              <div class="stat-row"><span>存储占用</span><b>{{ fmtSize(s.size_bytes) }}</b></div>
+              <div class="stat-row"><span>绑定数据源</span><b>{{ s.ds_count ?? 0 }}<span class="unit">个</span></b></div>
+              <div class="stat-row">
+                <span>命名合规</span>
+                <b>
+                  <el-tag v-if="!s.naming_checked" size="small" type="info" effect="plain">未配置</el-tag>
+                  <el-tag v-else-if="s.naming_violate === 0" size="small" type="success">{{ s.naming_checked }}/{{ s.naming_checked }}</el-tag>
+                  <el-tag v-else size="small" type="warning">{{ s.naming_checked - s.naming_violate }}/{{ s.naming_checked }}</el-tag>
+                </b>
+              </div>
+              <div class="stat-foot">
+                <span class="muted">最近更新 {{ fmtShort(s.last_update) }}</span>
+                <span class="link">表清单 →</span>
+              </div>
             </div>
           </el-col>
         </el-row>
+        <div class="hint"><el-icon><InfoFilled /></el-icon> 点击卡片查看层内表清单；存储/行数为 StarRocks information_schema 实测，命名合规来自命名巡检规则，绑定数与分层管理共享。</div>
       </el-tab-pane>
       <el-tab-pane label="命名巡检" name="naming">
         <div style="margin-bottom:10px"><el-button size="small" type="primary" :loading="loadingNaming" @click="runNamingCheck">立即巡检</el-button></div>
@@ -182,6 +211,35 @@
       </template>
     </el-drawer>
 
+    <!-- 层内表清单（画像钻取） -->
+    <el-drawer v-model="ltDlg" :title="`表清单 - ${ltLayer?.code || ''} 层（${ltLayer?.name || ''}）`" size="860px" destroy-on-close>
+      <div class="dl-toolbar" style="padding:0;margin-bottom:10px">
+        <el-input v-model="ltKw" placeholder="表名检索" size="small" clearable style="width:200px" />
+        <span class="muted">共 {{ ltFiltered.length }} 张表 · {{ fmtNum(ltTotalRows) }} 行</span>
+      </div>
+      <el-table :data="ltFiltered" size="small" stripe border v-loading="ltLoading" max-height="560">
+        <el-table-column label="表名" min-width="200">
+          <template #default="{ row }"><code class="lt-name">{{ row.name }}</code></template>
+        </el-table-column>
+        <el-table-column label="行数" width="100" align="right">
+          <template #default="{ row }"><b>{{ fmtNum(row.rows_cnt) }}</b></template>
+        </el-table-column>
+        <el-table-column label="大小" width="90" align="right">
+          <template #default="{ row }">{{ fmtSize(row.size_bytes) }}</template>
+        </el-table-column>
+        <el-table-column prop="comment" label="注释" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }"><span v-if="row.comment">{{ row.comment }}</span><span v-else class="muted">—</span></template>
+        </el-table-column>
+        <el-table-column label="最近更新" width="150">
+          <template #default="{ row }">{{ fmtTime(row.last_update) }}</template>
+        </el-table-column>
+        <el-table-column label="元数据采集" width="150">
+          <template #default="{ row }">{{ fmtTime(row.synced_time) }}</template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!ltLoading && !ltFiltered.length" class="empty-tip muted">该层暂无物理表</div>
+    </el-drawer>
+
     <!-- 主题域编辑 -->
     <el-drawer v-model="subjectDlg" :title="subjectForm.id ? '编辑主题域' : '新增主题域'" size="560px">
       <el-form :model="subjectForm" label-width="80px" size="small">
@@ -198,8 +256,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Folder, Edit, Delete } from '@element-plus/icons-vue'
+import { Plus, Folder, Edit, Delete, PieChart, Histogram, InfoFilled } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
+import { VChart } from '@/echarts'
+import { theme } from '@/theme'
 
 const tab = ref('layer')
 const loading = ref(false)
@@ -296,8 +356,56 @@ async function unbind(row: any) {
 const stats = ref<any[]>([]); const loadingStats = ref(false)
 const naming = ref<any>(null); const loadingNaming = ref(false)
 function fmtNum(n: any) { const v = Number(n) || 0; return v >= 10000000 ? (v / 10000000).toFixed(1) + ' 千万' : v >= 10000 ? (v / 10000).toFixed(1) + ' 万' : String(v) }
+function fmtSize(n: any) {
+  const v = Number(n) || 0
+  if (!v) return '—'
+  if (v >= 1073741824) return (v / 1073741824).toFixed(1) + ' GB'
+  if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB'
+  if (v >= 1024) return (v / 1024).toFixed(1) + ' KB'
+  return v + ' B'
+}
+function fmtShort(s?: string) { if (!s) return '—'; const t = String(s).replace('T', ' '); return t.length >= 16 ? t.slice(5, 16) : t }
+function fmtTime(s?: string) { return s ? String(s).replace('T', ' ').slice(0, 19) : '—' }
+
+const statTotalTables = computed(() => stats.value.reduce((s, x) => s + Number(x.tables || 0), 0))
+const statTotalRows = computed(() => stats.value.reduce((s, x) => s + Number(x.rows || 0), 0))
+const pieOption = computed(() => ({
+  tooltip: { trigger: 'item', formatter: '{b}: {c} 张 ({d}%)' },
+  legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+  series: [{
+    type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'],
+    itemStyle: { borderRadius: 4, borderColor: 'transparent', borderWidth: 2 },
+    label: { formatter: '{b}\n{c} 张' },
+    data: stats.value.map((s: any) => ({ name: s.code, value: Number(s.tables || 0) }))
+  }]
+}))
+const barOption = computed(() => ({
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: number) => fmtNum(v) },
+  grid: { left: 8, right: 18, top: 14, bottom: 6, containLabel: true },
+  xAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtNum(v) } },
+  yAxis: { type: 'category', data: stats.value.map((s: any) => s.code).reverse(), axisTick: { show: false } },
+  series: [{
+    type: 'bar', barWidth: 14, itemStyle: { borderRadius: [0, 4, 4, 0] },
+    label: { show: true, position: 'right', formatter: (p: any) => fmtNum(p.value), fontSize: 11 },
+    data: stats.value.map((s: any) => Number(s.rows || 0)).reverse()
+  }]
+}))
 async function loadStats() { loadingStats.value = true; try { stats.value = await api.govLayerStats() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingStats.value = false } }
 async function runNamingCheck() { loadingNaming.value = true; try { naming.value = await api.govLayerNamingCheck() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingNaming.value = false } }
+
+// ===== 层内表清单（画像钻取） =====
+const ltDlg = ref(false); const ltLoading = ref(false)
+const ltLayer = ref<any>(null); const ltRows = ref<any[]>([]); const ltKw = ref('')
+const ltFiltered = computed(() => {
+  if (!ltKw.value) return ltRows.value
+  const k = ltKw.value.toLowerCase()
+  return ltRows.value.filter((r: any) => (r.name || '').toLowerCase().includes(k) || (r.comment || '').includes(ltKw.value))
+})
+const ltTotalRows = computed(() => ltFiltered.value.reduce((s, r) => s + Number(r.rows_cnt || 0), 0))
+async function openLayerTables(s: any) {
+  ltLayer.value = s; ltKw.value = ''; ltRows.value = []; ltDlg.value = true; ltLoading.value = true
+  try { ltRows.value = await api.govLayerTables(s.code) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { ltLoading.value = false }
+}
 
 // ===== 主题域 =====
 const subjects = ref<any[]>([])
@@ -360,8 +468,25 @@ onMounted(() => { load(); loadStats(); runNamingCheck(); loadSubjects() })
 .empty-tip { padding: 18px 8px; text-align: center; }
 
 .stat-card { border: 1px solid var(--tech-panel-border); border-radius: 6px; padding: 12px 14px; }
-.stat-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
-.stat-row { display: flex; justify-content: space-between; font-size: 13px; line-height: 22px; }
+.stat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stat-head b { font-size: 15px; }
+.stat-head .el-tag { margin-left: auto; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; line-height: 24px; }
+.unit { font-size: 11px; color: var(--tech-text-muted); margin-left: 2px; font-weight: 400; }
 .stat-src { margin-top: 6px; font-size: 11px; }
+
+/* 画像：图表行 + 可点击卡片 */
+.stats-charts { display: flex; gap: 10px; margin-bottom: 12px; }
+.chart-panel { flex: 1; min-width: 0; border: 1px solid var(--tech-panel-border); border-radius: 6px; padding: 10px 12px; }
+.cp-t { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 4px; }
+.cp-t .el-icon { color: var(--tech-primary); }
+.cp-t .muted { margin-left: auto; font-weight: 400; }
+.chart-panel .ch { height: 210px; }
+.stat-click { cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+.stat-click:hover { border-color: color-mix(in srgb, var(--tech-primary) 45%, transparent); box-shadow: 0 2px 12px rgba(0, 0, 0, .12); }
+.stat-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--tech-panel-border); font-size: 11.5px; }
+.stat-foot .link { color: var(--tech-primary); }
+.stat-click:hover .link { text-decoration: underline; }
+.lt-name { font-size: 12.5px; }
 .suggest { color: var(--el-color-success); font-family: monospace; }
 </style>

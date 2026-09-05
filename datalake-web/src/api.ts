@@ -269,6 +269,7 @@ export const api = {
   govSaveSubject: (b: any) => save('/data-gov/wh/subject', b),
   govDeleteSubject: (id: number) => http.delete('/data-gov/wh/subject', { params: { id } }).then((r) => r.data),
   govLayerStats: () => http.get('/data-gov/wh/layer/stats').then((r) => r.data),
+  govLayerTables: (code: string) => http.get('/data-gov/wh/layer/tables', { params: { code } }).then((r) => r.data),
   govLayerNamingCheck: () => http.get('/data-gov/wh/layer/naming-check').then((r) => r.data),
   // 数据质量
   govRules: (dimension?: string) => http.get('/data-gov/quality/rule', { params: dimension ? { dimension } : {} }).then((r) => r.data),

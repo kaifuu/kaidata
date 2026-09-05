@@ -496,6 +496,22 @@ public class MetaSeedRunner implements ApplicationRunner {
         tryUpdate("UPDATE meta.ct_deploy_record SET with_data='OFF' WHERE with_data IS NULL OR with_data=''");
         boolean m29 = "29".equals(kv("schema_ver"));
         if (!m29) schemaBump("29");
+
+        // ============ 日志管理升级·登录日志（schema_ver=30） ============
+        // AuthController 登录成功/失败各分支 + 登出埋点写入；操作日志/接口日志复用 sys_audit_log（按 method 分 Tab）
+        exec("CREATE TABLE IF NOT EXISTS meta.sys_login_log (id BIGINT, username VARCHAR(64), result VARCHAR(32), " +
+                "msg VARCHAR(255), ip VARCHAR(64), ts DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
+                "PROPERTIES(\"replication_num\"=\"1\")");
+        boolean m30 = "30".equals(kv("schema_ver"));
+        if (!m30) schemaBump("30");
+
+        // ============ 运维中心·配置管理（schema_ver=31） ============
+        // 系统品牌基础信息（登录页/首页的系统名、LOGO、ICON、ICP 等），k-v 存储；种子只补缺省键不覆盖用户配置
+        exec("CREATE TABLE IF NOT EXISTS meta.sys_config (id BIGINT, cfg_key VARCHAR(64), cfg_value STRING, " +
+                "remark VARCHAR(255), update_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
+                "PROPERTIES(\"replication_num\"=\"1\")");
+        boolean m31 = "31".equals(kv("schema_ver"));
+        if (!m31) schemaBump("31");
     }
 
     /** 带日志的幂等 UPDATE/DELETE（吞异常但打印根因，便于排查迁移未生效）。 */
@@ -654,6 +670,17 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(74, 35, "打包历史", "/container/history", "Clock", "container:history", "MENU", 12);
         menu(70, 35, "发布目标", "/container/server", "Connection", "container:server", "MENU", 13);
         menu(71, 35, "部署记录", "/container/deploy", "Promotion", "container:deploy", "MENU", 14);
+        // 运维中心·配置管理（schema_ver=31：登录页/首页 系统名/LOGO/ICON/ICP 基础信息）
+        menu(75, 35, "配置管理", "/ops/config", "Brush", "ops:config", "MENU", 15);
+
+        // 系统品牌配置键（空值=前端回退内置默认；用户改过的值不覆盖）
+        cfg(1, "sys.name", "系统名称（登录页主标题/侧栏/浏览器标签，留空用内置默认）");
+        cfg(2, "sys.name_en", "系统英文名（侧栏副标/登录页品牌名，默认 kaidata）");
+        cfg(3, "sys.slogan", "登录页标语");
+        cfg(4, "sys.logo", "LOGO 图片（URL 或 base64，用于登录页/侧栏，留空用内置图形）");
+        cfg(5, "sys.icon", "浏览器标签图标 favicon（URL 或 base64，留空不修改）");
+        cfg(6, "sys.icp", "ICP 备案号（登录页页脚，点击跳转工信部备案系统）");
+        cfg(7, "sys.copyright", "版权/落款文本（登录页页脚）");
 
         // 数据门户 → 数据总览（重命名，幂等 UPDATE）
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
@@ -701,6 +728,8 @@ public class MetaSeedRunner implements ApplicationRunner {
         // 容器管理菜单授予 SYS_ADMIN（68 目录已撤销，只授四个叶子）
         int[] containerMenus = {69, 70, 71, 74};
         for (int m : containerMenus) grantMenu(1, m);
+        // 运维中心·配置管理授予 SYS_ADMIN
+        grantMenu(1, 75);
 
         // ---------- 用户（三员 + 超级演示号） ----------
         // admin/admin123：三员合一（便于演示全貌）
@@ -749,6 +778,38 @@ public class MetaSeedRunner implements ApplicationRunner {
             jdbc.update("INSERT INTO ods.dem_user(id, name, gender) VALUES (9303, '演示-王五', '0')");
         } catch (Exception ignored) {} // PRIMARY KEY 模型重跑 upsert，幂等
 
+        // ---------- 订单状态标准 + 演示订单表（让模型 ER 图/关系/落标推荐有完整可演示数据） ----------
+        // 代码集：订单状态
+        if (cnt("SELECT COUNT(*) FROM meta.gov_code_set WHERE id=9010") == 0) {
+            jdbc.update("INSERT INTO meta.gov_code_set(id, code, name, category, description, status, create_time) " +
+                    "VALUES (9010, 'CS_ORDER_STATUS', '订单状态', '枚举', '订单状态代码集（演示）', 'NORMAL', ?)", now);
+        }
+        String[][] orderStatus = {{"9011", "1", "待支付"}, {"9012", "2", "已支付"}, {"9013", "3", "已发货"}, {"9014", "4", "已完成"}, {"9015", "5", "已取消"}};
+        for (int i = 0; i < orderStatus.length; i++) {
+            if (cnt("SELECT COUNT(*) FROM meta.gov_code_item WHERE id=" + orderStatus[i][0]) == 0)
+                jdbc.update("INSERT INTO meta.gov_code_item(id, set_id, code, name, sort, is_enabled, remark) VALUES (?, 9010, ?, ?, ?, true, '')",
+                        Long.parseLong(orderStatus[i][0]), orderStatus[i][1], orderStatus[i][2], i + 1);
+        }
+        // 数据元：订单状态代码（引用订单状态代码集）
+        if (cnt("SELECT COUNT(*) FROM meta.gov_data_element WHERE id=9110") == 0) {
+            jdbc.update("INSERT INTO meta.gov_data_element(id, code, name, en_name, category, data_type, length, precision_, scale_, " +
+                            "unit, data_format, security_level, owner, code_set_id, definition, value_domain, version, status, create_time, update_time) " +
+                            "VALUES (9110, 'ORDER_STATUS', '订单状态代码', 'order_status', '交易', 'VARCHAR', 4, 0, 0, '', '', 'PUBLIC', '治理演示', 9010, '订单状态代码（引用订单状态代码集）', ?, 1, 'NORMAL', ?, ?)",
+                    "1=待支付, 2=已支付, 3=已发货, 4=已完成, 5=已取消", now, now);
+        }
+        // 物理演示表：ods.dem_order（PRIMARY KEY 保幂等），6 行数据，user_id 关联 dem_user
+        exec("CREATE TABLE IF NOT EXISTS ods.dem_order (order_id BIGINT, user_id BIGINT, amount DECIMAL(10,2), " +
+                "status VARCHAR(4), create_time DATETIME) PRIMARY KEY(order_id) DISTRIBUTED BY HASH(order_id) " +
+                "BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        try {
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93101, 9301, 199.00, '2', '2026-08-01 10:00:00')");
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93102, 9301, 88.50, '3', '2026-08-03 14:30:00')");
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93103, 9302, 1299.00, '1', '2026-08-05 09:15:00')");
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93104, 9302, 45.00, '4', '2026-08-06 18:45:00')");
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93105, 9303, 699.00, '5', '2026-08-10 11:20:00')");
+            jdbc.update("INSERT INTO ods.dem_order VALUES (93106, 9303, 12.80, '2', '2026-08-12 16:00:00')");
+        } catch (Exception ignored) {} // PRIMARY KEY 模型重跑 upsert，幂等
+
         // ---------- 全链路演示：数据模型(挂标准) → 元数据 → 资产(通过) → 数据服务(开放) ----------
         // ① 数据模型：用户域模型 + dem_user 表，gender 字段挂「性别代码」标准(element_id=9101)
         if (cnt("SELECT COUNT(*) FROM meta.gov_model WHERE id=1001") == 0)
@@ -761,6 +822,25 @@ public class MetaSeedRunner implements ApplicationRunner {
             jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (3002, 2001, 'name', 'VARCHAR(128)', 0, false, true, '姓名')");
         if (cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE id=3003") == 0)
             jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (3003, 2001, 'gender', 'VARCHAR(4)', 9101, false, true, '性别(挂性别代码标准)')");
+        // 模型补一张订单表 + 1:N 关系，让 ER 图/表间关系可完整演示（仅当模型还叫种子名时改名，避免覆盖用户改动）
+        tryUpdate("UPDATE meta.gov_model SET name='用户与订单' WHERE id=1001 AND name='用户'");
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_table WHERE id=2002") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_table(id, model_id, name, layer, description) VALUES (2002, 1001, 'dem_order', 'ods', '全链路演示-订单表')");
+        String[][] orderFields = {
+                {"3101", "order_id", "BIGINT", "0", "true", "订单编号(主键)"},
+                {"3102", "user_id", "BIGINT", "0", "false", "用户编号(关联用户表)"},
+                {"3103", "amount", "DECIMAL(10,2)", "0", "false", "订单金额"},
+                {"3104", "status", "VARCHAR(4)", "9110", "false", "订单状态(挂订单状态标准)"},
+                {"3105", "create_time", "DATETIME", "0", "false", "下单时间"},
+        };
+        for (String[] f : orderFields) {
+            if (cnt("SELECT COUNT(*) FROM meta.gov_model_field WHERE id=" + f[0]) == 0)
+                jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (?, 2002, ?, ?, ?, ?, true, ?)",
+                        Long.parseLong(f[0]), f[1], f[2], Long.parseLong(f[3]), Boolean.parseBoolean(f[4]), f[5]);
+        }
+        if (cnt("SELECT COUNT(*) FROM meta.gov_model_relation WHERE id=4001") == 0)
+            jdbc.update("INSERT INTO meta.gov_model_relation(id, model_id, table_a, field_a, table_b, field_b, relation_type, create_time) " +
+                    "VALUES (4001, 1001, 2001, 'id', 2002, 'user_id', '1:N', ?)", now);
 
         // ② 元数据：登记 ods.dem_user 进 gov_meta_table（数据地图可见）。复用既有同表记录避免重复
         long demMetaId;
@@ -773,6 +853,14 @@ public class MetaSeedRunner implements ApplicationRunner {
                     "[{\"name\":\"id\",\"type\":\"BIGINT\",\"comment\":\"主键\",\"pos\":1},{\"name\":\"name\",\"type\":\"VARCHAR(128)\",\"comment\":\"姓名\",\"pos\":2},{\"name\":\"gender\",\"type\":\"VARCHAR(4)\",\"comment\":\"性别\",\"pos\":3}]", now);
         } else {
             demMetaId = ((Number) demEx.get(0).get("id")).longValue();
+        }
+        // 元数据：登记 ods.dem_order（复用既有同表记录避免重复）
+        java.util.List<java.util.Map<String, Object>> ordEx = jdbc.queryForList(
+                "SELECT id FROM meta.gov_meta_table WHERE ds_id=9201 AND schema_name='ods' AND table_name='dem_order'");
+        if (ordEx.isEmpty()) {
+            jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, row_count, synced_time, layer_code, security_level, fill_percent, mount_status, current_version) " +
+                            "VALUES (9402, 9201, 'ods', 'dem_order', '全链路演示-订单表', ?, 6, ?, 'ods', 'PUBLIC', 0, 'NONE', 1)",
+                    "[{\"name\":\"order_id\",\"type\":\"BIGINT\",\"comment\":\"订单编号\",\"pos\":1},{\"name\":\"user_id\",\"type\":\"BIGINT\",\"comment\":\"用户编号\",\"pos\":2},{\"name\":\"amount\",\"type\":\"DECIMAL(10,2)\",\"comment\":\"订单金额\",\"pos\":3},{\"name\":\"status\",\"type\":\"VARCHAR(4)\",\"comment\":\"订单状态\",\"pos\":4},{\"name\":\"create_time\",\"type\":\"DATETIME\",\"comment\":\"下单时间\",\"pos\":5}]", now);
         }
 
         // ③ 资产：挂到演示目录并置「通过」(数据服务开放的必要前置)
@@ -812,6 +900,13 @@ public class MetaSeedRunner implements ApplicationRunner {
     private void menu(long id, long parent, String name, String path, String icon, String perm, String type, int sort) {
         if (cnt("SELECT COUNT(*) FROM meta.sys_menu WHERE id=" + id) > 0) return;
         jdbc.update("INSERT INTO meta.sys_menu(id, parent_id, name, path, icon, perm, type, sort) VALUES (?,?,?,?,?,?,?,?)", id, parent, name, path, icon, perm, type, sort);
+    }
+
+    /** 系统配置种子：按 cfg_key 门控，只补缺省键，用户在配置管理页改过的值不会被覆盖。 */
+    private void cfg(long id, String key, String remark) {
+        if (cnt("SELECT COUNT(*) FROM meta.sys_config WHERE cfg_key='" + key + "'") > 0) return;
+        jdbc.update("INSERT INTO meta.sys_config(id, cfg_key, cfg_value, remark, update_time) VALUES (?,?,?,?,?)",
+                id, key, "", remark, new Timestamp(System.currentTimeMillis()));
     }
 
     private void grantMenu(long roleId, int menuId) {

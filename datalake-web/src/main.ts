@@ -9,6 +9,7 @@ import './styles.css'
 import './styles/tech-theme.css'
 import { theme } from './theme' // 副作用：按 localStorage 立即应用主题，避免首屏闪烁
 import i18n from './locale' // 全局 i18n（副作用：按 localStorage 立即设置语言）
+import { loadBrand } from './brand' // 系统品牌（配置管理可改）：标签标题/favicon/登录页/侧栏
 
 const app = createApp(App)
 app.use(i18n)
@@ -16,4 +17,5 @@ app.use(router)
 app.use(ElementPlus)
 // 全局注册所有图标（避免模板里 <User/> 等未注册导致渲染失败）
 for (const [k, c] of Object.entries(Icons)) app.component(k, c as any)
+loadBrand() // 异步拉取，到位后响应式生效（登录页/首页共用）
 app.mount('#app')

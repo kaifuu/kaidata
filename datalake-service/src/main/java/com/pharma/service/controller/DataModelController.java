@@ -25,8 +25,13 @@ public class DataModelController {
     @GetMapping("/list")
     public List<Map<String, Object>> list(@RequestParam(required = false) String domain) {
         Authz.require(Authz.SYS_ADMIN);
-        if (domain == null || domain.isEmpty()) return jdbc.queryForList("SELECT id, name, domain, model_type, description, status, create_time FROM meta.gov_model ORDER BY id");
-        return jdbc.queryForList("SELECT id, name, domain, model_type, description, status, create_time FROM meta.gov_model WHERE domain=? ORDER BY id", domain);
+        // 带表数/字段数统计，列表页直观看到每个模型建到什么程度
+        String base = "SELECT m.id, m.name, m.domain, m.model_type, m.description, m.status, m.create_time, " +
+                "(SELECT COUNT(*) FROM meta.gov_model_table t WHERE t.model_id=m.id) AS table_count, " +
+                "(SELECT COUNT(*) FROM meta.gov_model_field f JOIN meta.gov_model_table t2 ON f.table_id=t2.id WHERE t2.model_id=m.id) AS field_count " +
+                "FROM meta.gov_model m";
+        if (domain == null || domain.isEmpty()) return jdbc.queryForList(base + " ORDER BY m.id");
+        return jdbc.queryForList(base + " WHERE m.domain=? ORDER BY m.id", domain);
     }
     @PostMapping
     public Map<String, Object> create(@RequestBody Map<String, Object> b) {
@@ -263,63 +268,123 @@ public class DataModelController {
         return Map.of("ddl", buildDdl(tableId), "db", str(t.get("layer")), "table", str(t.get("name")));
     }
 
-    /** 一键建物理表：生成 DDL → 在目标数据源执行（复用 DevScriptExecutor）。 */
+    /** 一键建物理表：生成 DDL → 在目标数据源执行（复用 DevScriptExecutor）→ 成功后登记元数据（模型→物理→数据地图闭环）。 */
     @PostMapping("/table/create-physical")
     public Map<String, Object> createPhysical(@RequestParam long tableId, @RequestParam long dsId) {
         Authz.require(Authz.SYS_ADMIN);
         String ddl = buildDdl(tableId);
         Map<String, Object> r = scriptExecutor.executeSql(dsId, ddl);
         boolean ok = "SUCCESS".equals(str(r.get("status")));
+        boolean registered = false;
+        if (ok) registered = registerMeta(tableId, dsId);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", ok);
-        out.put("msg", ok ? "建表成功" : str(r.get("msg")));
+        out.put("msg", ok ? (registered ? "建表成功，已同步登记元数据" : "建表成功（元数据登记失败，可到采集管理手动同步）") : str(r.get("msg")));
         out.put("ddl", ddl);
         return out;
     }
 
+    /** 建成物理表后登记/刷新 gov_meta_table（存在则 UPDATE 列结构与同步时间，避免删行破坏资产挂载引用）。 */
+    private boolean registerMeta(long tableId, long dsId) {
+        try {
+            Map<String, Object> t = jdbc.queryForMap("SELECT name, layer, description FROM meta.gov_model_table WHERE id=?", tableId);
+            String db = str(t.get("layer")); if (db.isEmpty()) db = "ods";
+            String table = str(t.get("name"));
+            List<Map<String, Object>> fs = jdbc.queryForList(
+                    "SELECT name, data_type, is_pk, comment FROM meta.gov_model_field WHERE table_id=? ORDER BY id", tableId);
+            List<Map<String, Object>> cols = new ArrayList<>();
+            for (Map<String, Object> f : fs) {
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("name", str(f.get("name")));
+                c.put("type", str(f.get("data_type")).isEmpty() ? "STRING" : str(f.get("data_type")));
+                c.put("comment", str(f.get("comment")));
+                if (bool(f.get("is_pk"))) c.put("key", "PRI");
+                cols.add(c);
+            }
+            String colsJson = json.writeValueAsString(cols);
+            Integer exist = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM meta.gov_meta_table WHERE ds_id=? AND schema_name=? AND table_name=?",
+                    Integer.class, dsId, db, table);
+            if (exist != null && exist > 0) {
+                jdbc.update("UPDATE meta.gov_meta_table SET columns_json=?, comment=?, synced_time=? WHERE ds_id=? AND schema_name=? AND table_name=?",
+                        colsJson, str(t.get("description")), new Timestamp(System.currentTimeMillis()), dsId, db, table);
+            } else {
+                jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, row_count, synced_time) VALUES (?,?,?,?,?,?,0,?)",
+                        System.currentTimeMillis(), dsId, db, table, str(t.get("description")), colsJson, new Timestamp(System.currentTimeMillis()));
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
-     * 物理表逆向导入模型（增强）：从 gov_meta_table.columns_json 生成模型表+字段。
+     * 物理表逆向导入模型（增强）：从 gov_meta_table.columns_json 批量生成模型表+字段。
      * <ul>
+     *   <li>支持一次多选：metaIds 传逗号分隔的元数据表 id</li>
+     *   <li>同名表已存在于当前模型 → 跳过并回报（不重复导入）</li>
      *   <li>PK：优先读列元数据 key 标记（PRI/key=true），无标记再按 id/*_id 推断</li>
      *   <li>数据元自动匹配：列名（含注释）↔数据元相似度（复用 Std 的 similarity），≥80 自动挂标准</li>
      * </ul>
      */
     @PostMapping("/reverse")
-    public Map<String, Object> reverse(@RequestParam long metaId, @RequestParam long modelId,
+    public Map<String, Object> reverse(@RequestParam String metaIds, @RequestParam long modelId,
                                        @RequestParam(required = false, defaultValue = "ods") String layer) {
         Authz.require(Authz.SYS_ADMIN);
-        Map<String, Object> meta = jdbc.queryForMap("SELECT table_name, columns_json FROM meta.gov_meta_table WHERE id=?", metaId);
+        if (metaIds == null || metaIds.isEmpty()) throw new IllegalArgumentException("请选择要导入的物理表");
         // 数据元池（相似度匹配用）
         List<Map<String, Object>> elements = jdbc.queryForList(
                 "SELECT id, name, en_name FROM meta.gov_data_element WHERE status='NORMAL'");
-        long tableId = System.currentTimeMillis();
-        jdbc.update("INSERT INTO meta.gov_model_table(id, model_id, name, layer, description) VALUES (?,?,?,?,?)",
-                tableId, modelId, str(meta.get("table_name")), str(layer), "逆向导入自 " + str(meta.get("table_name")));
-        int n = 0, matched = 0;
-        try {
-            List<?> cols = json.readValue(str(meta.get("columns_json")), List.class);
-            for (Object o : cols) {
-                String nm, ty, cm, key;
-                if (o instanceof Map) {
-                    Map<?, ?> c = (Map<?, ?>) o;
-                    nm = str(c.get("name")); ty = str(c.get("type")); cm = str(c.get("comment"));
-                    key = str(c.get("key")) + str(c.get("pri"));
-                } else { nm = str(o); ty = ""; cm = ""; key = ""; }
-                if (nm.isEmpty()) continue;
-                if (ty.isEmpty()) ty = "STRING";
-                boolean pk = key.contains("PRI") || key.equalsIgnoreCase("true") || nm.equals("id") || (nm.endsWith("_id") && !nm.endsWith("uuid"));
-                long elementId = 0;
-                for (Map<String, Object> e : elements) {
-                    int s = DataStdController.similarity(cm.isEmpty() ? nm : cm + nm, str(e.get("name")), str(e.get("en_name")));
-                    if (s >= 80) { elementId = lng(e.get("id")); matched++; break; }
+        int imported = 0, fields = 0, matched = 0;
+        List<String> skipped = new ArrayList<>();
+        for (String seg : metaIds.split(",")) {
+            long metaId;
+            try { metaId = Long.parseLong(seg.trim()); } catch (Exception e) { continue; }
+            Map<String, Object> meta;
+            try { meta = jdbc.queryForMap("SELECT table_name, columns_json FROM meta.gov_meta_table WHERE id=?", metaId); }
+            catch (Exception e) { skipped.add(seg + "(元数据不存在)"); continue; }
+            String tName = str(meta.get("table_name"));
+            Integer dup = jdbc.queryForObject("SELECT COUNT(*) FROM meta.gov_model_table WHERE model_id=? AND name=?", Integer.class, modelId, tName);
+            if (dup != null && dup > 0) { skipped.add(tName); continue; }
+            long tableId = System.currentTimeMillis() + imported;
+            jdbc.update("INSERT INTO meta.gov_model_table(id, model_id, name, layer, description) VALUES (?,?,?,?,?)",
+                    tableId, modelId, tName, str(layer), "逆向导入自 " + tName);
+            imported++;
+            try {
+                List<?> cols = json.readValue(str(meta.get("columns_json")), List.class);
+                int n = 0;
+                for (Object o : cols) {
+                    String nm, ty, cm, key;
+                    if (o instanceof Map) {
+                        Map<?, ?> c = (Map<?, ?>) o;
+                        nm = str(c.get("name")); ty = str(c.get("type")); cm = str(c.get("comment"));
+                        key = str(c.get("key")) + str(c.get("pri"));
+                    } else { nm = str(o); ty = ""; cm = ""; key = ""; }
+                    if (nm.isEmpty()) continue;
+                    if (ty.isEmpty()) ty = "STRING";
+                    boolean pk = key.contains("PRI") || key.equalsIgnoreCase("true") || nm.equals("id") || (nm.endsWith("_id") && !nm.endsWith("uuid"));
+                    long elementId = 0;
+                    for (Map<String, Object> e : elements) {
+                        // 列名、注释分别与数据元算相似度取最大（拼接会让 contains 匹配失配）
+                        int s = DataStdController.similarity(nm, str(e.get("name")), str(e.get("en_name")));
+                        if (!cm.isEmpty()) s = Math.max(s, DataStdController.similarity(cm, str(e.get("name")), str(e.get("en_name"))));
+                        if (s >= 80) { elementId = lng(e.get("id")); matched++; break; }
+                    }
+                    jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (?,?,?,?,?,?,?,?)",
+                            System.currentTimeMillis() + imported * 1000L + (n++), tableId, nm, ty, elementId, pk, !pk, cm);
                 }
-                jdbc.update("INSERT INTO meta.gov_model_field(id, table_id, name, data_type, element_id, is_pk, nullable, comment) VALUES (?,?,?,?,?,?,?,?)",
-                        System.currentTimeMillis() + (n++), tableId, nm, ty, elementId, pk, !pk, cm);
+                fields += n;
+            } catch (Exception e) {
+                return Map.of("success", false, "msg", "解析 " + tName + " 的 columns_json 失败: " + e.getMessage());
             }
-        } catch (Exception e) {
-            return Map.of("success", false, "msg", "解析 columns_json 失败: " + e.getMessage());
         }
-        return Map.of("success", true, "tableId", tableId, "fields", n, "stdMatched", matched);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("imported", imported);
+        out.put("fields", fields);
+        out.put("stdMatched", matched);
+        out.put("skipped", String.join("、", skipped));
+        return out;
     }
 
     /** 把模型表+字段拼成 StarRocks DDL（有 pk→PRIMARY KEY，无→DUPLICATE KEY；db=layer，空则 ods）。 */

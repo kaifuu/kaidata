@@ -36,7 +36,7 @@ public class DataMetaController {
                                           @RequestParam(required = false) String kw) {
         Authz.require(Authz.SYS_ADMIN);
         StringBuilder sql = new StringBuilder("SELECT id, ds_id, schema_name, table_name, comment, cn_name, " +
-                "layer_code, subject_id, fill_percent, mount_status, current_version, synced_time " +
+                "layer_code, subject_id, fill_percent, mount_status, current_version, synced_time, columns_json " +
                 "FROM meta.gov_meta_table WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (dsId != null) { sql.append(" AND ds_id=?"); args.add(dsId); }

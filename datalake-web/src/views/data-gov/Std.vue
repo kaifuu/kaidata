@@ -21,7 +21,7 @@
             <el-icon><Plus /></el-icon> 新增数据元
           </el-button>
         </div>
-        <el-table :data="elements" size="small" stripe border v-loading="loading">
+        <el-table :data="pagedElements" size="small" stripe border v-loading="loading">
           <el-table-column prop="code" label="编码" width="130" />
           <el-table-column prop="name" label="名称" min-width="100" />
           <el-table-column prop="en_name" label="英文名" width="110" />
@@ -42,6 +42,11 @@
             <template #default="{ row }"><el-button link size="small" type="primary" @click="openEl(row)">编辑</el-button><el-button link size="small" type="success" @click="openLand(row)">落标</el-button><el-button link size="small" @click="openVersions(row)">版本</el-button><el-button link size="small" type="danger" @click="delEl(row)">删除</el-button></template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="elPage.page" :page-size="elPage.size" :total="elements.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onElSizeChange" @current-change="onElPageChange" />
+        </div>
       </el-tab-pane>
 
       <!-- 代码集 -->
@@ -56,7 +61,7 @@
             <el-icon><Plus /></el-icon> 新增代码集
           </el-button>
         </div>
-        <el-table :data="codeSets" size="small" stripe border v-loading="loadingCs">
+        <el-table :data="pagedCodeSets" size="small" stripe border v-loading="loadingCs">
           <el-table-column prop="code" label="编码" width="130" />
           <el-table-column prop="name" label="名称" min-width="120" />
           <el-table-column label="分类" width="80">
@@ -71,6 +76,11 @@
             <template #default="{ row }"><el-button link size="small" type="success" @click="openItems(row)">代码项</el-button><el-button link size="small" type="primary" @click="openCs(row)">编辑</el-button><el-button link size="small" type="danger" @click="delCs(row)">删除</el-button></template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="csPage.page" :page-size="csPage.size" :total="codeSets.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onCsSizeChange" @current-change="onCsPageChange" />
+        </div>
       </el-tab-pane>
 
       <!-- 落标概况 -->
@@ -118,7 +128,7 @@
     </el-tabs>
 
     <!-- 数据元编辑 -->
-    <el-dialog v-model="elDlg" :title="deForm.id ? '编辑数据元' : '新增数据元'" width="580px">
+    <el-drawer v-model="elDlg" :title="deForm.id ? '编辑数据元' : '新增数据元'" size="680px">
       <el-form :model="deForm" label-width="80px">
         <el-form-item label="编码">
           <el-input v-model="deForm.code" placeholder="如 DE_SEX" />
@@ -176,10 +186,10 @@
         <el-button @click="elDlg = false">取消</el-button>
         <el-button type="primary" @click="saveEl">保存</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 数据元引用明细 -->
-    <el-dialog v-model="elRefsDlg" :title="'引用明细 - ' + (curEl?.name || '')" width="620px">
+    <el-drawer v-model="elRefsDlg" :title="'引用明细 - ' + (curEl?.name || '')" size="720px">
       <div class="muted" style="margin-bottom:8px">共被 {{ elRefs.length }} 处模型字段引用</div>
       <el-table :data="elRefs" size="small" border max-height="360">
         <el-table-column prop="model_name" label="模型" width="140" />
@@ -187,10 +197,10 @@
         <el-table-column prop="field_name" label="字段" min-width="120" />
         <el-table-column prop="data_type" label="类型" width="110" />
       </el-table>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 代码集编辑 -->
-    <el-dialog v-model="csDlg" :title="csForm.id ? '编辑代码集' : '新增代码集'" width="460px">
+    <el-drawer v-model="csDlg" :title="csForm.id ? '编辑代码集' : '新增代码集'" size="560px">
       <el-form :model="csForm" label-width="60px">
         <el-form-item label="编码">
           <el-input v-model="csForm.code" />
@@ -211,10 +221,10 @@
         <el-button @click="csDlg = false">取消</el-button>
         <el-button type="primary" @click="saveCs">保存</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 代码集被引用 -->
-    <el-dialog v-model="csRefsDlg" :title="'被引用 - ' + (curCs?.name || '')" width="560px">
+    <el-drawer v-model="csRefsDlg" :title="'被引用 - ' + (curCs?.name || '')" size="660px">
       <div class="muted" style="margin-bottom:8px">共被 {{ csRefs.length }} 个数据元引用</div>
       <el-table :data="csRefs" size="small" border max-height="360">
         <el-table-column prop="code" label="编码" width="130" />
@@ -222,10 +232,10 @@
         <el-table-column prop="en_name" label="英文名" width="120" />
         <el-table-column prop="category" label="分类" width="80" />
       </el-table>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 代码项 -->
-    <el-dialog v-model="itemDlg" :title="'代码项 - ' + (curSet?.name || '')" width="640px">
+    <el-drawer v-model="itemDlg" :title="'代码项 - ' + (curSet?.name || '')" size="740px">
       <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap">
         <el-input v-model="newItem.code" size="small" placeholder="编码" style="width:110px" />
         <el-input v-model="newItem.name" size="small" placeholder="名称" style="width:140px" />
@@ -245,10 +255,10 @@
           <template #default="{ row }"><el-button link size="small" type="primary" @click="editItem(row)">改备注</el-button><el-button link size="small" type="danger" @click="delItem(row)">删除</el-button></template>
         </el-table-column>
       </el-table>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 标准落标 → 派生质量规则 -->
-    <el-dialog v-model="landDlg" :title="'标准落标 - ' + (curEl?.name || '')" width="640px">
+    <el-drawer v-model="landDlg" :title="'标准落标 - ' + (curEl?.name || '')" size="740px">
       <el-form :model="landForm" label-width="70px">
         <el-form-item label="数据源">
           <el-select v-model="landForm.dsId" placeholder="选择数据源（质量规则取数用）" style="width:100%">
@@ -281,10 +291,10 @@
       <template #footer>
         <el-button @click="landDlg = false">关闭</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 数据元版本历史 + 对比 -->
-    <el-dialog v-model="verDlg" :title="'版本历史 - ' + (verEl?.name || '')" width="720px">
+    <el-drawer v-model="verDlg" :title="'版本历史 - ' + (verEl?.name || '')" size="820px">
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
         <el-select v-model="verA" size="small" placeholder="版本 A" style="width:140px"><el-option v-for="v in versions" :key="v.version_n" :label="'v' + v.version_n" :value="v.version_n" /></el-select>
         <span class="muted">对比</span>
@@ -306,7 +316,7 @@
           <el-table-column prop="new" label="新值" min-width="140" />
         </el-table>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 落标推荐 -->
     <el-dialog v-model="recDlg" title="落标推荐（列名 ↔ 数据元相似度）" width="860px">
@@ -325,7 +335,7 @@
           <el-table-column label="推荐数据元（Top3）" min-width="420">
             <template #default="{ row }">
               <template v-if="row.suggestions?.length">
-                <div v-for="s in row.suggestions" :key="s.id" class="rec-item">
+                <div v-for="s in row.suggestions" :key="s.element_id" class="rec-item">
                   <el-tag size="small" :type="s.score >= 90 ? 'success' : 'info'">{{ s.score }}</el-tag>
                   <span>{{ s.name }}（{{ s.code }} · {{ s.data_type }}）</span>
                   <el-button link size="small" type="primary" @click="landFromRec(s, row)">落标</el-button>
@@ -369,6 +379,19 @@ const codeSets = ref<any[]>([])
 const loadingCs = ref(false)
 const f = reactive<any>({ category: '', status: '', keyword: '' })
 const cf = reactive<any>({ category: '', keyword: '' })
+
+// 主表客户端分页：数据元 + 代码集
+const elPage = reactive({ page: 1, size: 10 })
+const pagedElements = computed(() => elements.value.slice((elPage.page - 1) * elPage.size, elPage.page * elPage.size))
+const csPage = reactive({ page: 1, size: 10 })
+const pagedCodeSets = computed(() => codeSets.value.slice((csPage.page - 1) * csPage.size, csPage.page * csPage.size))
+function onElSizeChange(s: number) { elPage.size = s; elPage.page = 1 }
+function onElPageChange(p: number) { elPage.page = p }
+function onCsSizeChange(s: number) { csPage.size = s; csPage.page = 1 }
+function onCsPageChange(p: number) { csPage.page = p }
+// 过滤条件变化复位到第一页
+watch(f, () => { elPage.page = 1 })
+watch(cf, () => { csPage.page = 1 })
 
 const elDlg = ref(false)
 const deForm = reactive<any>({ ...DEFAULT_EL })
@@ -564,7 +587,7 @@ async function landFromRec(s: any, col: any) {
   if (!recData.value?.dsId) return ElMessage.warning('元数据缺数据源信息')
   const tableName = recData.value.tableName
   try {
-    await api.govStdLand({ elementId: s.id, dsId: recData.value.dsId, tableName, columnName: col.column })
+    await api.govStdLand({ elementId: s.element_id ?? s.id, dsId: recData.value.dsId, tableName, columnName: col.column })
     ElMessage.success(`已落标：${col.column} → ${s.name}`)
   } catch (e: any) { ElMessage.error(errMsg(e)) }
 }

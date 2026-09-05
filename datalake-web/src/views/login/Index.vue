@@ -13,7 +13,8 @@
     <!-- 左侧品牌区 -->
     <div class="brand">
       <div class="brand-logo">
-        <svg viewBox="0 0 120 120" class="logo-svg">
+        <img v-if="brandText('sys.logo')" :src="brandText('sys.logo')" alt="LOGO" class="logo-img" />
+        <svg v-else viewBox="0 0 120 120" class="logo-svg">
           <defs>
             <linearGradient id="kg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e0ff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
             <linearGradient id="kg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f6bff"/><stop offset="1" stop-color="#00e0ff"/></linearGradient>
@@ -28,9 +29,9 @@
           <circle cx="40" cy="60" r="8" fill="#fff"/><circle cx="40" cy="60" r="3.5" fill="#00e0ff"/>
         </svg>
       </div>
-      <div class="brand-name">kaidata</div>
-      <h1>{{ $t('app.name') }}</h1>
-      <p>{{ $t('app.slogan') }}</p>
+      <div class="brand-name">{{ brandText('sys.name_en', 'kaidata').toUpperCase() }}</div>
+      <h1>{{ brandText('sys.name', $t('app.name')) }}</h1>
+      <p>{{ brandText('sys.slogan', $t('app.slogan')) }}</p>
       <ul class="brand-points">
         <li><el-icon><Connection /></el-icon> {{ $t('app.feature1') }}</li>
         <li><el-icon><Cpu /></el-icon> {{ $t('app.feature2') }}</li>
@@ -88,9 +89,11 @@
     </div>
 
     <div class="footer">
-      {{ $t('login.footer') }}{{ $t('app.name') }} {{ $t('app.nameEn') }}
+      {{ $t('login.footer') }}{{ brandText('sys.name', $t('app.name')) }} {{ brandText('sys.name_en', $t('app.nameEn')) }}
       <span class="sep">·</span>
       <a class="kaifuu" href="https://www.kainfer.cn/" target="_blank" rel="noopener">{{ $t('app.byKaifuu') }}</a>
+      <template v-if="brandText('sys.copyright')"><span class="sep">·</span>{{ brandText('sys.copyright') }}</template>
+      <a v-if="brandText('sys.icp')" class="icp" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">{{ brandText('sys.icp') }}</a>
     </div>
   </div>
 </template>
@@ -104,6 +107,7 @@ import { User, Lock, Right, Iphone, Picture } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { api, errMsg } from '@/api'
 import { auth } from '@/auth'
+import { brandText } from '@/brand'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import LangToggle from '@/components/LangToggle.vue'
 import ParticleBackground from '@/components/ParticleBackground.vue'
@@ -227,6 +231,7 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
   animation: logoFloat 5s ease-in-out infinite;
 }
 .brand-logo .logo-svg { width: 100%; height: 100%; display: block; }
+.brand-logo .logo-img { width: 100%; height: 100%; object-fit: contain; border-radius: 18px; }
 @keyframes logoFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 .brand-name { font-size: 16px; letter-spacing: 8px; color: var(--tech-primary); font-weight: 700; margin-bottom: 6px; text-shadow: var(--tech-glow); }
 .brand h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 2px; text-shadow: var(--tech-glow); }
@@ -302,6 +307,8 @@ onUnmounted(() => { clearInterval(qrTimer); clearInterval(countdown) })
 .footer .sep { margin: 0 6px; }
 .footer .kaifuu { color: var(--tech-primary); text-decoration: none; letter-spacing: 1px; }
 .footer .kaifuu:hover { text-shadow: var(--tech-glow); }
+.footer .icp { color: inherit; text-decoration: none; margin-left: 6px; }
+.footer .icp:hover { color: var(--tech-primary); }
 
 @media (max-width: 880px) { .brand { display: none; } }
 </style>

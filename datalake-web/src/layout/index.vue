@@ -2,10 +2,11 @@
   <el-container class="layout">
     <el-aside width="220px" class="aside">
       <div class="logo">
-        <el-icon class="logo-ico"><DataLine /></el-icon>
+        <img v-if="brandText('sys.logo')" class="logo-img" :src="brandText('sys.logo')" alt="LOGO" />
+        <el-icon v-else class="logo-ico"><DataLine /></el-icon>
         <div class="logo-txt">
-          <div class="t1">{{ $t('app.name') }}</div>
-          <div class="t2">KAIDATA</div>
+          <div class="t1">{{ brandText('sys.name', $t('app.name')) }}</div>
+          <div class="t2">{{ brandText('sys.name_en', 'KAIDATA').toUpperCase() }}</div>
         </div>
       </div>
       <el-menu :default-active="route.path" router class="nav" unique-opened>
@@ -74,6 +75,7 @@ import { useI18n } from 'vue-i18n'
 import { auth } from '@/auth'
 import { api, type MenuRow } from '@/api'
 import { locale, menuKey } from '@/locale'
+import { brandText } from '@/brand'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import LangToggle from '@/components/LangToggle.vue'
 import TodoBell from '@/components/TodoBell.vue'
@@ -151,6 +153,7 @@ html.dark .aside {
 /* Logo 区 */
 .logo { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--tech-panel-border); }
 .logo-ico { font-size: 28px; color: var(--tech-primary); }
+.logo-img { width: 28px; height: 28px; object-fit: contain; border-radius: 6px; }
 .logo-txt .t1 { font-size: 16px; font-weight: 700; letter-spacing: 1px; color: var(--tech-text); }
 .logo-txt .t2 { font-size: 10px; letter-spacing: 3px; color: var(--tech-primary); opacity: .85; }
 html.dark .logo-ico { filter: drop-shadow(0 0 6px var(--tech-primary)); }

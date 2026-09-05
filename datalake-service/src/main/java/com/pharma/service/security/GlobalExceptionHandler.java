@@ -34,8 +34,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> badRequest(IllegalArgumentException e) {
         log.warn("Bad request: {}", e.getMessage());
+        // 校验消息都是手写的中文提示，直接透出，避免被「请求参数错误」掩蔽无从排查
+        String message = e.getMessage() == null || e.getMessage().isBlank()
+                ? I18nUtil.message("error.badRequest") : e.getMessage();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of("code", 400, "message", I18nUtil.message("error.badRequest")));
+                .body(Map.of("code", 400, "message", message));
     }
 
     @ExceptionHandler(Exception.class)

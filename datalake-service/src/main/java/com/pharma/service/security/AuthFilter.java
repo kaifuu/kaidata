@@ -46,8 +46,8 @@ public class AuthFilter implements Filter {
 
         // 非 /api/ 前缀（静态/错误页等）直接放行
         if (!uri.startsWith("/api/")) { chain.doFilter(req, res); return; }
-        // 登录 / 验证码接口免鉴权（在审计 try/finally 之前 return，不写审计）
-        if (uri.equals("/api/auth/login") || uri.equals("/api/auth/captcha")) { chain.doFilter(req, res); return; }
+        // 登录 / 验证码 / 公开品牌信息（登录页未登录也要展示系统名/LOGO/ICP）免鉴权，在审计 try/finally 之前 return 不写审计
+        if (uri.equals("/api/auth/login") || uri.equals("/api/auth/captcha") || uri.equals("/api/system/brand")) { chain.doFilter(req, res); return; }
 
         Map<String, Object> payload = tokenUtil.verify(http.getHeader("Authorization"));
 
@@ -86,7 +86,7 @@ public class AuthFilter implements Filter {
         try {
             String username = payload == null ? "anonymous" : String.valueOf(payload.getOrDefault("username", "anonymous"));
             long id = System.currentTimeMillis();
-            String ip = clientIp(http);
+            String ip = WebUtil.clientIp(http);
             jdbc.update(
                     "INSERT INTO meta.sys_audit_log(id, username, uri, method, params, result, ip, ts) " +
                             "VALUES (?,?,?,?,?,?,?,?)",
@@ -96,11 +96,5 @@ public class AuthFilter implements Filter {
         } catch (Exception ignored) {
             // 审计失败不阻断业务
         }
-    }
-
-    private String clientIp(HttpServletRequest r) {
-        String xff = r.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isEmpty()) return xff.split(",")[0].trim();
-        return r.getRemoteAddr();
     }
 }

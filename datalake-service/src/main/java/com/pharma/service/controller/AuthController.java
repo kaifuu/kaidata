@@ -44,20 +44,22 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
+    public ResponseEntity<?> login(@RequestBody Map<String, String> body, jakarta.servlet.http.HttpServletRequest req) {
+        String username = body.get("username") == null ? "" : body.get("username");
         // 验证码校验（查库之前）：失败即拒，挡住无效请求、减少库压力
         if (!captchaStore.verify(body.get("captchaId"), body.get("captchaCode"))) {
+            loginLog(username, "FAIL", "验证码错误", req);
             return unauthorized(I18nUtil.message("auth.captcha.error"));
         }
-        String username = body.get("username");
         String password = body.get("password");
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT id, username, password, name, status FROM meta.sys_user WHERE username=?", username);
-        if (rows.isEmpty()) return unauthorized(I18nUtil.message("auth.login.failed"));
+        if (rows.isEmpty()) { loginLog(username, "FAIL", "账号不存在", req); return unauthorized(I18nUtil.message("auth.login.failed")); }
         Map<String, Object> u = rows.get(0);
-        if (!"NORMAL".equals(String.valueOf(u.get("status")))) return unauthorized(I18nUtil.message("auth.login.disabled"));
-        if (!PasswordUtil.matches(password, String.valueOf(u.get("password")))) return unauthorized(I18nUtil.message("auth.login.failed"));
+        if (!"NORMAL".equals(String.valueOf(u.get("status")))) { loginLog(username, "FAIL", "账号已禁用", req); return unauthorized(I18nUtil.message("auth.login.disabled")); }
+        if (!PasswordUtil.matches(password, String.valueOf(u.get("password")))) { loginLog(username, "FAIL", "密码错误", req); return unauthorized(I18nUtil.message("auth.login.failed")); }
 
+        loginLog(username, "SUCCESS", "登录成功", req);
         long uid = ((Number) u.get("id")).longValue();
         List<String> codes = roleCodesOf(uid);
         String role = codes.isEmpty() ? "GUEST" : codes.get(0);
@@ -147,10 +149,21 @@ public class AuthController {
         return menusOf(AuthContext.username());
     }
 
-    /** 登出（客户端丢弃令牌；服务端无状态） */
+    /** 登出（客户端丢弃令牌；服务端无状态，仅记一条登录日志） */
     @PostMapping("/logout")
-    public Map<String, Object> logout() {
+    public Map<String, Object> logout(jakarta.servlet.http.HttpServletRequest req) {
+        loginLog(AuthContext.username(), "LOGOUT", "登出", req);
         return Map.of("success", true);
+    }
+
+    /** 写一条登录日志（成功/失败原因/登出），失败不阻断主流程 */
+    private void loginLog(String username, String result, String msg, jakarta.servlet.http.HttpServletRequest req) {
+        try {
+            jdbc.update("INSERT INTO meta.sys_login_log(id, username, result, msg, ip, ts) VALUES (?,?,?,?,?,?)",
+                    System.currentTimeMillis(), username, result, msg,
+                    com.pharma.service.security.WebUtil.clientIp(req),
+                    new java.sql.Timestamp(System.currentTimeMillis()));
+        } catch (Exception ignored) { }
     }
 
     // -------- 辅助 --------

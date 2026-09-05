@@ -37,6 +37,7 @@ export interface RoleFullRow { id: number; code: string; name: string; menu_ids:
 export interface TenantRow { id: number; code: string; name: string; status: string; create_time?: string; org_count?: number; user_count?: number }
 export interface OrgRow { id: number; tenant_id: number; parent_id: number; code: string; name: string; sort: number; create_time?: string; tenant_name?: string; user_count?: number; children?: OrgRow[] }
 export interface LogRow { id: number; username: string; uri: string; method: string; params: string; result: string; ip: string; ts: string }
+export interface LoginLogRow { id: number; username: string; result: string; msg: string; ip: string; ts: string }
 
 /** 统一分页结果（与后端 PageResult 对齐，snake_case 不影响这些单词字段） */
 export interface PageResult<T> { records: T[]; total: number; page: number; size: number; pages: number }
@@ -108,9 +109,15 @@ export const api = {
   sysDeleteMenu: (id: number) => http.delete('/system/menu', { params: { id } }).then((r) => r.data),
   sysToggleMenu: (id: number) => http.post('/system/menu/toggle', null, { params: { id } }).then((r) => r.data),
 
+  // ===== 配置管理·系统品牌 [SYS_ADMIN] =====
+  sysConfig: () => http.get('/system/config').then((r) => r.data),
+  sysSaveConfig: (body: Record<string, string>) => http.put('/system/config', body).then((r) => r.data),
+
   // ===== 日志 [AUDIT_ADMIN] =====
-  sysLogs: (params: { page?: number; size?: number; username?: string; result?: string; keyword?: string } = {}) =>
+  sysLogs: (params: { page?: number; size?: number; username?: string; result?: string; keyword?: string; op?: string; begin?: string; end?: string } = {}) =>
     http.get<PageResult<LogRow>>('/system/log', { params }).then((r) => r.data),
+  sysLoginLogs: (params: { page?: number; size?: number; username?: string; result?: string; begin?: string; end?: string } = {}) =>
+    http.get<PageResult<LoginLogRow>>('/system/login-log', { params }).then((r) => r.data),
 
   // ===== 下拉选项（全量，供表单选择 / 穿梭框；走分页接口取 records） =====
   sysTenantOptions: () => http.get<PageResult<TenantRow>>('/system/tenant', { params: { size: 1000 } }).then((r) => r.data.records),
@@ -225,7 +232,7 @@ export const api = {
   // 模型落地：DDL 生成 / 一键建物理表 / 物理表逆向导入
   govModelDdl: (tableId: number) => http.get('/data-gov/model/table/ddl', { params: { tableId } }).then((r) => r.data),
   govModelCreatePhysical: (tableId: number, dsId: number) => http.post('/data-gov/model/table/create-physical', null, { params: { tableId, dsId }, timeout: 60000 }).then((r) => r.data),
-  govModelReverse: (metaId: number, modelId: number, layer: string) => http.post('/data-gov/model/reverse', null, { params: { metaId, modelId, layer } }).then((r) => r.data),
+  govModelReverse: (metaIds: number[], modelId: number, layer: string) => http.post('/data-gov/model/reverse', null, { params: { metaIds: metaIds.join(','), modelId, layer } }).then((r) => r.data),
   govSaveModelTable: (b: any) => http.post('/data-gov/model/table', b).then((r) => r.data),
   govUpdateModelTable: (b: any) => http.put('/data-gov/model/table', b).then((r) => r.data),
   govDeleteModelTable: (id: number) => http.delete('/data-gov/model/table', { params: { id } }).then((r) => r.data),

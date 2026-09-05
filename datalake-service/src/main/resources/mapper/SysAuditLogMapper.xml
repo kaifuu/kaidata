@@ -8,6 +8,9 @@
         <where>
             <if test="q.username != null and q.username != ''"> AND username = #{q.username} </if>
             <if test="q.result != null and q.result != ''"> AND result = #{q.result} </if>
+            <if test="q.op != null and q.op == 'write'"> AND method IN ('POST','PUT','DELETE') </if>
+            <if test="q.begin != null and q.begin != ''"> AND ts &gt;= #{q.begin} </if>
+            <if test="q.end != null and q.end != ''"> AND ts &lt;= #{q.end} </if>
             <if test="q.keyword != null and q.keyword != ''">
                 AND (uri LIKE CONCAT('%', #{q.keyword}, '%') OR params LIKE CONCAT('%', #{q.keyword}, '%'))
             </if>

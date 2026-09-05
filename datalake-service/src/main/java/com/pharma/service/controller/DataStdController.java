@@ -485,6 +485,7 @@ public class DataStdController {
             if (s >= 60) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("element_id", lng(e.get("id")));
+                m.put("id", lng(e.get("id")));   // 兼容别名，避免消费方取错键
                 m.put("code", str(e.get("code")));
                 m.put("name", str(e.get("name")));
                 m.put("category", str(e.get("category")));

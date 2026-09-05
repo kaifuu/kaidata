@@ -1,13 +1,37 @@
 <template>
   <div class="dl-card">
     <div class="card-title"><span>数据模型</span><span class="role-tag">系统管理员</span></div>
-    <el-button type="primary" size="small" @click="open()" style="margin-bottom:10px"><el-icon><Plus /></el-icon> 新增模型</el-button>
-    <el-table :data="models" size="small" stripe border v-loading="loading">
+    <div class="dl-toolbar">
+      <el-button type="primary" size="small" @click="open()"><el-icon><Plus /></el-icon> 新增模型</el-button>
+      <el-input v-model="mKw" placeholder="名称 / 主题域 / 说明" size="small" clearable style="width:220px">
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <el-select v-model="mType" placeholder="模型类型" size="small" clearable style="width:130px">
+        <el-option v-for="t in ['概念模型','逻辑模型','物理模型']" :key="t" :label="t" :value="t" />
+      </el-select>
+      <div class="toolbar-actions"><span class="muted">共 {{ filtered.length }} 个模型</span></div>
+    </div>
+    <el-table :data="filtered" size="small" stripe border v-loading="loading">
       <el-table-column prop="name" label="模型名称" min-width="140" />
-      <el-table-column prop="domain" label="主题域" width="120" />
-      <el-table-column prop="model_type" label="类型" width="100"><template #default="{ row }"><el-tag size="small">{{ row.model_type }}</el-tag></template></el-table-column>
-      <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="domain" label="主题域" width="110" />
+      <el-table-column prop="model_type" label="类型" width="95"><template #default="{ row }"><el-tag size="small">{{ row.model_type }}</el-tag></template></el-table-column>
+      <el-table-column label="规模" width="130">
+        <template #default="{ row }">
+          <span class="sz"><b>{{ row.table_count ?? 0 }}</b> 表 · <b>{{ row.field_count ?? 0 }}</b> 字段</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="description" label="说明" min-width="150" show-overflow-tooltip />
       <el-table-column label="操作" width="290"><template #default="{ row }"><el-button link size="small" type="primary" @click="openTables(row)">表</el-button><el-button link size="small" type="success" @click="openEr(row)">ER图</el-button><el-button link size="small" type="primary" @click="open(row)">编辑</el-button><el-button link size="small" type="danger" @click="del(row)">删除</el-button></template></el-table-column>
+      <template #empty>
+        <div class="empty-guide">
+          <div class="eg-title">还没有模型，三步建成一个数据模型</div>
+          <div class="eg-steps">
+            <div class="eg-step"><span class="eg-n">1</span>点上方「新增模型」，填写名称与主题域</div>
+            <div class="eg-step"><span class="eg-n">2</span>进「表」页签 → 逆向导入，从元数据池勾选物理表（自动带出字段/主键/数据元）</div>
+            <div class="eg-step"><span class="eg-n">3</span>在「表间关系」连 1:N 关系，看 ER 图；字段可关联数据元落标</div>
+          </div>
+        </div>
+      </template>
     </el-table>
 
     <el-dialog v-model="dlg" :title="form.id ? '编辑模型' : '新增模型'" width="480px">
@@ -219,21 +243,65 @@
       <template #footer><el-button @click="createDlg = false">取消</el-button><el-button type="primary" :loading="creating" @click="doCreate">建表</el-button></template>
     </el-dialog>
 
-    <!-- 逆向导入 -->
-    <el-dialog v-model="reverseDlg" title="物理表逆向导入模型" width="480px">
-      <el-form label-width="80px" size="small">
-        <el-form-item label="目标模型">{{ cur?.name }}</el-form-item>
-        <el-form-item label="物理表">
-          <el-select v-model="reverseMeta" filterable remote :remote-method="searchMeta" :loading="metaSearching" placeholder="搜索已采集的物理表" style="width:100%">
-            <el-option v-for="m in metaOptions" :key="m.id" :label="m.table_name" :value="m.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="归入分层">
-          <el-select v-model="reverseLayer" style="width:100%"><el-option v-for="l in layerCodes" :key="l" :label="l" :value="l" /></el-select>
-        </el-form-item>
-        <div class="muted" style="margin:-6px 0 8px 70px">导入自动识别主键并按列名/注释匹配数据元（相似度≥80 自动绑定）</div>
-      </el-form>
-      <template #footer><el-button @click="reverseDlg = false">取消</el-button><el-button type="primary" :loading="reversing" @click="doReverse">导入</el-button></template>
+    <!-- 逆向导入（重做）：默认列全表 + 数据源筛选 + 列预览 + 多选 + 重复禁选 -->
+    <el-dialog v-model="reverseDlg" title="物理表逆向导入模型" width="820px" top="6vh">
+      <div class="rev-bar">
+        <span class="rev-target">目标模型：<b>{{ cur?.name }}</b></span>
+        <el-select v-model="revDs" placeholder="全部数据源" size="small" clearable filterable style="width:190px">
+          <el-option v-for="d in sources" :key="d.id" :label="d.name" :value="d.id" />
+        </el-select>
+        <el-input v-model="revKw" placeholder="表名 / 注释 关键字" size="small" clearable style="width:200px">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-select v-model="reverseLayer" size="small" style="width:110px" title="归入分层">
+          <template #prefix><span class="muted">分层</span></template>
+          <el-option v-for="l in layerCodes" :key="l" :label="l" :value="l" />
+        </el-select>
+        <span class="muted rev-count">共 {{ revFiltered.length }} 张表，已选 {{ revSel.length }} 张</span>
+      </div>
+      <el-table :data="revPageRows" size="small" border max-height="300" v-loading="revLoading"
+                row-key="id" @selection-change="onRevSel" @row-click="previewMeta">
+        <el-table-column type="selection" width="42" reserve-selection :selectable="selectableMeta" />
+        <el-table-column label="表" min-width="200">
+          <template #default="{ row }">
+            <span class="rev-tbl">{{ row.schema_name }}.{{ row.table_name }}</span>
+            <el-tag v-if="isImported(row)" size="small" type="info" class="rev-dup">已导入</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="comment" label="注释" min-width="130" show-overflow-tooltip />
+        <el-table-column label="字段数" width="70" align="center">
+          <template #default="{ row }">{{ colCount(row) }}</template>
+        </el-table-column>
+        <el-table-column :formatter="fmtDs" label="数据源" width="120" show-overflow-tooltip />
+        <template #empty>
+          <div class="empty-guide small">
+            <div class="eg-title">{{ allMetas.length ? '无匹配的物理表' : '元数据池为空，暂无可导入的表' }}</div>
+            <div v-if="!allMetas.length" class="eg-steps">
+              <div class="eg-step">先在【数据接入 → 离线/实时接入】把数据入仓（自动登记元数据），</div>
+              <div class="eg-step">或在【元数据管理 → 采集管理】对已有数据源执行同步/采集。</div>
+            </div>
+          </div>
+        </template>
+      </el-table>
+      <div class="rev-pager">
+        <el-pagination size="small" :current-page="revPage" :page-size="REV_PS" :total="revFiltered.length"
+                       layout="prev, pager, next" @current-change="onRevPage" />
+      </div>
+      <!-- 选中/点击行的列预览 -->
+      <div v-if="previewCols.length" class="rev-preview">
+        <div class="muted" style="margin-bottom:6px">{{ previewName }} 的列（{{ previewCols.length }}）· 主键与数据元将在导入时自动识别绑定</div>
+        <el-table :data="previewCols" size="small" border max-height="180">
+          <el-table-column label="列名" min-width="130"><template #default="{ row }"><span :class="{ pk: row.key === 'PRI' }">{{ (row.key === 'PRI' ? 'PK ' : '') + row.name }}</span></template></el-table-column>
+          <el-table-column label="类型" width="120"><template #default="{ row }">{{ row.type || 'STRING' }}</template></el-table-column>
+          <el-table-column label="注释" min-width="150"><template #default="{ row }"><span class="muted">{{ row.comment || '—' }}</span></template></el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="reverseDlg = false">取消</el-button>
+        <el-button type="primary" :loading="reversing" :disabled="!revSel.length" @click="doReverse">
+          导入 {{ revSel.length ? revSel.length + ' 张表' : '' }}
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -241,10 +309,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 
 const models = ref<any[]>([]); const loading = ref(false)
+const mKw = ref(''); const mType = ref('')
+const filtered = computed(() => {
+  const kw = mKw.value.trim().toLowerCase()
+  return models.value.filter((m) =>
+    (!mType.value || m.model_type === mType.value) &&
+    (!kw || (m.name || '').toLowerCase().includes(kw) || (m.domain || '').toLowerCase().includes(kw) || (m.description || '').toLowerCase().includes(kw)))
+})
 const dlg = ref(false); const form = reactive<any>({ id: null, name: '', domain: '', model_type: '逻辑模型', description: '' })
 const tableDlg = ref(false); const mTab = ref('table'); const cur = ref<any>(null); const mTables = ref<any[]>([])
 const newTableDlg = ref(false); const tForm = reactive<any>({ name: '', layer: 'dwd', description: '' })
@@ -479,7 +554,6 @@ async function delField(row: any) { try { await api.govDeleteModelField(row.id);
 const sources = ref<any[]>([])
 const ddlDlg = ref(false); const ddlInfo = reactive<any>({ ddl: '', db: '', table: '' })
 const createDlg = ref(false); const createInfo = reactive<any>({ tableId: 0, table: '', db: '' }); const createDs = ref<number>(0); const creating = ref(false)
-const reverseDlg = ref(false); const reverseMeta = ref<number>(0); const reverseLayer = ref('ods'); const reversing = ref(false); const metaOptions = ref<any[]>([]); const metaSearching = ref(false)
 
 async function loadSources() { try { sources.value = await api.daSources() } catch { sources.value = [] } }
 async function showDdl(row: any) {
@@ -493,19 +567,54 @@ async function doCreate() {
   try { const r: any = await api.govModelCreatePhysical(createInfo.tableId, createDs.value); ElMessage[r.success ? 'success' : 'error'](r.msg || (r.success ? '建表成功' : '建表失败')); if (r.success) createDlg.value = false }
   catch (e: any) { ElMessage.error(errMsg(e)) } finally { creating.value = false }
 }
-function openReverse() { reverseMeta.value = 0; reverseLayer.value = 'ods'; metaOptions.value = []; reverseDlg.value = true }
-async function searchMeta(q: string) {
-  if (!q) { metaOptions.value = []; return }
-  metaSearching.value = true
-  try { metaOptions.value = await api.govMetaList({ kw: q }) } catch { metaOptions.value = [] } finally { metaSearching.value = false }
+
+// ----- 逆向导入（重做）：打开即列全表，数据源 + 关键字客户端过滤，多选带分页保持 -----
+const REV_PS = 8
+const reverseDlg = ref(false); const reverseLayer = ref('ods'); const reversing = ref(false)
+const allMetas = ref<any[]>([]); const revLoading = ref(false)
+const revDs = ref<number | undefined>(undefined); const revKw = ref('')
+const revSel = ref<any[]>([]); const revPage = ref(1)
+const previewRow = ref<any>(null)
+
+const revFiltered = computed(() => {
+  const kw = revKw.value.trim().toLowerCase()
+  return allMetas.value.filter((m) =>
+    (!revDs.value || m.ds_id === revDs.value) &&
+    (!kw || (m.table_name || '').toLowerCase().includes(kw) || (m.comment || '').toLowerCase().includes(kw) || (m.schema_name || '').toLowerCase().includes(kw)))
+})
+const revPageRows = computed(() => revFiltered.value.slice((revPage.value - 1) * REV_PS, revPage.value * REV_PS))
+const previewCols = computed<any[]>(() => {
+  const m = previewRow.value
+  if (!m) return []
+  try { return JSON.parse(m.columns_json || '[]') } catch { return [] }
+})
+const previewName = computed(() => previewRow.value ? `${previewRow.value.schema_name}.${previewRow.value.table_name}` : '')
+
+async function openReverse() {
+  reverseLayer.value = 'ods'; revDs.value = undefined; revKw.value = ''; revSel.value = []; revPage.value = 1; previewRow.value = null
+  reverseDlg.value = true
+  revLoading.value = true
+  try { allMetas.value = await api.govMetaList({}) } catch { allMetas.value = [] } finally { revLoading.value = false }
 }
+function isImported(m: any) { return mTables.value.some((t) => t.name === m.table_name) }
+function selectableMeta(m: any) { return !isImported(m) }
+function onRevSel(s: any[]) { revSel.value = s }
+function onRevPage(p: number) { revPage.value = p }
+function colCount(m: any) { try { return JSON.parse(m.columns_json || '[]').length } catch { return 0 } }
+function dsName(dsId: any) { return sources.value.find((d) => d.id === dsId)?.name || `#${dsId}` }
+function fmtDs(row: any) { return dsName(row.ds_id) }
+function previewMeta(row: any) { previewRow.value = row }
 async function doReverse() {
-  if (!reverseMeta.value) return ElMessage.warning('请选择物理表')
+  if (!revSel.value.length) return ElMessage.warning('请勾选要导入的表')
   reversing.value = true
   try {
-    const r: any = await api.govModelReverse(reverseMeta.value, cur.value.id, reverseLayer.value)
-    ElMessage.success(`已导入：新增 ${r.fields} 个字段，自动绑定数据元 ${r.stdMatched || 0} 个`)
-    reverseDlg.value = false; mTables.value = await api.govModelTables(cur.value.id)
+    const r: any = await api.govModelReverse(revSel.value.map((m) => m.id), cur.value.id, reverseLayer.value)
+    let tip = `已导入 ${r.imported} 张表 / ${r.fields} 个字段，自动绑定数据元 ${r.stdMatched || 0} 个`
+    if (r.skipped) tip += `；跳过已存在：${r.skipped}`
+    ElMessage.success(tip)
+    reverseDlg.value = false
+    mTables.value = await api.govModelTables(cur.value.id)
+    await load()
   }
   catch (e: any) { ElMessage.error(errMsg(e)) } finally { reversing.value = false }
 }
@@ -516,6 +625,29 @@ onMounted(() => { load(); loadElements(); loadSources(); loadLayers() })
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .muted { color: var(--tech-text-muted); font-size: 12px; }
+.sz { font-size: 12px; color: var(--tech-text-muted); }
+.sz b { color: var(--tech-text); }
+
+/* 列表/逆向弹窗的空态引导 */
+.empty-guide { padding: 18px 10px; text-align: left; }
+.empty-guide.small { padding: 10px; text-align: center; }
+.eg-title { font-size: 14px; font-weight: 600; color: var(--tech-text); margin-bottom: 12px; text-align: center; }
+.eg-steps { display: flex; flex-direction: column; gap: 8px; max-width: 480px; margin: 0 auto; }
+.eg-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--tech-text-muted); }
+.eg-n { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--tech-primary); background: color-mix(in srgb, var(--tech-primary) 14%, transparent); }
+
+/* 逆向导入弹窗 */
+.rev-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.rev-target { font-size: 13px; }
+.rev-target b { color: var(--tech-primary); }
+.rev-count { margin-left: auto; }
+.rev-tbl { font-weight: 600; color: var(--tech-text); font-family: var(--el-font-family, monospace); }
+.rev-dup { margin-left: 6px; }
+.rev-pager { display: flex; justify-content: flex-end; margin-top: 6px; }
+.rev-preview { margin-top: 10px; border-top: 1px dashed var(--tech-panel-border); padding-top: 8px; }
+.rev-preview .pk { color: #f5c542; font-weight: 600; }
+
 .er-wrap { display: flex; flex-direction: column; height: calc(100vh - 120px); }
 .er-toolbar { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .er-tools { display: inline-flex; align-items: center; gap: 6px; }

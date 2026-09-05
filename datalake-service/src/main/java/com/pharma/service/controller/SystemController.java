@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +52,8 @@ public class SystemController {
     private MenuService menuService;
     @Autowired
     private AuditLogService auditLogService;
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     // ==================== 用户管理 [SYS_ADMIN] ====================
 
@@ -256,19 +259,93 @@ public class SystemController {
 
     // ==================== 日志管理 [AUDIT_ADMIN] ====================
 
+    /** 接口/操作审计：op=write 时只看写操作（POST/PUT/DELETE），begin/end 为时间范围 */
     @GetMapping("/log")
     public PageResult<SysAuditLog> logs(
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long size,
             @RequestParam(required = false) String username,
             @RequestParam(required = false) String result,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String op,
+            @RequestParam(required = false) String begin,
+            @RequestParam(required = false) String end) {
         Authz.require(Authz.AUDIT_ADMIN);
         Map<String, Object> q = new HashMap<>();
         q.put("username", username);
         q.put("result", result);
         q.put("keyword", keyword);
+        q.put("op", op);
+        q.put("begin", begin);
+        q.put("end", end);
         return auditLogService.pageLogs(page, size, q);
+    }
+
+    /** 登录日志：SUCCESS / FAIL(原因见 msg) / LOGOUT */
+    @GetMapping("/login-log")
+    public Map<String, Object> loginLogs(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String result,
+            @RequestParam(required = false) String begin,
+            @RequestParam(required = false) String end) {
+        Authz.require(Authz.AUDIT_ADMIN);
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (username != null && !username.isEmpty()) { where.append(" AND username=?"); args.add(username); }
+        if (result != null && !result.isEmpty()) { where.append(" AND result=?"); args.add(result); }
+        if (begin != null && !begin.isEmpty()) { where.append(" AND ts>=?"); args.add(begin); }
+        if (end != null && !end.isEmpty()) { where.append(" AND ts<=?"); args.add(end); }
+        long total = jdbc.queryForObject("SELECT COUNT(*) FROM meta.sys_login_log" + where, Long.class, args.toArray());
+        List<Map<String, Object>> records = jdbc.queryForList(
+                "SELECT id, username, result, msg, ip, ts FROM meta.sys_login_log" + where +
+                        " ORDER BY ts DESC, id DESC LIMIT " + ((page - 1) * size) + "," + size, args.toArray());
+        return Map.of("records", records, "total", total, "page", page, "size", size);
+    }
+
+    // ==================== 配置管理·系统品牌 [SYS_ADMIN] ====================
+    // 登录页/首页的基础信息（系统名/LOGO/ICON/ICP 等），k-v 存 meta.sys_config；空值=前端回退内置默认
+
+    /** 全量配置（管理端）：values 为 key→当前值，rows 为 key→remark/更新时间。 */
+    @GetMapping("/config")
+    public Map<String, Object> configAll() {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> values = new LinkedHashMap<>();
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT cfg_key, cfg_value, remark, update_time FROM meta.sys_config ORDER BY id");
+        for (Map<String, Object> r : rows) values.put(String.valueOf(r.get("cfg_key")), r.get("cfg_value"));
+        return Map.of("values", values, "rows", rows);
+    }
+
+    /** 批量保存：body={key: value}；存在则 UPDATE 否则 INSERT（键白名单外也可存，便于扩展）。 */
+    @PutMapping("/config")
+    public Map<String, Object> configSave(@RequestBody Map<String, Object> b) {
+        Authz.require(Authz.SYS_ADMIN);
+        java.sql.Timestamp now = new java.sql.Timestamp(System.currentTimeMillis());
+        for (Map.Entry<String, Object> e : b.entrySet()) {
+            if (e.getKey() == null || e.getKey().isEmpty()) continue;
+            String v = e.getValue() == null ? "" : String.valueOf(e.getValue());
+            Integer exist = jdbc.queryForObject("SELECT COUNT(*) FROM meta.sys_config WHERE cfg_key=?", Integer.class, e.getKey());
+            if (exist != null && exist > 0)
+                jdbc.update("UPDATE meta.sys_config SET cfg_value=?, update_time=? WHERE cfg_key=?", v, now, e.getKey());
+            else
+                jdbc.update("INSERT INTO meta.sys_config(id, cfg_key, cfg_value, update_time) VALUES (?,?,?,?)",
+                        System.currentTimeMillis(), e.getKey(), v, now);
+        }
+        return Map.of("success", true);
+    }
+
+    /** 品牌信息（公开：登录页未登录也需展示，AuthFilter 白名单放行；仅暴露品牌键，不带其他配置）。 */
+    @GetMapping("/brand")
+    public Map<String, Object> brand() {
+        List<String> pub = List.of("sys.name", "sys.name_en", "sys.slogan", "sys.logo", "sys.icon", "sys.icp", "sys.copyright");
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList("SELECT cfg_key, cfg_value FROM meta.sys_config")) {
+            String k = String.valueOf(r.get("cfg_key"));
+            if (pub.contains(k)) out.put(k, r.get("cfg_value"));
+        }
+        return out;
     }
 
     // -------- 类型转换助手 --------

@@ -262,7 +262,7 @@ export const api = {
   govLayers: () => http.get('/data-gov/wh/layer').then((r) => r.data),
   govSaveLayer: (b: any) => save('/data-gov/wh/layer', b),
   govDeleteLayer: (code: string) => http.delete('/data-gov/wh/layer', { params: { code } }).then((r) => r.data),
-  govLayerDs: (layerCode: string) => http.get('/data-gov/wh/layer/datasource', { params: { layerCode } }).then((r) => r.data),
+  govLayerDs: (layerCode?: string) => http.get('/data-gov/wh/layer/datasource', { params: layerCode ? { layerCode } : {} }).then((r) => r.data),
   govBindLayerDs: (b: any) => http.post('/data-gov/wh/layer/datasource', b).then((r) => r.data),
   govUnbindLayerDs: (id: number) => http.delete('/data-gov/wh/layer/datasource', { params: { id } }).then((r) => r.data),
   govSubjects: () => http.get('/data-gov/wh/subject').then((r) => r.data),

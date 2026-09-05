@@ -137,21 +137,44 @@ public class DataWhController {
     }
 
     // ===== 层级-数据源绑定 =====
+
+    /** 绑定列表（JOIN 数据源富化：名称/类型/地址/库/状态）。layerCode 可选 —— 不传返回全部层（左树统计 + 「全部层级」视图）。 */
     @GetMapping("/layer/datasource")
-    public List<Map<String, Object>> listLayerDs(@RequestParam String layerCode) {
+    public List<Map<String, Object>> listLayerDs(@RequestParam(required = false) String layerCode) {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, layer_code, datasource_id FROM meta.gov_layer_datasource WHERE layer_code=?", layerCode);
+        String sql = "SELECT b.id, b.layer_code, b.datasource_id, d.name AS ds_name, d.type AS ds_type, " +
+                "d.host, d.port, d.db_name, d.status AS ds_status " +
+                "FROM meta.gov_layer_datasource b LEFT JOIN meta.ing_datasource d ON b.datasource_id = d.id";
+        if (layerCode == null || layerCode.isEmpty()) {
+            return jdbc.queryForList(sql + " ORDER BY b.layer_code, b.id");
+        }
+        return jdbc.queryForList(sql + " WHERE b.layer_code=? ORDER BY b.id", layerCode);
     }
+
+    /** 绑定数据源（支持批量：datasource_ids 数组；兼容单数 datasource_id）。已绑定的跳过。 */
     @PostMapping("/layer/datasource")
     public Map<String, Object> bindLayerDs(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
-        long layerCode = lng(b.get("datasource_id"));
         String lc = str(b.get("layer_code"));
-        Integer c = jdbc.queryForObject("SELECT COUNT(*) FROM meta.gov_layer_datasource WHERE layer_code=? AND datasource_id=?", Integer.class, lc, layerCode);
-        if (c != null && c > 0) return Map.of("success", true, "msg", "已绑定");
-        jdbc.update("INSERT INTO meta.gov_layer_datasource(id, layer_code, datasource_id) VALUES (?,?,?)",
-                System.currentTimeMillis(), lc, layerCode);
-        return Map.of("success", true);
+        if (lc.isEmpty()) throw new IllegalArgumentException("layer_code 必填");
+        List<Long> dsIds = new ArrayList<>();
+        if (b.get("datasource_ids") instanceof List<?> arr) {
+            for (Object o : arr) dsIds.add(lng(o));
+        } else if (lng(b.get("datasource_id")) > 0) {
+            dsIds.add(lng(b.get("datasource_id")));
+        }
+        int added = 0;
+        for (long dsId : dsIds) {
+            if (dsId <= 0) continue;
+            Integer c = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM meta.gov_layer_datasource WHERE layer_code=? AND datasource_id=?",
+                    Integer.class, lc, dsId);
+            if (c != null && c > 0) continue;
+            jdbc.update("INSERT INTO meta.gov_layer_datasource(id, layer_code, datasource_id) VALUES (?,?,?)",
+                    System.currentTimeMillis() + added, lc, dsId);
+            added++;
+        }
+        return Map.of("success", true, "added", added);
     }
     @DeleteMapping("/layer/datasource")
     public Map<String, Object> unbindLayerDs(@RequestParam long id) {

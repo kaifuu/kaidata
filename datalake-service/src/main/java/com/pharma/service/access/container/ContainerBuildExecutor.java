@@ -51,7 +51,8 @@ public class ContainerBuildExecutor {
     /** 随部署附带大数据栈时上传的编排资产（相对仓库 docker/ 目录；缺失跳过并记日志）。 */
     private static final String[] STACK_FILES = {
             "docker-compose.yml", "hop-jdbc/mysql-connector-j-8.3.0.jar",
-            "init/doris-ddl.sql", "init/kafka-topics.sh", "init/minio-init.sh"};
+            "iceberg-rest-aws/Dockerfile",       // 湖 REST Catalog 自建镜像（compose build 用，远端拉 jar 自行构建）
+            "init/doris-ddl.sql", "init/kafka-topics.sh", "init/minio-init.sh", "init/iceberg-catalog.sql"};
     /** meta 逻辑导出排除的运行历史表（远端保留自己的构建/部署/审计记录，导出保持"基础数据"体积）。 */
     private static final List<String> DUMP_EXCLUDE = List.of("sys_audit_log", "ct_image_build_run", "ct_deploy_record");
 
@@ -374,7 +375,8 @@ public class ContainerBuildExecutor {
         String remoteBase = uploadDir + "/bigdata";
         if ("/tmp".equals(uploadDir)) append(st, "⚠ 部署目录不可写，栈编排文件落在 /tmp/bigdata（远端重启后丢失，已起容器不受影响）\n");
         RemoteCmdExec.ExecResult mk = RemoteCmdExec.runCmd(c,
-                "mkdir -p " + shq(remoteBase + "/hop-jdbc") + " " + shq(remoteBase + "/init") + " " + shq(remoteBase + "/hop-output"), 30);
+                "mkdir -p " + shq(remoteBase + "/hop-jdbc") + " " + shq(remoteBase + "/init") + " "
+                        + shq(remoteBase + "/hop-output") + " " + shq(remoteBase + "/iceberg-rest-aws"), 30);
         if (!mk.ok) throw new RuntimeException("远端目录创建失败: " + mk.err);
         Path dockerRoot = Paths.get(contextDir).resolve("docker");
         List<Path> files = new ArrayList<>();
@@ -423,6 +425,25 @@ public class ContainerBuildExecutor {
             RemoteCmdExec.ExecResult dl = RemoteCmdExec.runCmd(c, sud + "sh -c " + shq(ddlInner), 120, pwd);
             if (dl.ok) append(st, "数仓分层库 ods/dwd/dws/ads/dim 已就绪\n");
             else append(st, "⚠ 数仓分层库初始化失败（不阻塞部署）: " + dl.err + "\n");
+        }
+
+        // g2. 湖仓初始化：① minio/mc 临时容器建 lake 桶（Iceberg warehouse）② SR 挂 Iceberg External Catalog。
+        //     两者均幂等（已存在仅提示/报 already exists），失败不阻塞部署（湖功能后续可手工补）。
+        String mcInit = dockerBin + " run --rm --network=pharma-bigdata_default " +
+                "-e MC_HOST_pharma=http://minioadmin:minioadmin@minio:9000 " +
+                "-v " + shq(remoteBase + "/init/minio-init.sh") + ":/minio-init.sh:ro " +
+                "minio/mc:latest sh /minio-init.sh";
+        RemoteCmdExec.ExecResult mb = RemoteCmdExec.runCmd(c, mcInit, 300);
+        if (mb.ok) append(st, "MinIO 湖桶 lake 已就绪\n");
+        else append(st, "⚠ MinIO 建桶失败（不阻塞部署，湖接入前需手工建 lake 桶）: " + mb.err + "\n");
+
+        if (Files.exists(dockerRoot.resolve("init/iceberg-catalog.sql"))) {
+            String catInner = dockerBin + " exec -i pharma-starrocks mysql -h127.0.0.1 -P9030 -uroot < " + shq(remoteBase + "/init/iceberg-catalog.sql");
+            RemoteCmdExec.ExecResult cat = RemoteCmdExec.runCmd(c, sud + "sh -c " + shq(catInner), 120, pwd);
+            // 幂等：重复部署报 already exists 也视为成功
+            if (cat.ok || (cat.err != null && cat.err.contains("already exists")))
+                append(st, "Iceberg External Catalog iceberg_catalog 已挂载\n");
+            else append(st, "⚠ Iceberg Catalog 挂载失败（不阻塞部署）: " + cat.err + "\n");
         }
     }
 

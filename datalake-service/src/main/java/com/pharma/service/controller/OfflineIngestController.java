@@ -4,6 +4,7 @@ import com.pharma.service.access.adapter.DataSourceAdapter;
 import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.DataSourceLoader;
+import com.pharma.service.access.adapter.IcebergAdapter;
 import com.pharma.service.access.ingest.IngestExecutor;
 import com.pharma.service.security.AccessDeniedException;
 import com.pharma.service.security.Authz;
@@ -28,6 +29,7 @@ public class OfflineIngestController {
     @Autowired private DataSourceAdapterRegistry registry;
     @Autowired private DataSourceLoader loader;
     @Autowired private IngestExecutor executor;
+    @Autowired private com.pharma.service.access.ingest.IcebergWriter icebergWriter;
     @Autowired private com.pharma.service.access.meta.LineageExtractor lineageExtractor;
     @Autowired private com.pharma.service.access.meta.MetaCollectExecutor metaCollectExecutor;
     private final com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -215,18 +217,32 @@ public class OfflineIngestController {
                 targetType = tgtDs.type;
                 tgtPool = registry.getPool(tgtDs);
             }
-            // 增量仅支持 StarRocks/Doris（依赖主键模型去重）；由本 catch 落 FAIL run
-            if (incremental && !"starrocks".equals(targetType) && !"doris".equals(targetType)) {
-                throw new IllegalArgumentException("增量模式仅支持 StarRocks/Doris 目标（依赖主键模型去重）");
+            // 增量仅支持 StarRocks/Doris（主键模型去重）与 Iceberg（追加新快照）；由本 catch 落 FAIL run
+            if (incremental && !"starrocks".equals(targetType) && !"doris".equals(targetType)
+                    && !"iceberg".equals(targetType)) {
+                throw new IllegalArgumentException("增量模式仅支持 StarRocks/Doris（主键去重）或 Iceberg（快照追加）目标");
             }
 
-            IngestExecutor.Result r = executor.execute(pool, sourceSql, targetDb, targetTable, incremental, bizKey, tgtPool, targetType);
-            // 增量更新水位（用目标连接池；增量已限 starrocks/doris，反引号有效）
+            IngestExecutor.Result r;
+            if ("iceberg".equals(targetType)) {
+                // 湖表：REST Catalog 提交 + S3FileIO 写 Parquet 到 MinIO（FULL=快照级整表替换，INCREMENTAL=追加）
+                r = icebergWriter.execute(pool, sourceSql, tgtDsFor(targetDsId), targetDb, targetTable, incremental);
+            } else {
+                r = executor.execute(pool, sourceSql, targetDb, targetTable, incremental, bizKey, tgtPool, targetType);
+            }
+            // 增量更新水位（starrocks/doris 用目标池反引号查；iceberg 经主库三段名查湖表）
             if (incremental && !incCol.isEmpty()) {
                 try {
-                    JdbcTemplate tgtJt = useMain ? this.jdbc : new JdbcTemplate(tgtPool);
-                    Object max = tgtJt.queryForObject(
-                            "SELECT MAX(" + incCol + ") FROM `" + targetDb + "`.`" + targetTable + "`", Object.class);
+                    JdbcTemplate tgtJt;
+                    String fq;
+                    if ("iceberg".equals(targetType)) {
+                        tgtJt = this.jdbc;
+                        fq = IcebergAdapter.SR_CATALOG + ".`" + IcebergAdapter.nsOf(targetDb) + "`.`" + targetTable + "`";
+                    } else {
+                        tgtJt = useMain ? this.jdbc : new JdbcTemplate(tgtPool);
+                        fq = "`" + targetDb + "`.`" + targetTable + "`";
+                    }
+                    Object max = tgtJt.queryForObject("SELECT MAX(" + incCol + ") FROM " + fq, Object.class);
                     if (max != null) jdbc.update("UPDATE meta.ing_offline_job SET last_sync_value=? WHERE id=?",
                             String.valueOf(max), jobId);
                 } catch (Exception ignored) {}
@@ -236,7 +252,10 @@ public class OfflineIngestController {
                 com.fasterxml.jackson.databind.node.ArrayNode arr = json.createArrayNode();
                 if (r.colTypes != null) for (String[] ct : r.colTypes) arr.addObject().put("name", ct[0]).put("type", ct[1]);
                 long metaDsId = (useMain || targetDsId == null) ? 0L : targetDsId.longValue();
-                metaCollectExecutor.upsertTable(metaDsId, targetDb, targetTable, json.writeValueAsString(arr));
+                // iceberg 目标登记为三段名前缀形态（iceberg_catalog.ns），元数据地图/质量/资产直查主库即中
+                String metaSchema = "iceberg".equals(targetType)
+                        ? IcebergAdapter.SR_CATALOG + "." + IcebergAdapter.nsOf(targetDb) : targetDb;
+                metaCollectExecutor.upsertTable(metaDsId, metaSchema, targetTable, json.writeValueAsString(arr));
             } catch (Exception ignored) {}
             jdbc.update("INSERT INTO meta.ing_offline_run(id, job_id, start_time, end_time, status, rows_read, " +
                             "rows_written, error_msg, triggered_by) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -296,6 +315,9 @@ public class OfflineIngestController {
     }
 
     // ==================== 助手 ====================
+
+    /** 取目标数据源描述（iceberg 湖写需要其 REST/S3 连接参数；调用点已保证非空）。 */
+    private DataSourceDescriptor tgtDsFor(Long targetDsId) { return loader.load(targetDsId); }
 
     private static void validateTable(String t) {
         if (t == null || !t.matches("[a-zA-Z0-9_.]+")) throw new IllegalArgumentException("非法表名: " + t);

@@ -26,6 +26,9 @@ public class AdapterConfig {
     // ---- Elasticsearch（REST） ----
     @Bean DataSourceAdapter elasticsearchAdapter() { return new ElasticsearchAdapter(); }
 
+    // ---- Iceberg 湖（REST Catalog + S3FileIO 写 MinIO，读走 StarRocks External Catalog） ----
+    @Bean DataSourceAdapter icebergAdapter() { return new IcebergAdapter(); }
+
     // ---- 国产占位（驱动需手动放置） ----
     @Bean DataSourceAdapter damengAdapter() { return new PlaceholderAdapter("dameng", "达梦 DmJdbcDriver18.jar"); }
     // 人大金仓 Kingbase 兼容 PostgreSQL 线协议，复用 pg 驱动即可真实连通

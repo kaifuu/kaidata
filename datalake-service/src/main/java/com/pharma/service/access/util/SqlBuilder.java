@@ -10,10 +10,15 @@ public final class SqlBuilder {
 
     private SqlBuilder() {}
 
-    /** 校验标识符（允许库.表 形式时由调用方拆分后再校验每段）。 */
+    /** 校验标识符（允许 a.b.c 点分多段——湖表三段名 iceberg_catalog.ns 等；每段仍限字母数字下划线，防注入）。 */
     public static void ident(String s) {
-        if (s == null || !s.matches("[a-zA-Z0-9_]+")) {
+        if (s == null || s.isEmpty()) {
             throw new IllegalArgumentException("非法标识符: " + s);
+        }
+        for (String part : s.split("\\.", -1)) {
+            if (!part.matches("[a-zA-Z0-9_]+")) {
+                throw new IllegalArgumentException("非法标识符: " + s);
+            }
         }
     }
 

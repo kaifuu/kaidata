@@ -13,8 +13,8 @@
 # ============================================================
 set -e
 
-# 湖存储主 bucket（Iceberg 表格式存放目录）
-mc mb -p pharma/pharma-lake    || echo "[minio-init] pharma-lake 已存在"
+# 湖仓主 bucket（Iceberg 表格式存放目录；对齐 compose CATALOG_WAREHOUSE=s3://lake/wh）
+mc mb -p pharma/lake           || echo "[minio-init] lake 已存在"
 # 归档 bucket（预留）
 mc mb -p pharma/pharma-archive || echo "[minio-init] pharma-archive 已存在"
 

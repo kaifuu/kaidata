@@ -34,7 +34,7 @@ import java.util.*;
 public class DataSourceController {
 
     /** 内部数据源：可充当数仓存储（对应手册的"内部"属性）。 */
-    private static final Set<String> INTERNAL_TYPES = Set.of("mysql", "starrocks", "doris", "clickhouse", "hive");
+    private static final Set<String> INTERNAL_TYPES = Set.of("mysql", "starrocks", "doris", "clickhouse", "hive", "iceberg");
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataSourceAdapterRegistry registry;
@@ -180,9 +180,10 @@ public class DataSourceController {
             r.put("indices", ((ElasticsearchAdapter) a).listIndices(ds));
             return r;
         }
-        // schema 为空时：MySQL 系按 db_name 过滤（库即 schema）；PG 系(含 Kingbase) 库≠schema，不按库名过滤（列全部用户 schema）
+        // schema 为空时：MySQL 系按 db_name 过滤（库即 schema）；PG 系(含 Kingbase) 库≠schema，不按库名过滤（列全部用户 schema）；
+        // iceberg 列全部命名空间（db_name 只是"默认命名空间"提示，工作台左树按 ns 分组展示全部湖表）
         String effectiveSchema = (schema != null && !schema.isEmpty()) ? schema
-                : (isPgFamily(ds.type) ? null : ds.dbName);
+                : (("iceberg".equals(ds.type) || isPgFamily(ds.type)) ? null : ds.dbName);
         return a.listTables(registry.getPool(ds), effectiveSchema);
     }
 
@@ -284,6 +285,118 @@ public class DataSourceController {
         }
         sb.append("\n);");
         return Map.of("ddl", sb.toString(), "source", "reconstructed");
+    }
+
+    // ==================== 湖表快照（时间旅行：列快照 / 按快照查数 / 回滚） ====================
+
+    /** 加载湖表并在 catalog 存活期内执行操作（iceberg 数据源专用；Table 的 commit 等是 lazy 调用，
+     *  catalog 关闭后执行会报 Connection pool shut down，故用回调把操作收进 try 块）。 */
+    private <T> T withLakeTable(long id, String schema, String table, java.util.function.Function<org.apache.iceberg.Table, T> action) {
+        SqlBuilder.ident(table);
+        DataSourceDescriptor ds = loadDs(id);
+        if (!"iceberg".equals(ds.type)) throw new IllegalArgumentException("仅 iceberg 数据源支持快照操作");
+        String ns = com.pharma.service.access.adapter.IcebergAdapter.nsOf(schema);
+        if (ns == null || ns.isEmpty()) ns = com.pharma.service.access.adapter.IcebergAdapter.defaultNs();
+        try (org.apache.iceberg.rest.RESTCatalog catalog = com.pharma.service.access.adapter.IcebergAdapter.catalog(ds)) {
+            org.apache.iceberg.Table t = catalog.loadTable(org.apache.iceberg.catalog.TableIdentifier.of(ns, table));
+            return action.apply(t);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("湖表操作失败：" + rootMsg(e), e);
+        }
+    }
+
+    /** 湖表快照列表：[{snapshotId, createdAt(ms), operation, totalRecords, addedRecords, ...}]，新→旧。 */
+    @GetMapping("/snapshots")
+    public List<Map<String, Object>> snapshots(@RequestParam long id,
+                                               @RequestParam(required = false) String schema,
+                                               @RequestParam String table) {
+        Authz.require(Authz.SYS_ADMIN);
+        return withLakeTable(id, schema, table, t -> {
+            long current = t.currentSnapshot() == null ? -1 : t.currentSnapshot().snapshotId();
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (org.apache.iceberg.Snapshot s : t.snapshots()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("snapshotId", s.snapshotId());
+                m.put("current", s.snapshotId() == current);
+                m.put("createdAt", s.timestampMillis());
+                m.put("operation", s.operation());
+                m.put("totalRecords", num(s.summary(), "total-records"));
+                m.put("addedRecords", num(s.summary(), "added-records"));
+                m.put("deletedRecords", num(s.summary(), "deleted-records"));
+                m.put("totalDataFiles", num(s.summary(), "total-data-files"));
+                m.put("totalSizeBytes", num(s.summary(), "total-size"));
+                out.add(m);
+            }
+            Collections.reverse(out);
+            return out;
+        });
+    }
+
+    private static Object num(Map<String, String> summary, String key) {
+        String v = summary == null ? null : summary.get(key);
+        if (v == null || v.isEmpty()) return 0;
+        try { return Long.parseLong(v); } catch (NumberFormatException e) { return v; }
+    }
+
+    /** 按快照查数（时间旅行预览）：经 iceberg-java 直读该快照的数据文件，前 limit 行。 */
+    @GetMapping("/snapshot-data")
+    public Map<String, Object> snapshotData(@RequestParam long id,
+                                            @RequestParam(required = false) String schema,
+                                            @RequestParam String table,
+                                            @RequestParam long snapshotId,
+                                            @RequestParam(defaultValue = "50") int limit) {
+        Authz.require(Authz.SYS_ADMIN);
+        return withLakeTable(id, schema, table, t -> {
+            int lim = Math.min(Math.max(limit, 1), 500);
+            List<String> cols = new ArrayList<>();
+            for (org.apache.iceberg.types.Types.NestedField f : t.schema().columns()) cols.add(f.name());
+            List<Map<String, Object>> rows = new ArrayList<>();
+            try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.data.Record> it =
+                         org.apache.iceberg.data.IcebergGenerics.read(t).useSnapshot(snapshotId).build()) {
+                for (org.apache.iceberg.data.Record r : it) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 0; i < cols.size(); i++) row.put(cols.get(i), snapVal(r.get(i)));
+                    rows.add(row);
+                    if (rows.size() >= lim) break;
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("快照数据读取失败：" + rootMsg(e), e);
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("columns", cols);
+            out.put("rows", rows);
+            out.put("snapshotId", snapshotId);
+            return out;
+        });
+    }
+
+    /** 回滚到指定快照（manageSnapshots().rollbackTo().commit()，生成新的回滚快照）。 */
+    @PostMapping("/snapshot-rollback")
+    public Map<String, Object> snapshotRollback(@RequestParam long id,
+                                                @RequestParam(required = false) String schema,
+                                                @RequestParam String table,
+                                                @RequestParam long snapshotId) {
+        Authz.require(Authz.SYS_ADMIN);
+        return withLakeTable(id, schema, table, t -> {
+            try {
+                t.manageSnapshots().rollbackTo(snapshotId).commit();
+            } catch (RuntimeException e) {
+                throw new RuntimeException("快照回滚失败：" + rootMsg(e), e);
+            }
+            t.refresh();   // rollback commit 后重新拉取元数据
+            org.apache.iceberg.Snapshot s = t.currentSnapshot();
+            return Map.of("success", true,
+                    "currentSnapshotId", s == null ? -1 : s.snapshotId());
+        });
+    }
+
+    /** iceberg 值 → 可 JSON 序列化值（LocalDate/LocalDateTime 等 → 字符串）。 */
+    private static Object snapVal(Object v) {
+        if (v == null || v instanceof Number || v instanceof String || v instanceof Boolean) return v;
+        if (v instanceof byte[]) return Base64.getEncoder().encodeToString((byte[]) v);
+        return String.valueOf(v);
     }
 
     /** 校验表名合法性并拼成 schema.table（各段均走标识符校验，防注入）。 */

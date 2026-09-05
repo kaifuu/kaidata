@@ -19,6 +19,8 @@ public class DataModelController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DevScriptExecutor scriptExecutor;
+    @Autowired private com.pharma.service.access.adapter.DataSourceLoader loader;
+    @Autowired private com.pharma.service.access.ingest.IcebergWriter icebergWriter;
     private final ObjectMapper json = new ObjectMapper();
 
     // ===== 模型 =====
@@ -260,28 +262,86 @@ public class DataModelController {
 
     // ===== 模型落地：DDL 生成 / 一键建物理表 / 物理表逆向导入 =====
 
-    /** 生成模型表的 StarRocks 建表 DDL（复用 StarRocksDdlBuilder）。db=model_table.layer。 */
+    /** 生成模型表的建表 DDL。默认 StarRocks（复用 StarRocksDdlBuilder，db=model_table.layer）；
+     *  传 dsId 且目标为 iceberg 数据源时生成 Iceberg 湖表 DDL（namespace=model_table.layer，三段名展示）。 */
     @GetMapping("/table/ddl")
-    public Map<String, Object> generateDdl(@RequestParam long tableId) {
+    public Map<String, Object> generateDdl(@RequestParam long tableId,
+                                           @RequestParam(required = false) Long dsId) {
         Authz.require(Authz.SYS_ADMIN);
         Map<String, Object> t = jdbc.queryForMap("SELECT name, layer FROM meta.gov_model_table WHERE id=?", tableId);
-        return Map.of("ddl", buildDdl(tableId), "db", str(t.get("layer")), "table", str(t.get("name")));
+        String layer = str(t.get("layer"));
+        if (dsId != null && lakeDsType(dsId).equals("iceberg")) {
+            String ns = layer.isEmpty() ? "demo" : layer;
+            return Map.of("ddl", buildIcebergDdl(tableId, ns), "db",
+                    com.pharma.service.access.adapter.IcebergAdapter.SR_CATALOG + "." + ns, "table", str(t.get("name")));
+        }
+        return Map.of("ddl", buildDdl(tableId), "db", layer, "table", str(t.get("name")));
     }
 
-    /** 一键建物理表：生成 DDL → 在目标数据源执行（复用 DevScriptExecutor）→ 成功后登记元数据（模型→物理→数据地图闭环）。 */
+    /** 一键建物理表：StarRocks 走 DDL→DevScriptExecutor；iceberg 数据源经 REST Catalog 建湖表
+     *  （IcebergWriter.createTable，namespace=layer）。成功后登记元数据（模型→物理→数据地图闭环）。 */
     @PostMapping("/table/create-physical")
     public Map<String, Object> createPhysical(@RequestParam long tableId, @RequestParam long dsId) {
         Authz.require(Authz.SYS_ADMIN);
-        String ddl = buildDdl(tableId);
-        Map<String, Object> r = scriptExecutor.executeSql(dsId, ddl);
-        boolean ok = "SUCCESS".equals(str(r.get("status")));
+        boolean ok;
+        String ddl;
+        String created;
+        if (lakeDsType(dsId).equals("iceberg")) {
+            Map<String, Object> t = jdbc.queryForMap("SELECT name, layer FROM meta.gov_model_table WHERE id=?", tableId);
+            String ns = str(t.get("layer")); if (ns.isEmpty()) ns = "demo";
+            ddl = buildIcebergDdl(tableId, ns);
+            created = icebergWriter.createTable(loader.load(dsId), ns, str(t.get("name")), modelCols(tableId)) + "";
+            ok = true;
+        } else {
+            ddl = buildDdl(tableId);
+            Map<String, Object> r = scriptExecutor.executeSql(dsId, ddl);
+            ok = "SUCCESS".equals(str(r.get("status")));
+            created = ok ? "true" : str(r.get("msg"));
+        }
         boolean registered = false;
         if (ok) registered = registerMeta(tableId, dsId);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", ok);
-        out.put("msg", ok ? (registered ? "建表成功，已同步登记元数据" : "建表成功（元数据登记失败，可到采集管理手动同步）") : str(r.get("msg")));
+        out.put("msg", ok ? (registered ? "建表成功，已同步登记元数据" : "建表成功（元数据登记失败，可到采集管理手动同步）") : str(created));
         out.put("ddl", ddl);
         return out;
+    }
+
+    /** 目标数据源类型（ing_datasource.type；不存在返回空串走原 StarRocks 路径）。 */
+    private String lakeDsType(long dsId) {
+        try { return str(jdbc.queryForObject("SELECT type FROM meta.ing_datasource WHERE id=?", String.class, dsId)); }
+        catch (Exception e) { return ""; }
+    }
+
+    /** 模型字段 → 湖表列定义 [{name, type, comment}]。 */
+    private List<Map<String, Object>> modelCols(long tableId) {
+        List<Map<String, Object>> cols = new ArrayList<>();
+        for (Map<String, Object> f : jdbc.queryForList(
+                "SELECT name, data_type, comment FROM meta.gov_model_field WHERE table_id=? ORDER BY id", tableId)) {
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("name", str(f.get("name")));
+            c.put("type", str(f.get("data_type")).isEmpty() ? "STRING" : str(f.get("data_type")));
+            c.put("comment", str(f.get("comment")));
+            cols.add(c);
+        }
+        return cols;
+    }
+
+    /** Iceberg 湖表 DDL 文本（展示/复制用；物理建表走 REST，不在 SR 执行）。 */
+    private String buildIcebergDdl(long tableId, String ns) {
+        Map<String, Object> t = jdbc.queryForMap("SELECT name FROM meta.gov_model_table WHERE id=?", tableId);
+        StringBuilder sb = new StringBuilder("CREATE TABLE ")
+                .append(com.pharma.service.access.adapter.IcebergAdapter.SR_CATALOG)
+                .append(".").append(ns).append(".").append(str(t.get("name"))).append(" (\n");
+        List<Map<String, Object>> cols = modelCols(tableId);
+        for (int i = 0; i < cols.size(); i++) {
+            Map<String, Object> c = cols.get(i);
+            if (i > 0) sb.append(",\n");
+            sb.append("  ").append(c.get("name")).append(" ").append(String.valueOf(c.get("type")).toLowerCase());
+            String cm = str(c.get("comment"));
+            if (!cm.isEmpty()) sb.append(" COMMENT '").append(cm.replace("'", "''")).append("'");
+        }
+        return sb.append("\n) USING iceberg;").toString();
     }
 
     /** 建成物理表后登记/刷新 gov_meta_table（存在则 UPDATE 列结构与同步时间，避免删行破坏资产挂载引用）。 */
@@ -289,6 +349,11 @@ public class DataModelController {
         try {
             Map<String, Object> t = jdbc.queryForMap("SELECT name, layer, description FROM meta.gov_model_table WHERE id=?", tableId);
             String db = str(t.get("layer")); if (db.isEmpty()) db = "ods";
+            // 湖表登记为 SR 三段名前缀（iceberg_catalog.<ns=layer>），数据地图/质量/资产按此直查主库
+            if (lakeDsType(dsId).equals("iceberg")) {
+                if (str(t.get("layer")).isEmpty()) db = com.pharma.service.access.adapter.IcebergAdapter.defaultNs();
+                db = com.pharma.service.access.adapter.IcebergAdapter.SR_CATALOG + "." + db;
+            }
             String table = str(t.get("name"));
             List<Map<String, Object>> fs = jdbc.queryForList(
                     "SELECT name, data_type, is_pk, comment FROM meta.gov_model_field WHERE table_id=? ORDER BY id", tableId);

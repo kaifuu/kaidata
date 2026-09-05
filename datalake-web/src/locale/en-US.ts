@@ -3,7 +3,7 @@ export default {
   app: {
     name: 'Data Middle Platform',
     nameEn: 'DATA MIDDLE PLATFORM',
-    slogan: 'Modern Lakehouse · Kafka → Flink → StarRocks → Spark',
+    slogan: 'Modern Lakehouse · Kafka → Flink → Iceberg → StarRocks',
     feature1: 'Ingest · Multi-source / Real-time into lake',
     feature2: 'Compute · Unified stream & batch layered processing',
     feature3: 'Serve · Unified data asset service',

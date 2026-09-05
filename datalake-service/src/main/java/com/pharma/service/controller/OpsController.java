@@ -189,7 +189,8 @@ public class OpsController {
     }
     private List<Map<String, Object>> probeComponents() {
         List<Map<String, Object>> out = new ArrayList<>();
-        String[][] comps = {{"StarRocks", "127.0.0.1", "9030"}, {"Kafka", "127.0.0.1", "9094"}, {"Flink", "127.0.0.1", "8081"}, {"MinIO", "127.0.0.1", "9000"}};
+        String[][] comps = {{"StarRocks", "127.0.0.1", "9030"}, {"Kafka", "127.0.0.1", "9094"}, {"Flink", "127.0.0.1", "8081"},
+                {"MinIO", "127.0.0.1", "9000"}, {"Iceberg REST", "127.0.0.1", "8181"}};
         for (String[] c : comps) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", c[0]); m.put("host", c[1]); m.put("port", Integer.parseInt(c[2]));

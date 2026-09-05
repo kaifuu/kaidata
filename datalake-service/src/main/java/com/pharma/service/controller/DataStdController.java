@@ -554,7 +554,7 @@ public class DataStdController {
         // 标识符校验（防注入）：列名单段；表名按 '.' 分段，至多两段
         StarRocksDdlBuilder.ident(col);
         String[] segs = table.split("\\.", -1);
-        if (segs.length < 1 || segs.length > 2) throw new IllegalArgumentException("非法表名: " + table);
+        if (segs.length < 1 || segs.length > 3) throw new IllegalArgumentException("非法表名: " + table); // 三段=湖表
         for (String s : segs) StarRocksDdlBuilder.ident(s);
 
         // 取数据元

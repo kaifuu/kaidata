@@ -3,6 +3,7 @@ package com.pharma.service.access.adapter;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +24,9 @@ public class DataSourceAdapterRegistry {
 
     private final Map<String, DataSourceAdapter> adapters = new java.util.HashMap<>();
     private final int maxPoolSize;
+
+    /** 主库（StarRocks）连接池：iceberg 数据源按三段名直查湖表时复用（见 {@link #getPool}）。 */
+    @Autowired @org.springframework.context.annotation.Lazy private DataSource mainPool;
 
     private final Map<Long, HikariDataSource> pools = Collections.synchronizedMap(
             new LinkedHashMap<>(16, 0.75f, true) {
@@ -48,6 +52,10 @@ public class DataSourceAdapterRegistry {
         if (a == null) throw new IllegalStateException("不支持的数据源类型：" + ds.type);
         if (!a.driverAvailable()) throw new IllegalStateException(a.type() + " 驱动未就绪");
         if (a instanceof ElasticsearchAdapter) throw new IllegalStateException("Elasticsearch 不走 JDBC 连接池");
+        // Iceberg 湖表：按 ds+schema.table 直查的场景（质量规则/标准核验/资产取数/数据探查）
+        // 统一经主库 StarRocks External Catalog 三段名（iceberg_catalog.ns.tbl）查询 → 返回主库池；
+        // 元数据类调用（listTables/describeTable）忽略池参数走 REST。
+        if (a instanceof IcebergAdapter) return mainPool;
         synchronized (pools) {
             HikariDataSource p = pools.get(ds.id);
             if (p != null && !p.isClosed()) return p;

@@ -109,11 +109,11 @@ public class DataQualityController {
         return qualityExecutor.dryRun(b);
     }
 
-    /** 表名/列名 ident 校验（防注入；与落标通道同一套规则）。表名按 '.' 分段至多两段。 */
+    /** 表名/列名 ident 校验（防注入；与落标通道同一套规则）。表名按 '.' 分段至多三段（三段=湖表 iceberg_catalog.ns.tbl）。 */
     private static void validateIdents(String table, String col) {
         if (table == null || table.isEmpty()) throw new IllegalArgumentException("table_name 不能为空");
         String[] segs = table.split("\\.", -1);
-        if (segs.length > 2) throw new IllegalArgumentException("非法表名: " + table);
+        if (segs.length > 3) throw new IllegalArgumentException("非法表名: " + table); // 三段=湖表 iceberg_catalog.ns.tbl
         for (String s : segs) StarRocksDdlBuilder.ident(s);
         if (col != null && !col.isEmpty()) StarRocksDdlBuilder.ident(col);
     }

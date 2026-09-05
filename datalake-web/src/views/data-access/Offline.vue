@@ -62,7 +62,7 @@
           :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper"
           @size-change="onSizeChange" @current-change="onPageChange" />
       </div>
-      <div class="hint"><el-icon><InfoFilled /></el-icon> 目标可选任意关系型数据源；全量=truncate+insert；增量仅 StarRocks/Doris 目标（主键模型去重）；<b>上线状态编辑/删除置灰</b>。</div>
+      <div class="hint"><el-icon><InfoFilled /></el-icon> 目标可选任意关系型数据源或 <b>Iceberg 湖</b>；全量=truncate+insert（湖=快照级整表替换）；增量支持 StarRocks/Doris（主键去重）与 Iceberg（快照追加）；<b>上线状态编辑/删除置灰</b>。</div>
     </div>
 
     <!-- 新建/编辑 -->
@@ -92,7 +92,7 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="incBlocked" label=" ">
-          <el-alert type="warning" :closable="false" show-icon title="增量仅支持 StarRocks/Doris 目标（依赖主键模型去重）；该目标请选全量" />
+          <el-alert type="warning" :closable="false" show-icon title="增量仅支持 StarRocks/Doris（主键去重）或 Iceberg（快照追加）目标；该目标请选全量" />
         </el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="增量列"><el-input v-model="form.inc_column" placeholder="时间或自增列" /></el-form-item>
         <el-form-item v-if="form.strategy === 'INCREMENTAL'" label="业务唯一键"><el-input v-model="form.biz_key" placeholder="去重主键（留空取首列）" /></el-form-item>
@@ -252,8 +252,8 @@ function onSchema() {
   form.source_table = ''
 }
 
-// 目标端：同样按 数据源 → 库 → 表 选择。目标可选任意关系型数据源；增量仅 starrocks/doris
-const RELATIONAL_TARGET_TYPES = new Set(['mysql', 'starrocks', 'doris', 'postgresql', 'greenplum', 'opengauss', 'clickhouse', 'sqlserver', 'oracle'])
+// 目标端：同样按 数据源 → 库 → 表 选择。目标可选任意关系型数据源 + Iceberg 湖；增量 starrocks/doris/iceberg
+const RELATIONAL_TARGET_TYPES = new Set(['mysql', 'starrocks', 'doris', 'postgresql', 'greenplum', 'opengauss', 'clickhouse', 'sqlserver', 'oracle', 'iceberg'])
 const tgtSchema = ref('')
 const tgtTables = ref<any[]>([])
 const tgtLoading = ref(false)
@@ -266,9 +266,9 @@ const tgtSchemaOptions = computed(() => {
   return Array.from(set).sort()
 })
 const tgtTableOptions = computed(() => tgtTables.value.filter(t => (t.schema_name || '') === tgtSchema.value))
-// 增量校验：增量仅支持 StarRocks/Doris 目标（依赖主键模型去重）
+// 增量校验：StarRocks/Doris 依赖主键模型去重；Iceberg 为快照追加（append）
 const tgtType = computed(() => dsList.value.find((d: any) => d.id === form.target_ds_id)?.type || '')
-const incBlocked = computed(() => form.strategy === 'INCREMENTAL' && !!tgtType.value && tgtType.value !== 'starrocks' && tgtType.value !== 'doris')
+const incBlocked = computed(() => form.strategy === 'INCREMENTAL' && !!tgtType.value && tgtType.value !== 'starrocks' && tgtType.value !== 'doris' && tgtType.value !== 'iceberg')
 
 async function loadTargetTables(dsId: number | null, preferSchema = '') {
   tgtTables.value = []
@@ -322,7 +322,7 @@ async function save() {
     const dot = src.lastIndexOf('.')
     form.target_table = dot > 0 ? src.substring(dot + 1) : src
   }
-  if (incBlocked.value) return ElMessage.warning('该目标仅支持全量，请改策略为全量或更换为 StarRocks/Doris 目标')
+  if (incBlocked.value) return ElMessage.warning('该目标仅支持全量，请改策略为全量或更换为 StarRocks/Doris/Iceberg 目标')
   form.target_db = tgtSchema.value
   saving.value = true
   try { await api.daSaveOfflineJob({ ...form }); ElMessage.success('保存成功'); dlg.value = false; await load() }

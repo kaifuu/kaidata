@@ -1,5 +1,5 @@
 # 大数据平台 - 大数据组件编排
-# 现代湖仓栈：MinIO(湖) + Kafka(总线) + Flink(流) + StarRocks(数仓, Doris 同源)
+# 现代湖仓栈：MinIO(湖存储) + Iceberg REST Catalog(湖格式) + Kafka(总线) + Flink(流) + StarRocks(数仓, Doris 同源)
 # Spark 按需 spark-submit 提交，不常驻（省内存）。
 # 启动：docker compose up -d
 #
@@ -25,6 +25,37 @@ services:
     command: server /data --console-address ":9001"
     volumes: [minio-data:/data]
     mem_limit: 512m
+
+  # ---------- Iceberg REST Catalog（湖格式目录服务，8181）----------
+  # 元数据 JdbcCatalog(sqlite) 落卷持久化；数据文件落 MinIO s3://lake/wh（桶由 bring-up.sh 建）。
+  # StarRocks 经 External Catalog 读湖表（init/iceberg-catalog.sql）；后端 iceberg-java 直写。
+  # 基于 tabulario/iceberg-rest 本地构建 S3 增强版（原镜像缺 iceberg-aws，服务端建表写不了 s3://）。
+  iceberg-rest:
+    build: ./iceberg-rest-aws
+    image: pharma-iceberg-rest-aws:latest
+    container_name: pharma-iceberg-rest
+    ports: ["8181:8181"]
+    environment:
+      CATALOG_WAREHOUSE: s3://lake/wh
+      # 镜像 env 映射规则：去 CATALOG_ 前缀后 __→-、_→.，故 io-impl 须写成 CATALOG_IO__IMPL
+      # （写 CATALOG_IO_IMPL 会映射成无效键 io.impl，服务端建表退回 HadoopFileIO 报 s3:// 无 FileSystem）
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      # S3FileIO 的属性须进 catalog 属性映射（AWS_* 环境变量只喂 SDK 默认链，不含 endpoint）：
+      # CATALOG_S3_ENDPOINT→s3.endpoint、CATALOG_S3_ACCESS__KEY__ID→s3.access-key-id（__→-）
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_ACCESS__KEY__ID: minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      REST_IO_IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://minio:9000
+      AWS_S3_PATH_STYLE_ACCESS: "true"
+      CATALOG_JDBC_URL: jdbc:sqlite:/var/lib/iceberg/catalog.db
+    mem_limit: 768m
+    volumes: [iceberg-meta:/var/lib/iceberg]
 
   # ---------- 数据总线（Apache 官方 Kafka，KRaft 无 Zk）----------
   kafka:
@@ -108,16 +139,27 @@ services:
     mem_limit: 2g
 
   # ---------- 实时数仓 StarRocks（FE+BE allin1，MySQL 协议 9030）----------
+  # AWS_REGION/AK/SK：Iceberg External Catalog 内部 SDK 走默认链（环境变量是其中一环；
+  # catalog 属性 aws.s3.* 对 rest 型 catalog 不喂给数据文件读取的 S3 客户端，
+  # 缺 region 报 Unable to load region、缺 AK/SK 报 Unable to load credentials）。
   starrocks:
     image: starrocks/allin1-ubuntu:3.3.10
     container_name: pharma-starrocks
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     ports:
       - "8030:8030"   # FE Web
       - "9030:9030"   # MySQL 协议（服务层/Flink/Spark 查询入口）
     mem_limit: 3g
-    volumes: [sr-data:/opt/starrocks]
+    # allin1 实际装在 /data/deploy/starrocks（fe/meta、be/storage 都在其下）；
+    # 曾误挂 /opt/starrocks（镜像里是空目录，等于没挂 → External Catalog 随容器重建丢失）。
+    # 卷名换 sr-home（新卷首挂自动拷入镜像内容；旧 sr-data 卷为空可手动清理）
+    volumes: [sr-home:/data/deploy/starrocks]
 
 volumes:
   minio-data:
   flink-jobs:
-  sr-data:
+  sr-home:
+  iceberg-meta:

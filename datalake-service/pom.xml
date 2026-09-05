@@ -81,6 +81,53 @@
 
         <!-- Elasticsearch 经 JDK 内置 HttpClient 访问（REST，无需第三方客户端依赖） -->
 
+        <!-- ============ 湖仓 Iceberg（REST Catalog 直写 MinIO，StarRocks External Catalog 读） ============
+             iceberg-core: RESTCatalog/表达式/提交协议；iceberg-data: GenericRecord；iceberg-parquet: Parquet 写入器；
+             iceberg-aws-bundle: S3FileIO + AWS SDK（打包内置）；bundled-guava: iceberg 运行时依赖。
+             hadoop-client-api: parquet-hadoop 类签名需要（压缩编解码走 parquet 内置 aircompressor，无需 runtime）。 -->
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-core</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-data</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-parquet</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-aws</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-aws-bundle</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-bundled-guava</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client-api</artifactId>
+            <version>3.3.6</version>
+        </dependency>
+        <!-- shaded woodstox/protobuf 等在 runtime（api+runtime 成对，见 HADOOP-16596 客户端依赖拆分） -->
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client-runtime</artifactId>
+            <version>3.3.6</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- ============ 文件协议 ============ -->
         <dependency>
             <groupId>commons-net</groupId>

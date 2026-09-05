@@ -138,6 +138,13 @@ export const api = {
     http.get('/data-access/source/data', { params: { id, schema, table, page, size, where } }).then((r) => r.data),
   daSourceDdl: (id: number, schema: string | undefined, table: string) =>
     http.get('/data-access/source/ddl', { params: { id, schema, table } }).then((r) => r.data),
+  // 湖表快照（时间旅行）
+  daSourceSnapshots: (id: number, schema: string | undefined, table: string) =>
+    http.get('/data-access/source/snapshots', { params: { id, schema, table } }).then((r) => r.data),
+  daSourceSnapshotData: (id: number, schema: string | undefined, table: string, snapshotId: number, limit = 50) =>
+    http.get('/data-access/source/snapshot-data', { params: { id, schema, table, snapshotId, limit } }).then((r) => r.data),
+  daSourceSnapshotRollback: (id: number, schema: string | undefined, table: string, snapshotId: number) =>
+    http.post('/data-access/source/snapshot-rollback', null, { params: { id, schema, table, snapshotId } }).then((r) => r.data),
 
   // ===== 文件管理 [SYS_ADMIN] =====
   daStores: () => http.get<FilestoreRow[]>('/data-access/file/store/list').then((r) => r.data),

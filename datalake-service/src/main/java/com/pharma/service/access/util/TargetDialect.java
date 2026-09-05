@@ -42,6 +42,7 @@ public interface TargetDialect {
             case "starrocks":
             case "doris":       return StarRocksDialect.INSTANCE;
             case "clickhouse":  return ClickHouseDialect.INSTANCE;
+            case "iceberg":     return IcebergDialect.INSTANCE;
             case "postgresql":
             case "greenplum":
             case "opengauss":   return AnsiDialect.PG;
@@ -91,6 +92,22 @@ public interface TargetDialect {
                 sb.append(quote(cols.get(i).name)).append(" ").append(cols.get(i).type);
             }
             return sb.append(") ENGINE = MergeTree() ORDER BY tuple()").toString();
+        }
+        @Override public boolean reorderKeyPrefix() { return false; }
+    }
+
+    // ===================== Iceberg（湖表，经 StarRocks External Catalog 三段名查） =====================
+    // 建表/写入不经 SQL（IcebergWriter 走 REST Catalog），方言仅服务「目标预览」等按目标类型拼查询名的场景：
+    // qualify 直接给出 iceberg_catalog.`ns`.`tbl` 三段名，在主库 StarRocks 连接上即可查湖表。
+    class IcebergDialect implements TargetDialect {
+        static final IcebergDialect INSTANCE = new IcebergDialect();
+        @Override public String quote(String id) { StarRocksDdlBuilder.ident(id); return "`" + id + "`"; }
+        @Override public String qualify(String db, String table) {
+            return "iceberg_catalog." + (db == null || db.isEmpty() ? "" : quote(db) + ".") + quote(table);
+        }
+        @Override public String mapType(int j, String n, int p, int s) { return TypeMapper.toStarRocks(j, n, p, s); }
+        @Override public String createTable(String db, String table, List<StarRocksDdlBuilder.ColumnDef> cols, String keyCol, boolean inc) {
+            throw new UnsupportedOperationException("Iceberg 表经 REST Catalog 建表（IcebergWriter），不走 SQL DDL");
         }
         @Override public boolean reorderKeyPrefix() { return false; }
     }

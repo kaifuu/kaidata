@@ -3,7 +3,7 @@ export default {
   app: {
     name: '数据中台',
     nameEn: 'DATA MIDDLE PLATFORM',
-    slogan: '现代湖仓 · Kafka → Flink → StarRocks → Spark',
+    slogan: '现代湖仓 · Kafka → Flink → Iceberg → StarRocks',
     feature1: '采 · 多源接入 / 实时入湖',
     feature2: '算 · 流批一体分层加工',
     feature3: '服 · 统一数据资产服务',

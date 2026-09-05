@@ -124,9 +124,9 @@
           <el-input v-else v-model="extra[f.key]" :type="f.inputType || 'text'" :placeholder="f.placeholder" />
         </el-form-item>
 
-        <el-form-item label="账号"><el-input v-model="form.username" :placeholder="spec.group === 'es' ? 'Basic 认证用户名（可留空）' : '用户名（必须填写）'" /></el-form-item>
+        <el-form-item label="账号"><el-input v-model="form.username" :placeholder="spec.group === 'es' ? 'Basic 认证用户名（可留空）' : (spec.group === 'lake' ? 'S3 AccessKey（MinIO 默认 minioadmin）' : '用户名（必须填写）')" /></el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" show-password :placeholder="form.id ? '留空则不修改' : (spec.group === 'es' ? 'Basic 认证密码（可留空）' : '请输入密码')" />
+          <el-input v-model="form.password" type="password" show-password :placeholder="form.id ? '留空则不修改' : (spec.group === 'es' ? 'Basic 认证密码（可留空）' : (spec.group === 'lake' ? 'S3 SecretKey（MinIO 默认 minioadmin）' : '请输入密码'))" />
         </el-form-item>
 
         <!-- 高级：原始 props（只读展示 extra 序列化结果） -->
@@ -245,6 +245,47 @@
                   </el-table>
                   <div v-else-if="queryResult && !(queryResult.rows || []).length" class="ws-result-empty muted">无数据</div>
                 </el-tab-pane>
+                <!-- 快照（湖表时间旅行，仅 iceberg） -->
+                <el-tab-pane v-if="wsDs?.type === 'iceberg'" name="snapshots">
+                  <template #label><el-icon style="vertical-align:-2px"><Timer /></el-icon>&nbsp;快照</template>
+                  <div class="dl-toolbar">
+                    <el-button size="small" :loading="snapLoading" @click="loadSnapshots">刷新快照</el-button>
+                    <span class="muted">Iceberg 快照（时间旅行）· 当前 {{ snapList.length }} 个 · 可按快照预览数据 / 回滚整表</span>
+                  </div>
+                  <el-table :data="snapList" size="small" border max-height="30vh" v-loading="snapLoading">
+                    <el-table-column label="快照 ID" width="190">
+                      <template #default="{ row }"><span class="ws-snap-id">{{ row.snapshotId }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="时间" width="165">
+                      <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="operation" label="操作" width="95">
+                      <template #default="{ row }"><el-tag size="small" effect="plain" :type="row.operation === 'overwrite' ? 'warning' : row.operation === 'append' ? 'success' : 'info'">{{ row.operation }}</el-tag></template>
+                    </el-table-column>
+                    <el-table-column prop="totalRecords" label="总行数" width="90" />
+                    <el-table-column prop="addedRecords" label="新增行" width="90" />
+                    <el-table-column prop="deletedRecords" label="删除行" width="90" />
+                    <el-table-column prop="totalDataFiles" label="数据文件" width="90" />
+                    <el-table-column label="状态" width="80">
+                      <template #default="{ row }"><el-tag v-if="row.current" size="small" type="success">当前</el-tag><span v-else class="muted">历史</span></template>
+                    </el-table-column>
+                    <el-table-column label="操作" min-width="150" fixed="right">
+                      <template #default="{ row }">
+                        <el-button size="small" link type="primary" @click="viewSnapshot(row)">查看数据</el-button>
+                        <el-button size="small" link type="warning" :disabled="row.current" @click="rollbackSnapshot(row)">回滚到此</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <div v-if="snapView" class="ws-snap-view">
+                    <div class="dl-toolbar">
+                      <span class="muted">快照 {{ snapView.snapshotId }} 数据预览（前 {{ (snapView.rows || []).length }} 行）</span>
+                      <el-button size="small" link @click="snapView = null">收起</el-button>
+                    </div>
+                    <el-table :data="snapView.rows || []" size="small" border max-height="26vh" v-loading="snapViewLoading">
+                      <el-table-column v-for="c in (snapView.columns || [])" :key="c" :prop="c" :label="c" min-width="130" show-overflow-tooltip />
+                    </el-table>
+                  </div>
+                </el-tab-pane>
               </el-tabs>
             </template>
           </div>
@@ -257,7 +298,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, InfoFilled, Connection, Search, Loading, Folder, Grid, Coin, CopyDocument } from '@element-plus/icons-vue'
+import { Plus, InfoFilled, Connection, Search, Loading, Folder, Grid, Coin, CopyDocument, Timer } from '@element-plus/icons-vue'
 import { api, errMsg, type DataSourceRow, type DataSourceType, type DatasourceUsage } from '@/api'
 
 // ===== 类型规格：默认端口 / 库名语义 / 分组 / 提示 =====
@@ -285,7 +326,9 @@ const DS_SPECS: Record<string, any> = {
   minio:         { group: 'obj',  port: 9000,  note: '对象存储，本项目经「文件管理」MinIO 存储接入；数据源处仅做登记' },
   hdfs:          { group: 'bigdata', port: 8020, note: '分布式存储，填 defaultFS 与路径；登记型' },
   mongodb:       { group: 'bigdata', port: 27017, note: '文档库，集群地址与 IP/端口不联动，按模板在结构化参数填写；登记型' },
-  hbase:         { group: 'bigdata', port: 2181, note: '列式库，填 ZK 地址与 znode_parent；登记型' }
+  hbase:         { group: 'bigdata', port: 2181, note: '列式库，填 ZK 地址与 znode_parent；登记型' },
+  iceberg:       { group: 'lake',  port: 8181, dbLabel: '默认命名空间', dbHint: 'demo', internal: true,
+                   note: 'Iceberg 湖表：host/port=REST Catalog 地址（默认 localhost:8181），账号/密码=S3 AccessKey/SecretKey（MinIO），S3 Endpoint 在结构化参数填；读写分别经 REST Catalog 与 StarRocks External Catalog（iceberg_catalog.命名空间.表）' }
 }
 
 // 下拉分组
@@ -293,6 +336,7 @@ const typeGroups = [
   { label: '关系型数据库', codes: ['mysql','starrocks','doris','postgresql','greenplum','opengauss','clickhouse','sqlserver','oracle','tdengine'] },
   { label: '国产数据库', codes: ['dameng','kingbase','gbase'] },
   { label: '大数据', codes: ['hive','hbase','mongodb','hdfs'] },
+  { label: '湖仓', codes: ['iceberg'] },
   { label: '消息队列', codes: ['kafka'] },
   { label: '文件存储', codes: ['ftp','sftp','ssh'] },
   { label: '缓存', codes: ['redis'] },
@@ -335,7 +379,8 @@ const PARAM_SCHEMA: Record<string, FieldDef[]> = {
   ],
   hdfs:        [{ key: 'defaultFS', label: 'defaultFS', type: 'text', placeholder: 'hdfs://192.168.x.x:8020' }, { key: 'basePath', label: '路径', type: 'text' }],
   mongodb:     [{ key: 'clusterUri', label: '集群地址', type: 'text', placeholder: 'mongodb://ip:port,ip:port/db（不联动）' }],
-  hbase:       [{ key: 'zkQuorum', label: 'ZK 地址', type: 'text', placeholder: '192.168.x.x:2181' }, { key: 'znodeParent', label: 'znode_parent', type: 'text', placeholder: '/hbase' }]
+  hbase:       [{ key: 'zkQuorum', label: 'ZK 地址', type: 'text', placeholder: '192.168.x.x:2181' }, { key: 'znodeParent', label: 'znode_parent', type: 'text', placeholder: '/hbase' }],
+  iceberg:     [{ key: 's3.endpoint', label: 'S3 Endpoint(MinIO)', type: 'text', placeholder: 'http://localhost:9000' }]
 }
 
 // 类型友好显示名 + 分组（颜色点 + 类目副标题）
@@ -343,7 +388,8 @@ const TYPE_LABEL: Record<string, string> = {
   mysql: 'MySQL', starrocks: 'StarRocks', doris: 'Doris', postgresql: 'PostgreSQL', greenplum: 'Greenplum',
   opengauss: 'openGauss', clickhouse: 'ClickHouse', sqlserver: 'SQL Server', oracle: 'Oracle', tdengine: 'TDengine',
   dameng: '达梦', kingbase: '人大金仓', gbase: 'GBase', hive: 'Hive', hbase: 'HBase', mongodb: 'MongoDB', hdfs: 'HDFS',
-  kafka: 'Kafka', ftp: 'FTP', sftp: 'SFTP', ssh: 'SSH', redis: 'Redis', minio: 'MinIO', elasticsearch: 'Elasticsearch'
+  kafka: 'Kafka', ftp: 'FTP', sftp: 'SFTP', ssh: 'SSH', redis: 'Redis', minio: 'MinIO', elasticsearch: 'Elasticsearch',
+  iceberg: 'Iceberg 湖'
 }
 const typeLabel = (t: string) => TYPE_LABEL[t] || (t ? t.charAt(0).toUpperCase() + t.slice(1) : '')
 // 分组标签（由 typeGroups 反推）
@@ -353,7 +399,7 @@ const groupLabel = (t: string) => {
 }
 const GROUP_KEY: Record<string, string> = {
   '关系型数据库': 'rel', '国产数据库': 'cn', '大数据': 'bd', '消息队列': 'mq',
-  '文件存储': 'file', '缓存': 'kv', '对象存储': 'obj', '搜索引擎': 'es'
+  '文件存储': 'file', '缓存': 'kv', '对象存储': 'obj', '搜索引擎': 'es', '湖仓': 'lake'
 }
 const groupKey = (t: string) => GROUP_KEY[groupLabel(t)] || 'rel'
 const typeBadge = (c: string) => {
@@ -363,8 +409,8 @@ const typeBadge = (c: string) => {
   if (s.group === 'mq' || s.group === 'file' || s.group === 'kv' || s.group === 'obj' || s.group === 'bigdata') return '（登记型）'
   return ''
 }
-// 可浏览源表的类型（jdbc + es）
-const canBrowse = (t: string) => DS_SPECS[t]?.group === 'jdbc' || t === 'elasticsearch'
+// 可浏览源表的类型（jdbc + es + iceberg 湖表经 REST Catalog 列举）
+const canBrowse = (t: string) => DS_SPECS[t]?.group === 'jdbc' || t === 'elasticsearch' || t === 'iceberg'
 
 // ===== 状态 =====
 const rows = ref<DataSourceRow[]>([])
@@ -382,8 +428,8 @@ const extra = reactive<Record<string, any>>({})
 
 const spec = computed<any>(() => DS_SPECS[form.type] || { group: 'jdbc', port: 3306, dbLabel: '数据库名', dbHint: '' })
 const paramFields = computed<FieldDef[]>(() => PARAM_SCHEMA[form.type] || [])
-const showHostPort = computed(() => spec.value.group === 'jdbc' || spec.value.group === 'es')
-const showDb = computed(() => spec.value.group === 'jdbc')
+const showHostPort = computed(() => spec.value.group === 'jdbc' || spec.value.group === 'es' || spec.value.group === 'lake')
+const showDb = computed(() => spec.value.group === 'jdbc' || spec.value.group === 'lake')
 const showJdbcUrl = computed(() => spec.value.group === 'jdbc')
 const connLocked = computed(() => !!usages.value?.inUse)
 
@@ -571,6 +617,54 @@ function onPickTable(node: any) {
   loadStruct()
   loadData(false)
   loadDdl()
+  snapList.value = []; snapView.value = null
+  if (wsDs.value.type === 'iceberg') loadSnapshots()
+}
+
+// ===== 湖表快照（时间旅行） =====
+const snapList = ref<any[]>([])
+const snapLoading = ref(false)
+const snapView = ref<any>(null)
+const snapViewLoading = ref(false)
+
+function fmtTime(ms: number) {
+  if (!ms) return '-'
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+async function loadSnapshots() {
+  if (!wsDs.value || !selTable.value) return
+  snapLoading.value = true
+  try { snapList.value = (await api.daSourceSnapshots(wsDs.value.id, selTable.value.schema_name, selTable.value.name)) || [] }
+  catch (e: any) { snapList.value = []; ElMessage.error(errMsg(e, '快照加载失败')) }
+  finally { snapLoading.value = false }
+}
+
+async function viewSnapshot(row: any) {
+  if (!wsDs.value || !selTable.value) return
+  snapViewLoading.value = true
+  snapView.value = { snapshotId: row.snapshotId, columns: [], rows: [] }
+  try { snapView.value = await api.daSourceSnapshotData(wsDs.value.id, selTable.value.schema_name, selTable.value.name, row.snapshotId, 50) }
+  catch (e: any) { snapView.value = null; ElMessage.error(errMsg(e, '快照数据读取失败')) }
+  finally { snapViewLoading.value = false }
+}
+
+async function rollbackSnapshot(row: any) {
+  if (!wsDs.value || !selTable.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定将表 <b>${selTable.value.name}</b> 回滚到快照 ${row.snapshotId}（${fmtTime(row.createdAt)}）？<br/>当前快照之后的写入将不再可见（可通过再次回滚恢复）。`,
+      '快照回滚', { dangerouslyUseHTMLString: true, type: 'warning' })
+  } catch { return }
+  try {
+    await api.daSourceSnapshotRollback(wsDs.value.id, selTable.value.schema_name, selTable.value.name, row.snapshotId)
+    ElMessage.success('已回滚')
+    snapView.value = null
+    await loadSnapshots()
+    loadData(false)   // 数据页同步刷新为回滚后的状态
+  } catch (e: any) { ElMessage.error(errMsg(e, '回滚失败')) }
 }
 
 async function loadData(resetPage: boolean) {
@@ -639,6 +733,7 @@ onMounted(load)
 .ds-dot.g-file{ background: #13c2c2; }
 .ds-dot.g-kv  { background: #ff7a45; }
 .ds-dot.g-obj { background: #36cfc9; }
+.ds-dot.g-lake { background: #13c2c2; }
 .ds-dot.g-es  { background: #722ed1; }
 .hint { margin-top: 12px; color: var(--tech-text-muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .hint b { color: var(--tech-primary); }
@@ -715,4 +810,8 @@ onMounted(load)
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.7;
   white-space: pre-wrap; word-break: break-word; color: var(--tech-text); }
 :deep(.ws-sql textarea) { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+
+/* 湖表快照（时间旅行） */
+.ws-snap-id { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.ws-snap-view { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--tech-panel-border, var(--el-border-color)); }
 </style>

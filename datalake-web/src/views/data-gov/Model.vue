@@ -235,10 +235,11 @@
       <el-form label-width="80px" size="small">
         <el-form-item label="目标表">{{ createInfo.table }}（{{ createInfo.db }}）</el-form-item>
         <el-form-item label="数据源">
-          <el-select v-model="createDs" placeholder="选择执行数据源（StarRocks）" style="width:100%" filterable>
+          <el-select v-model="createDs" placeholder="选择目标数据源（StarRocks / Iceberg 湖）" style="width:100%" filterable>
             <el-option v-for="d in sources" :key="d.id" :label="d.name" :value="d.id" />
           </el-select>
         </el-form-item>
+        <div class="muted" style="font-size:12px;line-height:1.7">StarRocks：在数仓分层库建表；Iceberg 湖：namespace 取分层（ods/dwd/…），经 REST Catalog 建湖表，建后可入湖接入与快照回溯。</div>
       </el-form>
       <template #footer><el-button @click="createDlg = false">取消</el-button><el-button type="primary" :loading="creating" @click="doCreate">建表</el-button></template>
     </el-dialog>

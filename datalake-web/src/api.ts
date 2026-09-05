@@ -141,9 +141,9 @@ export const api = {
   // 湖表快照（时间旅行）
   daSourceSnapshots: (id: number, schema: string | undefined, table: string) =>
     http.get('/data-access/source/snapshots', { params: { id, schema, table } }).then((r) => r.data),
-  daSourceSnapshotData: (id: number, schema: string | undefined, table: string, snapshotId: number, limit = 50) =>
+  daSourceSnapshotData: (id: number, schema: string | undefined, table: string, snapshotId: number | string, limit = 50) =>
     http.get('/data-access/source/snapshot-data', { params: { id, schema, table, snapshotId, limit } }).then((r) => r.data),
-  daSourceSnapshotRollback: (id: number, schema: string | undefined, table: string, snapshotId: number) =>
+  daSourceSnapshotRollback: (id: number, schema: string | undefined, table: string, snapshotId: number | string) =>
     http.post('/data-access/source/snapshot-rollback', null, { params: { id, schema, table, snapshotId } }).then((r) => r.data),
 
   // ===== 文件管理 [SYS_ADMIN] =====

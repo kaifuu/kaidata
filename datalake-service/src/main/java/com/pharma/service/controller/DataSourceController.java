@@ -318,7 +318,9 @@ public class DataSourceController {
             List<Map<String, Object>> out = new ArrayList<>();
             for (org.apache.iceberg.Snapshot s : t.snapshots()) {
                 Map<String, Object> m = new LinkedHashMap<>();
-                m.put("snapshotId", s.snapshotId());
+                // 快照 ID 是 64 位 long，超出 JS Number 安全整数（~9e15）会精度丢失
+                // （...3688 被前端变成 ...4000）——一律序列化为字符串，回传由 @RequestParam long 解析
+                m.put("snapshotId", String.valueOf(s.snapshotId()));
                 m.put("current", s.snapshotId() == current);
                 m.put("createdAt", s.timestampMillis());
                 m.put("operation", s.operation());
@@ -367,7 +369,7 @@ public class DataSourceController {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("columns", cols);
             out.put("rows", rows);
-            out.put("snapshotId", snapshotId);
+            out.put("snapshotId", String.valueOf(snapshotId));   // 同上：字符串防 JS 精度丢失
             return out;
         });
     }
@@ -388,7 +390,7 @@ public class DataSourceController {
             t.refresh();   // rollback commit 后重新拉取元数据
             org.apache.iceberg.Snapshot s = t.currentSnapshot();
             return Map.of("success", true,
-                    "currentSnapshotId", s == null ? -1 : s.snapshotId());
+                    "currentSnapshotId", s == null ? "-1" : String.valueOf(s.snapshotId()));   // 字符串防 JS 精度丢失
         });
     }
 

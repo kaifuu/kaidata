@@ -43,7 +43,8 @@ public class MetaSeedRunner implements ApplicationRunner {
 
         // 版本标记表（PRIMARY KEY 支持 upsert，记录 schema 迁移版本）
         exec("CREATE TABLE IF NOT EXISTS meta.sys_kv (k VARCHAR(64), v VARCHAR(64)) PRIMARY KEY(k) DISTRIBUTED BY HASH(k) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        boolean migrated = "2".equals(kv("schema_ver"));
+        // v1 库没有 sys_kv；只要存在任一 schema_ver（≥2）即已完成 v2 迁移，绝不能再 DROP
+        boolean migrated = kv("schema_ver") != null;
 
         if (!migrated) {
             // v1 的 CRUD 表为 UNIQUE KEY，不支持 UPDATE/DELETE；v2 重建为 PRIMARY KEY。
@@ -69,7 +70,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("CREATE TABLE IF NOT EXISTS meta.sys_audit_log (id BIGINT, username VARCHAR(64), uri VARCHAR(255), method VARCHAR(16), params VARCHAR(255), result VARCHAR(32), ip VARCHAR(64), ts DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("ALTER TABLE meta.sys_audit_log ADD COLUMN action VARCHAR(255)");
 
-        if (!migrated) kvSet("schema_ver", "2");
+        if (!migrated) schemaBump("2");
 
         // ============ 数据接入子系统元数据表（schema_ver=3，增量；不动 v2 迁移） ============
         boolean ing = "3".equals(kv("schema_ver"));
@@ -114,7 +115,7 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "id BIGINT, job_id BIGINT, start_time DATETIME, end_time DATETIME, status VARCHAR(16), " +
                 "rows_in BIGINT, rows_out BIGINT, error_msg VARCHAR(2048)" +
                 ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!ing) kvSet("schema_ver", "3");
+        if (!ing) schemaBump("3");
 
         // ============ 数据探查子系统元数据表（schema_ver=4，增量） ============
         boolean prof = "4".equals(kv("schema_ver"));
@@ -144,7 +145,7 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "id BIGINT, job_id BIGINT, start_time DATETIME, end_time DATETIME, status VARCHAR(16), " +
                 "tables_changed INT, tables_total INT, error_msg VARCHAR(2048), log_text VARCHAR(65535), triggered_by VARCHAR(64)" +
                 ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!prof) kvSet("schema_ver", "4");
+        if (!prof) schemaBump("4");
 
         // ============ 数据治理子系统元数据表（schema_ver=5，增量） ============
         boolean gov = "5".equals(kv("schema_ver"));
@@ -196,7 +197,7 @@ public class MetaSeedRunner implements ApplicationRunner {
             seedLayer("dws", "汇总数据层", 3);
             seedLayer("ads", "应用数据层", 4);
             seedLayer("dim", "维度数据层", 5);
-            kvSet("schema_ver", "5");
+            schemaBump("5");
         }
 
         // ============ 数据开发子系统元数据表（schema_ver=6，增量） ============
@@ -213,14 +214,14 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("CREATE TABLE IF NOT EXISTS meta.dev_workflow (id BIGINT, name VARCHAR(128), cron VARCHAR(64), status VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.dev_workflow_node (id BIGINT, workflow_id BIGINT, node_type VARCHAR(16), node_id BIGINT, sort INT) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.dev_workflow_run (id BIGINT, workflow_id BIGINT, status VARCHAR(16), nodes_total INT, nodes_pass INT, log_text VARCHAR(65535), run_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!dev) kvSet("schema_ver", "6");
+        if (!dev) schemaBump("6");
 
         // ============ 数据资产子系统元数据表（schema_ver=7，增量） ============
         boolean ast = "7".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.asset_catalog (id BIGINT, code VARCHAR(64), name VARCHAR(128), parent_id BIGINT, node_type VARCHAR(32), sort INT) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.asset (id BIGINT, catalog_id BIGINT, name VARCHAR(128), asset_type VARCHAR(32), source_type VARCHAR(32), source_id BIGINT, owner VARCHAR(64), security_level VARCHAR(16), description VARCHAR(1024), status VARCHAR(16), create_by VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.asset_audit (id BIGINT, asset_id BIGINT, action VARCHAR(16), comment VARCHAR(1024), auditor VARCHAR(64), audit_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!ast) kvSet("schema_ver", "7");
+        if (!ast) schemaBump("7");
 
         // ============ 数据安全子系统元数据表（schema_ver=8，增量） ============
         boolean sec = "8".equals(kv("schema_ver"));
@@ -243,24 +244,24 @@ public class MetaSeedRunner implements ApplicationRunner {
             seedMask("手机号", "PHONE", "(\\d{3})\\d{4}(\\d{4})", "$1****$2");
             seedMask("身份证号", "IDCARD", "(\\d{4})\\d{10}(\\w{4})", "$1**********$2");
             seedMask("邮箱", "EMAIL", "(\\w{1})\\w*@(\\w+)", "$1***@$2");
-            kvSet("schema_ver", "8");
+            schemaBump("8");
         }
 
         // ============ 数据服务子系统元数据表（schema_ver=9，增量） ============
         boolean dsv = "9".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.data_service (id BIGINT, code VARCHAR(64), name VARCHAR(128), sql_text VARCHAR(65535), datasource_id BIGINT, method VARCHAR(8), params VARCHAR(2048), path VARCHAR(128), auth BOOLEAN, status VARCHAR(16), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
         exec("CREATE TABLE IF NOT EXISTS meta.data_service_log (id BIGINT, service_id BIGINT, cost_ms INT, status VARCHAR(16), params VARCHAR(1024), ip VARCHAR(64), caller VARCHAR(64), call_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!dsv) kvSet("schema_ver", "9");
+        if (!dsv) schemaBump("9");
 
         // ============ 数据集市（门户）购物车（schema_ver=10，增量） ============
         boolean mkt = "10".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.portal_cart (id BIGINT, username VARCHAR(64), item_type VARCHAR(16), item_ref VARCHAR(255), item_name VARCHAR(255), add_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!mkt) kvSet("schema_ver", "10");
+        if (!mkt) schemaBump("10");
 
         // ============ 离线接入任务增加 where_clause（schema_ver=11，增量） ============
         boolean wc = "11".equals(kv("schema_ver"));
         exec("ALTER TABLE meta.ing_offline_job ADD COLUMN where_clause VARCHAR(1024)");
-        if (!wc) kvSet("schema_ver", "11");
+        if (!wc) schemaBump("11");
 
         // ============ 元数据管理完整体系（schema_ver=12，增量） ============
         // 采集任务、采集日志、元数据版本、接口/文件元数据补录、字段级血缘映射
@@ -290,7 +291,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.gov_meta_table ADD COLUMN current_version INT");
         exec("ALTER TABLE meta.gov_meta_table ADD COLUMN description VARCHAR(1024)");
         exec("ALTER TABLE meta.gov_meta_table ADD COLUMN update_time DATETIME");
-        if (!m12) kvSet("schema_ver", "12");
+        if (!m12) schemaBump("12");
 
         // ============ 数据开发重构（分类树 + 离线任务 + 脚本/流分类）（schema_ver=13，增量） ============
         boolean m13 = "13".equals(kv("schema_ver"));
@@ -307,7 +308,7 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.dev_offline_task ADD COLUMN dag_json VARCHAR(65535)");
         exec("ALTER TABLE meta.dev_offline_task ADD COLUMN config_json VARCHAR(8192)");
         exec("ALTER TABLE meta.dev_offline_run ADD COLUMN engine_job_id VARCHAR(128)");
-        if (!m13) kvSet("schema_ver", "13");
+        if (!m13) schemaBump("13");
 
         // ============ 数据服务升级：绑定已审核资产 + 描述/负责人/验收（schema_ver=14，增量） ============
         boolean m14 = "14".equals(kv("schema_ver"));
@@ -315,23 +316,23 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.data_service ADD COLUMN description VARCHAR(512)");
         exec("ALTER TABLE meta.data_service ADD COLUMN owner VARCHAR(64)");
         exec("ALTER TABLE meta.data_service ADD COLUMN verified BOOLEAN");
-        if (!m14) kvSet("schema_ver", "14");
+        if (!m14) schemaBump("14");
 
         // ============ 数据开放授权（基于已审核资产，schema_ver=15，增量） ============
         boolean m15 = "15".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.data_open_grant (id BIGINT, name VARCHAR(128), asset_id BIGINT, open_type VARCHAR(16), app_key VARCHAR(64), app_secret VARCHAR(128), grantee VARCHAR(128), fields_json VARCHAR(4096), service_code VARCHAR(64), limit_count BIGINT, limit_qps INT, expire_time DATETIME, status VARCHAR(16), create_by VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m15) kvSet("schema_ver", "15");
+        if (!m15) schemaBump("15");
 
         // ============ 数据集订阅（消费方申请 + 审核，schema_ver=16，增量） ============
         boolean m16 = "16".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.portal_subscribe (id BIGINT, username VARCHAR(64), asset_id BIGINT, meta_id BIGINT, table_name VARCHAR(255), purpose VARCHAR(1024), open_type VARCHAR(16), limit_count BIGINT, limit_qps INT, expire_time DATETIME, status VARCHAR(16), auditor VARCHAR(64), audit_comment VARCHAR(1024), audit_time DATETIME, grant_id BIGINT, app_key VARCHAR(64), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m16) kvSet("schema_ver", "16");
+        if (!m16) schemaBump("16");
 
         // ============ 离线接入任务目标数据源（schema_ver=17，增量） ============
         // target_ds_id 为空=写入主库（兼容存量任务）；非空则按所选目标数据源写入
         boolean m17 = "17".equals(kv("schema_ver"));
         exec("ALTER TABLE meta.ing_offline_job ADD COLUMN target_ds_id BIGINT");
-        if (!m17) kvSet("schema_ver", "17");
+        if (!m17) schemaBump("17");
 
         // ============ 数据质量升级（schema_ver=18，增量） ============
         // 规则加 severity(严重度) + description；结果加 score(0-100)/severity/table_name(快照，评分/报告免 join)
@@ -343,14 +344,14 @@ public class MetaSeedRunner implements ApplicationRunner {
         exec("ALTER TABLE meta.gov_quality_result ADD COLUMN severity VARCHAR(16)");
         exec("ALTER TABLE meta.gov_quality_result ADD COLUMN table_name VARCHAR(255)");
         exec("CREATE TABLE IF NOT EXISTS meta.gov_quality_report (id BIGINT, task_id BIGINT, task_name VARCHAR(128), run_time DATETIME, overall_score DOUBLE, grade VARCHAR(4), total_rules INT, pass_count INT, fail_count INT, error_count INT, dim_summary VARCHAR(4096), table_summary VARCHAR(4096)) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m18) kvSet("schema_ver", "18");
+        if (!m18) schemaBump("18");
 
         // ============ 元数据统一血缘边表（schema_ver=19，增量） ============
         // 各作业（离线接入/实时/接出/离线开发 JDBC·Flink SQL·DAG·Kettle/脚本/工作流）解析出的源→目标边。
         // 表级（src_field/tgt_field 为 NULL）+ 字段级（有值）。LineageExtractor 写入，DataLineageController 查询。
         boolean m19 = "19".equals(kv("schema_ver"));
         exec("CREATE TABLE IF NOT EXISTS meta.gov_meta_lineage_edge (id BIGINT, src_ds_id BIGINT, src_schema VARCHAR(128), src_table VARCHAR(255), src_field VARCHAR(128), tgt_ds_id BIGINT, tgt_schema VARCHAR(128), tgt_table VARCHAR(255), tgt_field VARCHAR(128), edge_type VARCHAR(32), job_id BIGINT, job_name VARCHAR(128), create_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m19) kvSet("schema_ver", "19");
+        if (!m19) schemaBump("19");
 
         // ============ 容器管理子系统元数据表（schema_ver=20，增量） ============
         // 镜像版本（PRIMARY KEY，支持 UPDATE 状态机 + DELETE）
@@ -380,14 +381,14 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "log_text VARCHAR(65535), start_time DATETIME, end_time DATETIME, " +
                 "error_msg VARCHAR(2048), triggered_by VARCHAR(64)" +
                 ") DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m20) kvSet("schema_ver", "20");
+        if (!m20) schemaBump("20");
 
         // ============ 订阅选字段 + 开放授权限次持久化（schema_ver=21，增量） ============
         boolean m21 = "21".equals(kv("schema_ver"));
         exec("ALTER TABLE meta.portal_subscribe ADD COLUMN fields_json VARCHAR(4096)");
         exec("ALTER TABLE meta.portal_subscribe ADD COLUMN param_field VARCHAR(128)");
         exec("ALTER TABLE meta.data_open_grant ADD COLUMN used_count BIGINT");
-        if (!m21) kvSet("schema_ver", "21");
+        if (!m21) schemaBump("21");
 
         // ============ 数据标准→质量通道（schema_ver=22，增量） ============
         boolean m22 = "22".equals(kv("schema_ver"));
@@ -398,14 +399,14 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "id BIGINT, element_id BIGINT, ds_id BIGINT, table_name VARCHAR(255), column_name VARCHAR(128), " +
                 "rule_ids VARCHAR(255), create_time DATETIME" +
                 ") PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
-        if (!m22) kvSet("schema_ver", "22");
+        if (!m22) schemaBump("22");
 
         // ============ 运维中心·消息管理菜单（schema_ver=23，仅菜单种子，无新表） ============
         boolean m23 = "23".equals(kv("schema_ver"));
         if (!m23) {
             menu(72, 35, "消息管理", "/ops/message", "Bell", "ops:message", "MENU", 9);
             grantMenu(1, 72);
-            kvSet("schema_ver", "23");
+            schemaBump("23");
         }
 
         // ============ 数据治理 P0/P1/P2 升级（schema_ver=24，增量） ============
@@ -432,7 +433,7 @@ public class MetaSeedRunner implements ApplicationRunner {
             try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^dws_' WHERE code='dws' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
             try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^ads_' WHERE code='ads' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
             try { jdbc.update("UPDATE meta.gov_layer SET naming_pattern='^dim_' WHERE code='dim' AND (naming_pattern IS NULL OR naming_pattern='')"); } catch (Exception ignored) {}
-            kvSet("schema_ver", "24");
+            schemaBump("24");
         }
 
         // ============ 质量工单·派单闭环升级（schema_ver=25） ============
@@ -444,7 +445,66 @@ public class MetaSeedRunner implements ApplicationRunner {
             // 运维中心·工单中心菜单（派单处理放运维，质量模块只负责生成）
             menu(73, 35, "工单中心", "/ops/ticket", "Tickets", "ops:ticket", "MENU", 10);
             grantMenu(1, 73);
-            kvSet("schema_ver", "25");
+            schemaBump("25");
+        }
+
+        // ============ 运维中心·容器管理重组 + 发布目标 SSH 双认证（schema_ver=26） ============
+        // ct_server 支持 秘钥文件 认证：private_key/key_passphrase 存 CryptoUtil 密文（同 password）
+        exec("ALTER TABLE meta.ct_server ADD COLUMN auth_type VARCHAR(16)");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN private_key VARCHAR(16384)");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN key_passphrase VARCHAR(512)");
+        try { jdbc.update("UPDATE meta.ct_server SET auth_type='PASSWORD' WHERE auth_type IS NULL OR auth_type=''"); } catch (Exception ignored) {}
+
+        boolean m26 = "26".equals(kv("schema_ver"));
+        if (!m26) {
+            // 容器管理并入运维中心（侧边栏两级渲染，原一级目录 68 撤销，四页平挂 35 下）
+            tryUpdate("UPDATE meta.sys_menu SET parent_id=35, name='打包发布', sort=11 WHERE id=69");
+            menu(74, 35, "打包历史", "/container/history", "Clock", "container:history", "MENU", 12);
+            grantMenu(1, 74);
+            tryUpdate("UPDATE meta.sys_menu SET parent_id=35, name='发布目标', sort=13 WHERE id=70");
+            tryUpdate("UPDATE meta.sys_menu SET parent_id=35, sort=14 WHERE id=71");
+            tryUpdate("DELETE FROM meta.sys_role_menu WHERE menu_id=68");
+            tryUpdate("DELETE FROM meta.sys_menu WHERE id=68");
+            schemaBump("26");
+        }
+
+        // ============ 发布目标 sudo 提权（schema_ver=27） ============
+        // 远端用户无 deploy_path 写权限 / 不在 docker 组时：上传回退 /tmp + sudo -S docker load
+        exec("ALTER TABLE meta.ct_server ADD COLUMN use_sudo VARCHAR(8)");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN sudo_password VARCHAR(512)");
+        tryUpdate("UPDATE meta.ct_server SET use_sudo='OFF' WHERE use_sudo IS NULL OR use_sudo=''");
+        boolean m27 = "27".equals(kv("schema_ver"));
+        if (!m27) schemaBump("27");
+
+        // ============ 部署后自动启动（schema_ver=28） ============
+        // auto_start=ON 时 load 成功后自动 docker run -d（替换同名旧容器）+ 状态/HTTP 探活
+        exec("ALTER TABLE meta.ct_server ADD COLUMN auto_start VARCHAR(8)");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN run_port INT");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN container_name VARCHAR(64)");
+        exec("ALTER TABLE meta.ct_server ADD COLUMN run_env VARCHAR(2048)");
+        tryUpdate("UPDATE meta.ct_server SET auto_start='OFF' WHERE auto_start IS NULL OR auto_start=''");
+        tryUpdate("UPDATE meta.ct_server SET run_port=80 WHERE run_port IS NULL OR run_port=0");
+        boolean m28 = "28".equals(kv("schema_ver"));
+        if (!m28) schemaBump("28");
+
+        // ============ 部署附带大数据栈编排 + meta 基础数据（schema_ver=29） ============
+        // with_stack=ON：随部署上传 docker-compose.yml/hop-jdbc/init 编排资产，远端 docker compose up 自行拉镜像
+        // with_data=ON：部署后将本机 meta 库逻辑导出（TRUNCATE+INSERT）导入远端 StarRocks，账号/菜单与本地一致
+        exec("ALTER TABLE meta.ct_deploy_record ADD COLUMN with_stack VARCHAR(8)");
+        exec("ALTER TABLE meta.ct_deploy_record ADD COLUMN with_data VARCHAR(8)");
+        tryUpdate("UPDATE meta.ct_deploy_record SET with_stack='OFF' WHERE with_stack IS NULL OR with_stack=''");
+        tryUpdate("UPDATE meta.ct_deploy_record SET with_data='OFF' WHERE with_data IS NULL OR with_data=''");
+        boolean m29 = "29".equals(kv("schema_ver"));
+        if (!m29) schemaBump("29");
+    }
+
+    /** 带日志的幂等 UPDATE/DELETE（吞异常但打印根因，便于排查迁移未生效）。 */
+    private void tryUpdate(String sql) {
+        try { jdbc.update(sql); }
+        catch (Exception e) {
+            Throwable c = e;
+            for (int i = 0; i < 6 && c.getCause() != null && c.getCause() != c; i++) c = c.getCause();
+            System.err.println("[MetaSeed] 迁移SQL失败: " + sql + " -> " + c.getMessage());
         }
     }
 
@@ -467,6 +527,15 @@ public class MetaSeedRunner implements ApplicationRunner {
     private String kv(String k) {
         try { return jdbc.queryForObject("SELECT v FROM meta.sys_kv WHERE k=?", String.class, k); }
         catch (Exception e) { return null; }
+    }
+
+    /** schema_ver 单调递增：仅当当前版本号小于 v 时写入（防高版本库被旧迁移块倒卷重放）。 */
+    private void schemaBump(String v) {
+        String cur = kv("schema_ver");
+        try {
+            if (cur != null && Long.parseLong(cur.trim()) >= Long.parseLong(v)) return;
+        } catch (NumberFormatException ignored) { }
+        kvSet("schema_ver", v);
     }
 
     private void kvSet(String k, String v) {
@@ -580,11 +649,11 @@ public class MetaSeedRunner implements ApplicationRunner {
         menu(63, 55, "我的订阅", "/market/my-subscribe", "ShoppingCart", "market:subscribe", "MENU", 3);
         menu(64, 55, "订阅审核", "/market/subscribe-audit", "Checked", "market:subaudit", "MENU", 4);
 
-        // 容器管理（一级目录 sort=14 + 3 子菜单，菜单 id 68-71）
-        menu(68, 0, "容器管理", "/container", "Box", "", "CATALOG", 14);
-        menu(69, 68, "镜像版本", "/container/image", "Files", "container:image", "MENU", 1);
-        menu(70, 68, "远端服务器", "/container/server", "Connection", "container:server", "MENU", 2);
-        menu(71, 68, "部署记录", "/container/deploy", "Promotion", "container:deploy", "MENU", 3);
+        // 容器管理（挂运维中心 35 下，菜单 id 69-71 + 74；原一级目录 68 已在 schema_ver=26 撤销）
+        menu(69, 35, "打包发布", "/container/image", "Box", "container:image", "MENU", 11);
+        menu(74, 35, "打包历史", "/container/history", "Clock", "container:history", "MENU", 12);
+        menu(70, 35, "发布目标", "/container/server", "Connection", "container:server", "MENU", 13);
+        menu(71, 35, "部署记录", "/container/deploy", "Promotion", "container:deploy", "MENU", 14);
 
         // 数据门户 → 数据总览（重命名，幂等 UPDATE）
         try { jdbc.update("UPDATE meta.sys_menu SET name='数据总览' WHERE id=1"); } catch (Exception ignored) {}
@@ -629,8 +698,8 @@ public class MetaSeedRunner implements ApplicationRunner {
         // 数据集市菜单授予 SYS_ADMIN
         int[] marketMenus = {55, 56, 57, 63, 64};
         for (int m : marketMenus) grantMenu(1, m);
-        // 容器管理菜单授予 SYS_ADMIN
-        int[] containerMenus = {68, 69, 70, 71};
+        // 容器管理菜单授予 SYS_ADMIN（68 目录已撤销，只授四个叶子）
+        int[] containerMenus = {69, 70, 71, 74};
         for (int m : containerMenus) grantMenu(1, m);
 
         // ---------- 用户（三员 + 超级演示号） ----------

@@ -20,7 +20,19 @@ public final class RemoteCmdExec {
 
     public static class Conn {
         public final String host; public final int port; public final String user; public final String pwd;
-        public Conn(String host, int port, String user, String pwd) { this.host = host; this.port = port; this.user = user; this.pwd = pwd; }
+        /** 认证方式：PASSWORD（默认，pwd 生效）/ KEY（privateKey PEM 文本生效，keyPassphrase 为私钥口令） */
+        public final String authType;
+        public final String privateKey;
+        public final String keyPassphrase;
+        public Conn(String host, int port, String user, String pwd) {
+            this(host, port, user, pwd, "PASSWORD", "", "");
+        }
+        public Conn(String host, int port, String user, String pwd, String authType, String privateKey, String keyPassphrase) {
+            this.host = host; this.port = port; this.user = user; this.pwd = pwd;
+            this.authType = authType == null ? "PASSWORD" : authType;
+            this.privateKey = privateKey == null ? "" : privateKey;
+            this.keyPassphrase = keyPassphrase == null ? "" : keyPassphrase;
+        }
     }
 
     public static class ExecResult {
@@ -31,14 +43,22 @@ public final class RemoteCmdExec {
 
     /** 测试 SSH 连通（握手 + echo ok）。 */
     public static Map<String, Object> test(Conn c) {
-        ExecResult r = exec(c, "echo ok", 15);
+        ExecResult r = exec(c, "echo ok", 15, null);
         if (r.ok) return Map.of("ok", true, "msg", "SSH 连通成功");
         return Map.of("ok", false, "msg", (r.err == null || r.err.isEmpty()) ? "连接失败" : r.err);
     }
 
     /** 执行远端命令，捕获 stdout（log）/stderr（err）。 */
     public static ExecResult runCmd(Conn c, String cmd, int timeoutSec) {
-        return exec(c, cmd, timeoutSec);
+        return exec(c, cmd, timeoutSec, null);
+    }
+
+    /**
+     * 执行远端命令并向其 stdin 注入一段数据（如 sudo -S 的密码）。
+     * <p>密码走 stdin 而非拼进命令行，避免出现在远端 ps/sh 历史。
+     */
+    public static ExecResult runCmd(Conn c, String cmd, int timeoutSec, String stdinData) {
+        return exec(c, cmd, timeoutSec, stdinData);
     }
 
     /** 流式上传大文件：ChannelSftp.put(InputStream, remotePath)（默认 OVERWRITE，分块传输不进内存）。 */
@@ -61,13 +81,19 @@ public final class RemoteCmdExec {
     private static Session newSession(Conn c) throws Exception {
         JSch jsch = new JSch();
         Session s = jsch.getSession(c.user, c.host, c.port);
-        s.setPassword(c.pwd);
+        if ("KEY".equals(c.authType) && !c.privateKey.isEmpty()) {
+            // 秘钥文件认证：PEM 文本以字节数组注入（免临时文件）；口令空串按无口令处理
+            byte[] phrase = c.keyPassphrase.isEmpty() ? null : c.keyPassphrase.getBytes(StandardCharsets.UTF_8);
+            jsch.addIdentity("ct-key", c.privateKey.getBytes(StandardCharsets.UTF_8), null, phrase);
+        } else {
+            s.setPassword(c.pwd);
+        }
         s.setConfig("StrictHostKeyChecking", "no");
         s.connect(15000);
         return s;
     }
 
-    private static ExecResult exec(Conn c, String cmd, int timeoutSec) {
+    private static ExecResult exec(Conn c, String cmd, int timeoutSec, String stdinData) {
         Session s = null; ChannelExec ch = null;
         ExecResult r = new ExecResult();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -76,7 +102,8 @@ public final class RemoteCmdExec {
             s = newSession(c);
             ch = (ChannelExec) s.openChannel("exec");
             ch.setCommand(cmd);
-            ch.setInputStream(null);
+            ch.setInputStream(stdinData == null ? null
+                    : new java.io.ByteArrayInputStream((stdinData + "\n").getBytes(StandardCharsets.UTF_8)));
             ch.setErrStream(errb, false);
             InputStream in = ch.getInputStream();
             ch.connect(15000);

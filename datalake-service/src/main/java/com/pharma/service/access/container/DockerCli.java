@@ -39,12 +39,31 @@ public class DockerCli {
 
     /** docker build -t tag -f dockerfile contextDir。 */
     public ExecResult build(String tag, String contextDir, String dockerfile) {
-        return runTimed("build", "-t", tag, "-f", dockerfile, contextDir);
+        return build(tag, contextDir, dockerfile, null, null);
+    }
+
+    /** docker build（流式）：onLine 每读一行即回调（供 live 日志实时滚屏），可为 null。 */
+    public ExecResult build(String tag, String contextDir, String dockerfile, java.util.function.Consumer<String> onLine) {
+        return build(tag, contextDir, dockerfile, null, onLine);
+    }
+
+    /** docker build（流式 + 构建参数）：buildArgs 如 {APP_PORT:50080} → --build-arg=APP_PORT=50080。 */
+    public ExecResult build(String tag, String contextDir, String dockerfile, Map<String, String> buildArgs,
+                            java.util.function.Consumer<String> onLine) {
+        List<String> a = new ArrayList<>(List.of("build", "-t", tag, "-f", dockerfile));
+        if (buildArgs != null) buildArgs.forEach((k, val) -> a.add("--build-arg=" + k + "=" + val));
+        a.add(contextDir);
+        return runTimed(onLine, a.toArray(new String[0]));
     }
 
     /** docker save -o tarPath tag（写文件，不走 stdout，无内存压力）。 */
     public ExecResult save(String tag, Path tarPath) {
-        return runTimed("save", "-o", tarPath.toString(), tag);
+        return save(tag, tarPath, null);
+    }
+
+    /** docker save（流式回调，同 build）。 */
+    public ExecResult save(String tag, Path tarPath, java.util.function.Consumer<String> onLine) {
+        return runTimed(onLine, "save", "-o", tarPath.toString(), tag);
     }
 
     /** docker image inspect --format 取 Id 与 Size（用 Go template，避免手解 JSON）。 */
@@ -64,6 +83,11 @@ public class DockerCli {
 
     // ---- 私有 ----
     private ExecResult runTimed(String... args) {
+        return runTimed(null, args);
+    }
+
+    /** 带逐行回调：每读到一行立即 onLine.accept（live 日志实时滚屏），无回调则行为同上。 */
+    private ExecResult runTimed(java.util.function.Consumer<String> onLine, String... args) {
         List<String> cmd = new ArrayList<>();
         cmd.add(bin);
         Collections.addAll(cmd, args);
@@ -72,18 +96,31 @@ public class DockerCli {
         Process p = null;
         try {
             p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = br.readLine()) != null && out.length() < 200000) out.append(line).append('\n');
+            final Process proc = p;
+            // JVM 退出（含 kill）时杀掉子进程，避免遗留孤儿 docker build/save 进程
+            Thread reaper = new Thread(() -> proc.destroyForcibly(), "docker-cli-reaper");
+            Runtime.getRuntime().addShutdownHook(reaper);
+            try {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if (out.length() < 200000) out.append(line).append('\n');
+                        if (onLine != null) {
+                            try { onLine.accept(line); } catch (Exception ignored) {}
+                        }
+                    }
+                }
+                boolean done = p.waitFor(timeout, TimeUnit.SECONDS);
+                if (!done) {
+                    p.destroyForcibly();
+                    r.error = "命令超时（" + timeout + "s）";
+                } else if (p.exitValue() != 0) {
+                    r.error = "退出码 " + p.exitValue();
+                }
+                r.success = done && p.exitValue() == 0;
+            } finally {
+                try { Runtime.getRuntime().removeShutdownHook(reaper); } catch (Exception ignored) {}
             }
-            boolean done = p.waitFor(timeout, TimeUnit.SECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                r.error = "命令超时（" + timeout + "s）";
-            } else if (p.exitValue() != 0) {
-                r.error = "退出码 " + p.exitValue();
-            }
-            r.success = done && p.exitValue() == 0;
         } catch (Exception e) {
             r.success = false;
             r.error = rootMsg(e);

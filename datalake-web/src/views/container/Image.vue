@@ -4,8 +4,8 @@
       <div class="page-head-left">
         <span class="title-icon head-ic"><el-icon><Box /></el-icon></span>
         <div>
-          <div class="page-title">镜像版本</div>
-          <div class="page-sub">将数据中台打包为全栈镜像 · 构建 / 下载 / 版本管理</div>
+          <div class="page-title">打包发布</div>
+          <div class="page-sub">将数据中台打包为全栈镜像 · 构建导出 tar / 下载 / 发布到目标服务器</div>
         </div>
       </div>
       <div class="head-right">
@@ -54,7 +54,7 @@
         <el-form-item label="镜像名"><el-input v-model="form.name" placeholder="如 datalake" /></el-form-item>
         <el-form-item label="Tag"><el-input v-model="form.tag" placeholder="如 v1.0.0" /></el-form-item>
         <el-form-item label="版本说明"><el-input v-model="form.version_label" placeholder="本次构建说明" /></el-form-item>
-        <el-form-item label="暴露端口"><el-input v-model="form.expose_port" placeholder="默认 80" /></el-form-item>
+        <el-form-item label="暴露端口"><el-input v-model="form.expose_port" placeholder="容器内监听端口，默认 80（构建时烧入镜像）" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer>
@@ -128,7 +128,7 @@ const buildDlg = ref(false)
 const buildDlgTitle = ref('构建日志')
 const buildLog = ref('')
 const buildStatus = ref('RUNNING')
-const buildStatusText = computed(() => ({ RUNNING: '构建中', SUCCESS: '成功', FAIL: '失败', NONE: '无' } as any)[buildStatus.value] || buildStatus.value)
+const buildStatusText = computed(() => ({ RUNNING: '构建中', SUCCESS: '成功', FAIL: '失败', NONE: '无', LOST: '任务丢失' } as any)[buildStatus.value] || buildStatus.value)
 const buildStatusType = computed<any>(() => buildStatus.value === 'SUCCESS' ? 'success' : buildStatus.value === 'FAIL' ? 'danger' : 'warning')
 let buildTimer: any = null
 
@@ -192,11 +192,18 @@ function openBuild(row: any) {
 }
 function pollBuild(versionId: number) {
   if (buildTimer) clearInterval(buildTimer)
+  let noneTicks = 0
   buildTimer = setInterval(async () => {
     try {
       const st = await api.containerBuildStatus(versionId)
       buildLog.value = st.log || ''; buildStatus.value = st.status
       if (st.status !== 'RUNNING' && st.status !== 'NONE') { if (buildTimer) clearInterval(buildTimer); buildTimer = null; load() }
+      // NONE 持续 30s：live 态大概率因后端重启丢失，停止轮询避免"构建中"假死
+      else if (st.status === 'NONE' && ++noneTicks > 15) {
+        if (buildTimer) clearInterval(buildTimer); buildTimer = null
+        buildStatus.value = 'LOST'
+        buildLog.value = '构建任务不在运行中（服务可能重启过），请重新发起构建。'
+      }
     } catch (e: any) { if (buildTimer) clearInterval(buildTimer); buildTimer = null }
   }, 2000)
 }

@@ -500,12 +500,14 @@ export const api = {
   containerBuild: (id: number) => http.post('/container/version/build', null, { params: { id } }).then((r) => r.data),
   containerBuildStatus: (versionId: number) => http.get('/container/version/build-status', { params: { versionId } }).then((r) => r.data),
   containerBuildRuns: (versionId: number) => http.get('/container/build-run/list', { params: { versionId } }).then((r) => r.data),
+  containerBuildRunAll: (params: { kw?: string; status?: string } = {}) => http.get('/container/build-run/all', { params }).then((r) => r.data),
+  containerBuildRunDetail: (id: number) => http.get('/container/build-run/detail', { params: { id } }).then((r) => r.data),
   containerDownloadTicket: (id: number) => http.post('/container/version/download-ticket', null, { params: { id } }).then((r) => r.data),
   containerServerList: () => http.get('/container/server/list').then((r) => r.data),
   containerSaveServer: (b: any) => save('/container/server', b),
   containerDeleteServer: (id: number) => http.delete('/container/server', { params: { id } }).then((r) => r.data),
   containerTestServer: (b: any) => http.post('/container/server/test', b).then((r) => r.data),
-  containerDeploy: (versionId: number, serverId: number) => http.post('/container/deploy', null, { params: { versionId, serverId } }).then((r) => r.data),
+  containerDeploy: (versionId: number, serverId: number, withStack = false, withData = false) => http.post('/container/deploy', null, { params: { versionId, serverId, withStack, withData } }).then((r) => r.data),
   containerDeployStatus: (deployId: number) => http.get('/container/deploy/status', { params: { deployId } }).then((r) => r.data),
   containerDeployList: (params: { versionId?: number; serverId?: number } = {}) => http.get('/container/deploy/list', { params }).then((r) => r.data)
 }

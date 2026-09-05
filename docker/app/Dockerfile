@@ -24,5 +24,9 @@ COPY datalake-service/target/datalake-service.jar /app/datalake-service.jar
 COPY docker/app/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/app/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-EXPOSE 80
+# 暴露端口烧进镜像：版本 expose_port 经 --build-arg APP_PORT 注入（默认 80），nginx 监听与其一致
+ARG APP_PORT=80
+RUN sed -i "s/listen 80;/listen ${APP_PORT};/" /etc/nginx/conf.d/default.conf \
+    && grep -n "listen" /etc/nginx/conf.d/default.conf
+EXPOSE ${APP_PORT}
 ENTRYPOINT ["/app/entrypoint.sh"]

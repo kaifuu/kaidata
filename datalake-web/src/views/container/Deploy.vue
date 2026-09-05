@@ -5,7 +5,7 @@
         <span class="title-icon head-ic"><el-icon><Promotion /></el-icon></span>
         <div>
           <div class="page-title">部署记录</div>
-          <div class="page-sub">将镜像部署到远端服务器 · SFTP 上传 tar + docker load</div>
+          <div class="page-sub">将镜像发布到远端目标 · SFTP 上传 tar + docker load · 密码/秘钥双认证</div>
         </div>
       </div>
       <div class="head-right">
@@ -24,6 +24,8 @@
         <el-table-column label="镜像" min-width="170"><template #default="{ row }"><span class="mono">{{ row.image_name }}:{{ row.tag }}</span></template></el-table-column>
         <el-table-column prop="server_name" label="目标服务器" width="150" />
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="栈" width="60" align="center"><template #default="{ row }"><el-tag v-if="row.with_stack === 'ON'" type="success" size="small">栈</el-tag><span v-else class="dim">—</span></template></el-table-column>
+        <el-table-column label="数据" width="64" align="center"><template #default="{ row }"><el-tag v-if="row.with_data === 'ON'" type="success" size="small">数据</el-tag><span v-else class="dim">—</span></template></el-table-column>
         <el-table-column prop="start_time" label="开始" width="160" />
         <el-table-column prop="end_time" label="结束" width="160" />
         <el-table-column prop="triggered_by" label="执行人" width="100" />
@@ -43,6 +45,18 @@
           <el-select v-model="deployForm.serverId" placeholder="选择服务器" style="width:100%">
             <el-option v-for="s in servers" :key="s.id" :label="`${s.name} (${s.host})`" :value="s.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="附带大数据栈">
+          <div class="opt-line">
+            <el-switch v-model="deployForm.withStack" @change="onStackChange" />
+            <span class="opt-tip">编排文件随包上传，远端 docker compose 拉取镜像自建（需 ~6GB 内存与外网）</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="附带基础数据">
+          <div class="opt-line">
+            <el-switch v-model="deployForm.withData" :disabled="!deployForm.withStack" />
+            <span class="opt-tip">meta 库与本地一致（账号/菜单/基础配置，部署后同步）</span>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -75,7 +89,7 @@ const versions = ref<any[]>([])
 const servers = ref<any[]>([])
 
 const deployDlg = ref(false)
-const deployForm = ref<any>({ versionId: null, serverId: null })
+const deployForm = ref<any>({ versionId: null, serverId: null, withStack: false, withData: false })
 const deploying = ref(false)
 
 const progressDlg = ref(false)
@@ -88,7 +102,7 @@ async function load() {
   try { rows.value = await api.containerDeployList() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }
 async function openDeploy() {
-  deployForm.value = { versionId: null, serverId: null }
+  deployForm.value = { versionId: null, serverId: null, withStack: false, withData: false }
   try {
     const [all, srvs] = await Promise.all([api.containerVersionList({ status: 'SAVED' }), api.containerServerList()])
     versions.value = all
@@ -98,11 +112,12 @@ async function openDeploy() {
   if (!servers.value.length) { ElMessage.warning('暂无可用服务器，请先添加'); return }
   deployDlg.value = true
 }
+function onStackChange(v: any) { if (!v) deployForm.value.withData = false }
 async function doDeploy() {
   if (!deployForm.value.versionId || !deployForm.value.serverId) { ElMessage.warning('请选择镜像和服务器'); return }
   deploying.value = true
   try {
-    const r: any = await api.containerDeploy(deployForm.value.versionId, deployForm.value.serverId)
+    const r: any = await api.containerDeploy(deployForm.value.versionId, deployForm.value.serverId, deployForm.value.withStack, deployForm.value.withData)
     deployDlg.value = false
     depStatus.value = 'RUNNING'; depLog.value = ''; progressDlg.value = true
     poll(r.deployId)
@@ -135,6 +150,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .head-right { display: flex; align-items: center; gap: 10px; }
 .dl-card { background: var(--tech-bg-2, var(--el-bg-color)); border: 1px solid var(--tech-panel-border, var(--el-border-color)); border-radius: 12px; padding: 14px; }
 .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.opt-line { display: flex; align-items: center; gap: 10px; }
+.opt-tip { font-size: 12px; color: var(--tech-text-muted); line-height: 1.5; }
+.dim { color: var(--tech-text-muted); }
 .table-empty { padding: 32px 0; color: var(--tech-text-muted); text-align: center; }
 .build-head { margin-bottom: 8px; font-size: 13px; color: var(--tech-text); }
 .build-log, .deploy-log { background: var(--tech-bg-2, var(--el-bg-color)); border: 1px solid var(--tech-panel-border, var(--el-border-color)); border-radius: 8px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--tech-text); }

@@ -170,11 +170,42 @@ public class ContainerController {
         return jdbc.queryForList("SELECT id,version_id,action,status,log_text,start_time,end_time,error_msg,triggered_by FROM meta.ct_image_build_run WHERE version_id=? ORDER BY id DESC", versionId);
     }
 
-    // ===== 远端服务器 CRUD =====
+    /** 打包历史（全局，跨版本）：轻列不含 log_text，日志点详情查看。 */
+    @GetMapping("/build-run/all")
+    public List<Map<String, Object>> buildRunAll(@RequestParam(required = false) String kw,
+                                                 @RequestParam(required = false) String status) {
+        Authz.require(Authz.SYS_ADMIN);
+        StringBuilder sql = new StringBuilder(
+                "SELECT r.id,r.version_id,r.action,r.status,r.start_time,r.end_time,r.error_msg,r.triggered_by," +
+                "v.name AS image_name,v.tag FROM meta.ct_image_build_run r LEFT JOIN meta.ct_image_version v ON v.id=r.version_id WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (status != null && !status.isEmpty()) { sql.append(" AND r.status=?"); args.add(status); }
+        if (kw != null && !kw.isEmpty()) {
+            sql.append(" AND (v.name LIKE ? OR v.tag LIKE ? OR v.version_label LIKE ? OR CAST(r.version_id AS VARCHAR(20)) LIKE ?)");
+            String p = "%" + kw + "%"; args.add(p); args.add(p); args.add(p); args.add(p);
+        }
+        sql.append(" ORDER BY r.id DESC LIMIT 200");
+        return jdbc.queryForList(sql.toString(), args.toArray());
+    }
+
+    /** 打包历史单条详情（含完整日志）。 */
+    @GetMapping("/build-run/detail")
+    public Map<String, Object> buildRunDetail(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        return jdbc.queryForMap("SELECT r.id,r.version_id,r.action,r.status,r.log_text,r.start_time,r.end_time,r.error_msg,r.triggered_by," +
+                "v.name AS image_name,v.tag FROM meta.ct_image_build_run r LEFT JOIN meta.ct_image_version v ON v.id=r.version_id WHERE r.id=?", id);
+    }
+
+    // ===== 发布目标（远端服务器） CRUD：密码 / 秘钥文件 双认证 =====
     @GetMapping("/server/list")
     public List<Map<String, Object>> serverList() {
         Authz.require(Authz.SYS_ADMIN);
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT id,name,host,ssh_port,username,password,deploy_path,docker_bin,status,remark,create_time FROM meta.ct_server ORDER BY id DESC");
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT id,name,host,ssh_port,username,password,auth_type," +
+                "CASE WHEN private_key IS NULL OR private_key='' THEN 0 ELSE 1 END AS has_key," +
+                "CASE WHEN key_passphrase IS NULL OR key_passphrase='' THEN 0 ELSE 1 END AS has_passphrase," +
+                "CASE WHEN sudo_password IS NULL OR sudo_password='' THEN 0 ELSE 1 END AS has_sudo_pwd," +
+                "use_sudo,auto_start,run_port,container_name,run_env,deploy_path,docker_bin,status,remark,create_time FROM meta.ct_server ORDER BY id DESC");
         rows.forEach(r -> { if (!str(r.get("password")).isEmpty()) r.put("password", "***"); });
         return rows;
     }
@@ -184,9 +215,14 @@ public class ContainerController {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
         Timestamp now = new Timestamp(id);
-        jdbc.update("INSERT INTO meta.ct_server(id,name,host,ssh_port,username,password,deploy_path,docker_bin,status,remark,create_time,update_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.ct_server(id,name,host,ssh_port,username,password,auth_type,private_key,key_passphrase,use_sudo,sudo_password,auto_start,run_port,container_name,run_env,deploy_path,docker_bin,status,remark,create_time,update_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
-                crypto.encrypt(str(b.get("password"))), str(b.getOrDefault("deploy_path", "/opt/images")),
+                crypto.encrypt(str(b.get("password"))), str(b.getOrDefault("auth_type", "PASSWORD")),
+                crypto.encrypt(str(b.get("private_key"))), crypto.encrypt(str(b.get("key_passphrase"))),
+                "ON".equals(str(b.get("use_sudo"))) ? "ON" : "OFF", crypto.encrypt(str(b.get("sudo_password"))),
+                "ON".equals(str(b.get("auto_start"))) ? "ON" : "OFF", (int) lng(b.getOrDefault("run_port", 80)),
+                str(b.get("container_name")), str(b.get("run_env")),
+                str(b.getOrDefault("deploy_path", "/opt/images")),
                 str(b.getOrDefault("docker_bin", "docker")), str(b.getOrDefault("status", "NORMAL")),
                 str(b.get("remark")), now, now);
         return Map.of("success", true, "id", id);
@@ -197,18 +233,32 @@ public class ContainerController {
         Authz.require(Authz.SYS_ADMIN);
         long id = lng(b.get("id"));
         Timestamp now = new Timestamp(System.currentTimeMillis());
-        Object pwd = b.get("password");
-        boolean changePwd = pwd != null && !"***".equals(String.valueOf(pwd)) && !String.valueOf(pwd).isEmpty();
+        // 密文类字段（密码/私钥/私钥口令）：表单回显 *** 或留空 = 不修改
+        boolean changePwd = secretChanged(b.get("password"));
+        boolean changeKey = secretChanged(b.get("private_key"));
+        boolean changePhrase = secretChanged(b.get("key_passphrase"));
+        boolean changeSudo = secretChanged(b.get("sudo_password"));
+        String authType = str(b.getOrDefault("auth_type", "PASSWORD"));
+        if (authType.isEmpty()) authType = "PASSWORD";
         if (changePwd) {
-            jdbc.update("UPDATE meta.ct_server SET name=?,host=?,ssh_port=?,username=?,password=?,deploy_path=?,docker_bin=?,status=?,remark=?,update_time=? WHERE id=?",
-                    str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
-                    crypto.encrypt(String.valueOf(pwd)), str(b.get("deploy_path")), str(b.get("docker_bin")),
-                    str(b.get("status")), str(b.get("remark")), now, id);
-        } else {
-            jdbc.update("UPDATE meta.ct_server SET name=?,host=?,ssh_port=?,username=?,deploy_path=?,docker_bin=?,status=?,remark=?,update_time=? WHERE id=?",
-                    str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
-                    str(b.get("deploy_path")), str(b.get("docker_bin")), str(b.get("status")), str(b.get("remark")), now, id);
+            jdbc.update("UPDATE meta.ct_server SET password=? WHERE id=?", crypto.encrypt(str(b.get("password"))), id);
         }
+        if (changeKey) {
+            jdbc.update("UPDATE meta.ct_server SET private_key=? WHERE id=?", crypto.encrypt(str(b.get("private_key"))), id);
+        }
+        if (changePhrase) {
+            jdbc.update("UPDATE meta.ct_server SET key_passphrase=? WHERE id=?", crypto.encrypt(str(b.get("key_passphrase"))), id);
+        }
+        if (changeSudo) {
+            jdbc.update("UPDATE meta.ct_server SET sudo_password=? WHERE id=?", crypto.encrypt(str(b.get("sudo_password"))), id);
+        }
+        jdbc.update("UPDATE meta.ct_server SET name=?,host=?,ssh_port=?,username=?,auth_type=?,use_sudo=?,auto_start=?,run_port=?,container_name=?,run_env=?,deploy_path=?,docker_bin=?,status=?,remark=?,update_time=? WHERE id=?",
+                str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
+                authType, "ON".equals(str(b.get("use_sudo"))) ? "ON" : "OFF",
+                "ON".equals(str(b.get("auto_start"))) ? "ON" : "OFF", (int) lng(b.getOrDefault("run_port", 80)),
+                str(b.get("container_name")), str(b.get("run_env")),
+                str(b.get("deploy_path")), str(b.get("docker_bin")),
+                str(b.get("status")), str(b.get("remark")), now, id);
         return Map.of("success", true);
     }
 
@@ -223,23 +273,59 @@ public class ContainerController {
     public Map<String, Object> serverTest(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         RemoteCmdExec.Conn c;
-        if (b.get("id") != null) {
-            Map<String, Object> s = jdbc.queryForMap("SELECT host,ssh_port,username,password FROM meta.ct_server WHERE id=?", lng(b.get("id")));
-            c = new RemoteCmdExec.Conn(str(s.get("host")), (int) lng(s.get("ssh_port")), str(s.get("username")), crypto.decrypt(str(s.get("password"))));
+        if (b.get("id") != null && lng(b.get("id")) > 0 && "***".equals(str(b.get("private_key")))) {
+            // 已保存目标：用库中密文解密（表单密文字段回显 *** 时）
+            Map<String, Object> s = jdbc.queryForMap(
+                    "SELECT host,ssh_port,username,password,auth_type,private_key,key_passphrase FROM meta.ct_server WHERE id=?", lng(b.get("id")));
+            c = new RemoteCmdExec.Conn(str(s.get("host")), (int) lng(s.get("ssh_port")), str(s.get("username")),
+                    crypto.decrypt(str(s.get("password"))), str(s.get("auth_type")),
+                    crypto.decrypt(str(s.get("private_key"))), crypto.decrypt(str(s.get("key_passphrase"))));
         } else {
-            c = new RemoteCmdExec.Conn(str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")), str(b.get("password")));
+            // 未保存表单直测：秘钥/口令用明文
+            c = new RemoteCmdExec.Conn(str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
+                    str(b.get("password")), str(b.getOrDefault("auth_type", "PASSWORD")),
+                    str(b.get("private_key")), str(b.get("key_passphrase")));
         }
-        return RemoteCmdExec.test(c);
+        Map<String, Object> r = RemoteCmdExec.test(c);
+        // 开启 sudo 时连带预检 sudo 密码（sudo -S -v 仅验证凭据不执行命令；避免上传大 tar 后才发现密码错）
+        if (Boolean.TRUE.equals(r.get("ok")) && "ON".equals(str(b.get("use_sudo")))) {
+            String sudoPwd;
+            if (b.get("id") != null && lng(b.get("id")) > 0 && "***".equals(str(b.get("sudo_password")))) {
+                try {
+                    Map<String, Object> s2 = jdbc.queryForMap("SELECT sudo_password FROM meta.ct_server WHERE id=?", lng(b.get("id")));
+                    sudoPwd = crypto.decrypt(str(s2.get("sudo_password")));
+                } catch (Exception e) { sudoPwd = ""; }
+            } else {
+                sudoPwd = str(b.get("sudo_password"));
+            }
+            if (sudoPwd.isEmpty()) return Map.of("ok", true, "msg", "SSH 连通成功（sudo 已开启但密码未配置）");
+            RemoteCmdExec.ExecResult sv = RemoteCmdExec.runCmd(c, "sudo -S -p '' -v", 15, sudoPwd);
+            if (!sv.ok) return Map.of("ok", false, "msg", "SSH 连通，但 sudo 验证失败（检查 sudo 密码/权限）");
+            return Map.of("ok", true, "msg", "SSH 连通成功，sudo 提权可用");
+        }
+        return r;
     }
 
     // ===== 部署 =====
     @PostMapping("/deploy")
-    public Map<String, Object> deploy(@RequestParam long versionId, @RequestParam long serverId) {
+    public Map<String, Object> deploy(@RequestParam long versionId, @RequestParam long serverId,
+                                      @RequestParam(required = false, defaultValue = "false") boolean withStack,
+                                      @RequestParam(required = false, defaultValue = "false") boolean withData) {
         Authz.require(Authz.SYS_ADMIN);
+        if (withData && !withStack)
+            throw new com.pharma.service.security.AccessDeniedException("附带基础数据需同时勾选附带大数据栈（数据要导入远端 StarRocks）");
         Map<String, Object> v = jdbc.queryForMap("SELECT status,file_path FROM meta.ct_image_version WHERE id=?", versionId);
         if (!"SAVED".equals(str(v.get("status"))) || str(v.get("file_path")).isEmpty())
             throw new com.pharma.service.security.AccessDeniedException("镜像尚未构建保存，无法部署");
-        long deployId = exec.submitDeploy(versionId, serverId, currentUser());
+        String dumpFile = null;
+        if (withData) {
+            // 基础数据在应用建好 meta 库后导入，因此要求目标开启自动启动
+            Map<String, Object> sr = jdbc.queryForMap("SELECT auto_start FROM meta.ct_server WHERE id=?", serverId);
+            if (!"ON".equals(str(sr.get("auto_start"))))
+                throw new com.pharma.service.security.AccessDeniedException("附带基础数据要求发布目标开启自动启动（应用先启动建好 meta 库才能导入）");
+            dumpFile = exec.dumpMeta();   // 同步导出，失败立即反馈（尚未提交任务）
+        }
+        long deployId = exec.submitDeploy(versionId, serverId, currentUser(), withStack, withData, dumpFile);
         return Map.of("success", true, "deployId", deployId);
     }
 
@@ -255,7 +341,7 @@ public class ContainerController {
     public List<Map<String, Object>> deployList(@RequestParam(required = false) Long versionId,
                                                 @RequestParam(required = false) Long serverId) {
         Authz.require(Authz.SYS_ADMIN);
-        StringBuilder sql = new StringBuilder("SELECT d.id,d.version_id,d.server_id,d.status,d.start_time,d.end_time,d.error_msg,d.triggered_by,v.name AS image_name,v.tag,s.name AS server_name FROM meta.ct_deploy_record d LEFT JOIN meta.ct_image_version v ON v.id=d.version_id LEFT JOIN meta.ct_server s ON s.id=d.server_id WHERE 1=1");
+        StringBuilder sql = new StringBuilder("SELECT d.id,d.version_id,d.server_id,d.status,d.start_time,d.end_time,d.error_msg,d.triggered_by,d.with_stack,d.with_data,v.name AS image_name,v.tag,s.name AS server_name FROM meta.ct_deploy_record d LEFT JOIN meta.ct_image_version v ON v.id=d.version_id LEFT JOIN meta.ct_server s ON s.id=d.server_id WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (versionId != null) { sql.append(" AND d.version_id=?"); args.add(versionId); }
         if (serverId != null) { sql.append(" AND d.server_id=?"); args.add(serverId); }
@@ -264,6 +350,11 @@ public class ContainerController {
     }
 
     // ---- 助手 ----
+    /** 密文类字段是否需要更新：非空且不是掩码 ***。 */
+    private static boolean secretChanged(Object v) {
+        String s = v == null ? "" : String.valueOf(v);
+        return !s.isEmpty() && !"***".equals(s);
+    }
     private String readDockerfile() {
         try { return Files.readString(Paths.get(dockerfilePath)); }
         catch (Exception e) { return ""; }

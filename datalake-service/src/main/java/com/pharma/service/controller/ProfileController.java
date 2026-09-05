@@ -37,8 +37,37 @@ public class ProfileController {
     @GetMapping("/job/list")
     public List<Map<String, Object>> listJobs() {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT id, name, source_ds_id, target_db, first_create_table, " +
-                "alert_enabled, extra_columns, cron, status, create_by, create_time, update_time FROM meta.ing_profile_job ORDER BY id");
+        // 列表页直出聚合：探查表数 + 最近一次执行（时间/状态/变化数）。
+        // StarRocks 不支持 select-list 相关标量子查询 → 聚合两查询规则：主表 + 分组聚合，内存拼装。
+        List<Map<String, Object>> jobs = jdbc.queryForList(
+                "SELECT id, name, source_ds_id, target_db, first_create_table, " +
+                        "alert_enabled, extra_columns, cron, status, create_by, create_time, update_time " +
+                        "FROM meta.ing_profile_job ORDER BY id");
+        Map<Long, Long> tableCount = new HashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList(
+                "SELECT job_id, COUNT(*) AS c FROM meta.ing_profile_table GROUP BY job_id")) {
+            tableCount.put(((Number) r.get("job_id")).longValue(), ((Number) r.get("c")).longValue());
+        }
+        Map<Long, Map<String, Object>> lastRun = new HashMap<>();
+        List<Long> lastIds = jdbc.queryForList(
+                "SELECT MAX(id) AS mid FROM meta.ing_profile_run GROUP BY job_id", Long.class);
+        if (!lastIds.isEmpty()) {
+            String in = String.join(",", lastIds.stream().map(String::valueOf).toList());
+            for (Map<String, Object> r : jdbc.queryForList(
+                    "SELECT job_id, start_time, status, tables_changed, tables_total FROM meta.ing_profile_run WHERE id IN (" + in + ")")) {
+                lastRun.put(((Number) r.get("job_id")).longValue(), r);
+            }
+        }
+        for (Map<String, Object> j : jobs) {
+            long id = ((Number) j.get("id")).longValue();
+            j.put("table_count", tableCount.getOrDefault(id, 0L));
+            Map<String, Object> r = lastRun.get(id);
+            j.put("last_run_time", r == null ? null : r.get("start_time"));
+            j.put("last_status", r == null ? "" : String.valueOf(r.get("status")));
+            j.put("last_changed", r == null ? null : r.get("tables_changed"));
+            j.put("last_total", r == null ? null : r.get("tables_total"));
+        }
+        return jobs;
     }
 
     @GetMapping("/job/detail")

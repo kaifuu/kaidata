@@ -40,7 +40,7 @@ public class ProfileExecutor {
         log.append("探查任务 ").append(jobId).append(" 开始 ").append(start).append("\n");
 
         String status = "SUCCESS";
-        int tablesTotal = 0, tablesChanged = 0;
+        int tablesTotal = 0, tablesChanged = 0, failedTables = 0;
         String errorMsg = "";
         try {
             Map<String, Object> job = jdbc.queryForMap(
@@ -69,10 +69,19 @@ public class ProfileExecutor {
                     tablesChanged += profileOne(jobId, runId, dsId, adapter, pool, tableName, cfgJson,
                             targetDb, firstCreate, alert, extra, log);
                 } catch (Exception e) {
+                    failedTables++;
                     log.append("  [").append(tableName).append("] 探查失败: ").append(rootMsg(e)).append("\n");
                 }
             }
             log.append("完成: 变化表 ").append(tablesChanged).append("/").append(tablesTotal).append("\n");
+            // 部分失败不再吞成 SUCCESS：全失败=FAIL，部分失败=PARTIAL（前端黄标提示看日志）
+            if (failedTables > 0 && failedTables >= tablesTotal) {
+                status = "FAIL";
+                errorMsg = failedTables + " 张表探查全部失败（详见日志）";
+            } else if (failedTables > 0) {
+                status = "PARTIAL";
+                errorMsg = failedTables + " 张表探查失败（详见日志）";
+            }
         } catch (Exception e) {
             status = "FAIL";
             errorMsg = rootMsg(e);
@@ -212,9 +221,11 @@ public class ProfileExecutor {
         if (extra == null || extra.isBlank()) return out;
         try {
             for (var n : json.readTree(extra)) {
-                String name = n.has("name") ? n.get("name").asText() : n.get("col").asText();
+                // 列名优先取数据元英文名（col），中文标准名仅作展示；非法字符兜底替换（老数据防崩）
+                String col = n.has("col") && !n.get("col").asText().isBlank()
+                        ? n.get("col").asText() : n.get("name").asText();
                 String type = n.has("type") ? n.get("type").asText() : "VARCHAR(255)";
-                out.add(new StarRocksDdlBuilder.ColumnDef(name, type));
+                out.add(new StarRocksDdlBuilder.ColumnDef(safeName(col), type));
             }
         } catch (Exception ignored) {}
         return out;

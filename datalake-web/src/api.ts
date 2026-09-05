@@ -55,7 +55,12 @@ export interface StreamRunRow { id: number; job_id: number; start_time: string; 
 export interface RoutineLoadRow { Name: string; DbName: string; TableName: string; State: string; [k: string]: any }
 
 // ===== 数据探查 =====
-export interface ProfileJobRow { id: number; name: string; source_ds_id: number; target_db: string; first_create_table: boolean; alert_enabled: boolean; extra_columns?: string; cron?: string; status: string; create_by?: string; create_time?:string }
+export interface ProfileJobRow {
+  id: number; name: string; source_ds_id: number; target_db: string; first_create_table: boolean; alert_enabled: boolean
+  extra_columns?: string; cron?: string; status: string; create_by?: string; create_time?: string; update_time?: string
+  /** 列表富化：探查表数 + 最近一次执行 */
+  table_count?: number; last_run_time?: string; last_status?: string; last_changed?: number; last_total?: number
+}
 export interface ProfileRunRow { id: number; job_id: number; start_time: string; end_time: string; status: string; tables_changed: number; tables_total: number; error_msg?: string; log_text?: string; triggered_by?: string }
 export interface ProfileSnapshotRow { id: number; job_id: number; table_name: string; version_n: number; run_id: number; created_time: string }
 export interface ProfileTableCfg { table_name: string; is_view: boolean; columns_config: string }

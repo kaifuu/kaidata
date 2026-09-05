@@ -7,7 +7,7 @@
       <el-input v-model="kw" placeholder="任务名称模糊" size="small" style="width:200px" clearable @change="load" />
       <el-button size="small" @click="load">刷新</el-button>
     </div>
-    <el-table :data="filtered" size="small" stripe border v-loading="loading">
+    <el-table :data="paged" size="small" stripe border v-loading="loading">
       <el-table-column prop="name" label="任务名称" min-width="140" />
       <el-table-column label="数据源" min-width="150">
         <template #default="{ row }">{{ row.ds_name }}<span v-if="dsType(row.ds_id)" class="muted">({{ dsType(row.ds_id) }})</span></template>
@@ -29,9 +29,14 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="dl-pagination">
+      <el-pagination :current-page="page.page" :page-size="page.size" :total="filtered.length"
+        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+        @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
 
     <!-- 新建/编辑 -->
-    <el-dialog v-model="editDlg" :title="form.id ? '编辑采集任务' : '新建采集任务'" width="520px">
+    <el-drawer v-model="editDlg" :title="form.id ? '编辑采集任务' : '新建采集任务'" size="620px">
       <el-form :model="form" label-width="100px" size="small">
         <el-form-item label="任务名称" required><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="数据源" required>
@@ -47,7 +52,7 @@
         <el-button @click="editDlg = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">确定</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 采集日志 -->
     <el-drawer v-model="logDlg" :title="`采集日志 - ${curJob?.name || ''}`" size="62%">
@@ -90,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errMsg } from '@/api'
 
@@ -109,6 +114,14 @@ const resultDlg = ref(false)
 const resultRows = ref<any[]>([])
 
 const filtered = computed(() => (!kw.value ? rows.value : rows.value.filter((r) => (r.name || '').includes(kw.value))))
+
+// 客户端分页
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => filtered.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
+// 关键字变化复位到第一页
+watch(kw, () => { page.page = 1 })
 
 async function load() {
   loading.value = true

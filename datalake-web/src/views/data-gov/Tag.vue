@@ -59,7 +59,7 @@
             <el-input v-model="relFilter.kw" placeholder="搜索 库.表.字段" clearable size="small" style="width:200px" prefix-icon="Search" />
           </span>
         </div>
-        <el-table :data="filteredRels" size="small" stripe border v-loading="loadingRel" max-height="560">
+        <el-table :data="pagedRels" size="small" stripe border v-loading="loadingRel" max-height="560">
           <el-table-column prop="tag_name" label="标签" width="130">
             <template #default="{ row }"><el-tag size="small" :color="row.color" effect="dark" style="border:none">{{ row.tag_name }}</el-tag></template>
           </el-table-column>
@@ -71,6 +71,11 @@
           </el-table-column>
           <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link size="small" type="danger" @click="unband(row)">移除</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="relPage.page" :page-size="relPage.size" :total="filteredRels.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onRelSizeChange" @current-change="onRelPageChange" />
+        </div>
         <div v-if="filteredRels.length !== rels.length" class="muted" style="margin-top:6px">筛选出 {{ filteredRels.length }} / {{ rels.length }} 条</div>
       </el-tab-pane>
 
@@ -82,7 +87,7 @@
           <el-button type="warning" size="small" :loading="applyLoading" @click="applyRules"><el-icon><MagicStick /></el-icon> 执行打标</el-button>
           <span class="muted">按正则扫描元数据（表名/列名/列注释/类型）命中即自动打标，幂等可重复执行</span>
         </div>
-        <el-table :data="rules" size="small" stripe border v-loading="loadingRule">
+        <el-table :data="pagedRules" size="small" stripe border v-loading="loadingRule">
           <el-table-column prop="tag_name" label="标签" width="130">
             <template #default="{ row }"><el-tag size="small" :color="row.color" effect="dark" style="border:none">{{ row.tag_name || row.tag_id }}</el-tag></template>
           </el-table-column>
@@ -94,10 +99,15 @@
           <el-table-column prop="create_time" label="创建时间" width="160" />
           <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link size="small" type="danger" @click="delRule(row)">删除</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="rulePage.page" :page-size="rulePage.size" :total="rules.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onRuleSizeChange" @current-change="onRulePageChange" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="dlg" :title="form.id ? '编辑标签' : '新增标签'" width="440px">
+    <el-drawer v-model="dlg" :title="form.id ? '编辑标签' : '新增标签'" size="560px">
       <el-form :model="form" label-width="60px" size="small">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="分类"><el-select v-model="form.category" style="width:100%"><el-option v-for="c in ['分类','级别','安全','业务']" :key="c" :label="c" :value="c" /></el-select></el-form-item>
@@ -105,9 +115,9 @@
         <el-form-item label="说明"><el-input v-model="form.description" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg = false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
-    <el-dialog v-model="relDlg" title="打标" width="460px">
+    <el-drawer v-model="relDlg" title="打标" size="560px">
       <el-form :model="relForm" label-width="70px" size="small">
         <el-form-item label="标签"><el-select v-model="relForm.tag_id" style="width:100%"><el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" /></el-select></el-form-item>
         <el-form-item label="对象"><el-radio-group v-model="relForm.target_type"><el-radio value="table">表</el-radio><el-radio value="column">字段</el-radio></el-radio-group></el-form-item>
@@ -116,9 +126,9 @@
         <el-form-item v-if="relForm.target_type === 'column'" label="字段"><el-input v-model="relForm.target_column" placeholder="batch_no" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="relDlg = false">取消</el-button><el-button type="primary" @click="bind">打标</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
-    <el-dialog v-model="ruleDlg" title="打标规则" width="480px">
+    <el-drawer v-model="ruleDlg" title="打标规则" size="580px">
       <el-form :model="ruleForm" label-width="70px" size="small">
         <el-form-item label="标签" required><el-select v-model="ruleForm.tag_id" style="width:100%"><el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" /></el-select></el-form-item>
         <el-form-item label="匹配对象">
@@ -131,12 +141,12 @@
         <el-form-item label="说明"><el-input v-model="ruleForm.remark" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="ruleDlg = false">取消</el-button><el-button type="primary" @click="saveRule">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Plus, Share } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
@@ -180,6 +190,18 @@ const filteredRels = computed(() => rels.value.filter(r =>
   && (!relFilter.type || r.target_type === relFilter.type)
   && (!relFilter.kw || `${r.target_db}.${r.target_table}${r.target_column ? '.' + r.target_column : ''}`.toLowerCase().includes(relFilter.kw.toLowerCase()))
 ))
+
+// 客户端分页：打标关系 + 打标规则
+const relPage = reactive({ page: 1, size: 10 })
+const pagedRels = computed(() => filteredRels.value.slice((relPage.page - 1) * relPage.size, relPage.page * relPage.size))
+const rulePage = reactive({ page: 1, size: 10 })
+const pagedRules = computed(() => rules.value.slice((rulePage.page - 1) * rulePage.size, rulePage.page * rulePage.size))
+function onRelSizeChange(s: number) { relPage.size = s; relPage.page = 1 }
+function onRelPageChange(p: number) { relPage.page = p }
+function onRuleSizeChange(s: number) { rulePage.size = s; rulePage.page = 1 }
+function onRulePageChange(p: number) { rulePage.page = p }
+// 打标关系筛选变化复位到第一页
+watch(relFilter, () => { relPage.page = 1 })
 
 async function loadTags() { loading.value = true; try { tags.value = await api.govTags() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 async function loadRels() { loadingRel.value = true; try { rels.value = await api.govTagRelations() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loadingRel.value = false } }

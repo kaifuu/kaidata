@@ -13,7 +13,7 @@
           <el-button size="small" type="primary" :disabled="!curCat" @click="openJob()">新建管道</el-button>
           <el-button size="small" @click="loadJobs">刷新</el-button>
         </div>
-        <el-table :data="jobs" size="small" stripe border>
+        <el-table :data="paged" size="small" stripe border>
           <el-table-column prop="name" label="管道" min-width="120" />
           <el-table-column prop="type" label="类型" width="130" />
           <el-table-column prop="kafka_topic" label="topic" width="110" />
@@ -28,6 +28,11 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="page.page" :page-size="page.size" :total="jobs.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onSizeChange" @current-change="onPageChange" />
+        </div>
         <div class="hint" style="margin-top:8px">复用「数据接入 - 实时数据接入」的 Kafka 管道（KAFKA_TO_SR / JDBC_TO_KAFKA），按分类组织，与数据接入模块操作同一 ing_stream_job。</div>
       </el-col>
     </el-row>
@@ -37,7 +42,7 @@
       <template #footer><el-button @click="catDlg = false">取消</el-button><el-button type="primary" @click="saveCat">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="jobDlg" :title="jobForm.id ? '编辑管道' : '新建管道'" width="620px">
+    <el-drawer v-model="jobDlg" :title="jobForm.id ? '编辑管道' : '新建管道'" size="720px">
       <el-form :model="jobForm" label-width="100px" size="small">
         <el-form-item label="名称"><el-input v-model="jobForm.name" /></el-form-item>
         <el-form-item label="分类"><el-select v-model="jobForm.catalog_id" style="width:100%"><el-option v-for="c in flatCats" :key="c.id" :label="c.name" :value="c.id" /></el-select></el-form-item>
@@ -49,12 +54,12 @@
         <el-form-item label="目标表"><el-input v-model="jobForm.target_table" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="jobDlg = false">取消</el-button><el-button type="primary" @click="saveJob">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errMsg } from '@/api'
 
@@ -62,6 +67,10 @@ const MODULE = 'STREAM'
 const tree = ref<any[]>([])
 const curCat = ref<any>(null)
 const jobs = ref<any[]>([])
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => jobs.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const catDlg = ref(false)
 const catName = ref('')
 const flatCats = ref<any[]>([])
@@ -72,7 +81,7 @@ const dsList = ref<any[]>([])
 function flatten(n: any[]): any[] { const o: any[] = []; for (const x of n) { o.push(x); if (x.children) o.push(...flatten(x.children)) } return o }
 async function loadTree() { try { tree.value = await api.devCatalogTree(MODULE); flatCats.value = flatten(tree.value) } catch (e: any) { ElMessage.error(errMsg(e)) } }
 function onCat(c: any) { curCat.value = c; loadJobs() }
-async function loadJobs() { try { jobs.value = await api.daStreamJobs(curCat.value?.id) } catch (e: any) { ElMessage.error(errMsg(e)) } }
+async function loadJobs() { page.page = 1; try { jobs.value = await api.daStreamJobs(curCat.value?.id) } catch (e: any) { ElMessage.error(errMsg(e)) } }
 function openCat() { catName.value = ''; catDlg.value = true }
 async function saveCat() { if (!catName.value) return; try { await api.devSaveCatalog({ name: catName.value, parent_id: curCat.value?.id || 0, module_type: MODULE, sort: 0 }); ElMessage.success('已建'); catDlg.value = false; await loadTree() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function delCat(c: any) { try { await ElMessageBox.confirm(`删除分类 ${c.name}?`) } catch { return } try { await api.devDeleteCatalog(c.id); await loadTree() } catch (e: any) { ElMessage.error(errMsg(e)) } }

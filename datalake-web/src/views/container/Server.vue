@@ -15,7 +15,7 @@
     </div>
 
     <div class="dl-card">
-      <el-table :data="rows" v-loading="loading" stripe size="small">
+      <el-table :data="paged" v-loading="loading" stripe size="small">
         <el-table-column prop="name" label="名称" min-width="120" show-overflow-tooltip />
         <el-table-column label="地址" min-width="160"><template #default="{ row }"><span class="mono">{{ row.host }}:{{ row.ssh_port }}</span></template></el-table-column>
         <el-table-column prop="username" label="用户" width="100" />
@@ -46,9 +46,14 @@
         </el-table-column>
         <template #empty><div class="table-empty">暂无发布目标，点击「新增发布目标」添加</div></template>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
     </div>
 
-    <el-dialog v-model="editDlg" :title="form.id ? '编辑发布目标' : '新增发布目标'" width="560px">
+    <el-drawer v-model="editDlg" :title="form.id ? '编辑发布目标' : '新增发布目标'" size="660px">
       <el-form :model="form" label-width="90px">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="主机"><el-input v-model="form.host" placeholder="IP 或域名" /></el-form-item>
@@ -104,19 +109,23 @@
         <el-button @click="editDlg = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
     <input ref="keyInput" type="file" class="key-input" @change="readKey" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const editDlg = ref(false)
 const form = ref<any>(def())
 const saving = ref(false)
@@ -128,6 +137,7 @@ function def() {
 }
 
 async function load() {
+  page.page = 1
   loading.value = true
   try { rows.value = await api.containerServerList() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }

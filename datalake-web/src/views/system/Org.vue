@@ -20,7 +20,7 @@
       </div>
     </div>
 
-    <el-table :data="tree" row-key="id" :tree-props="{ children: 'children' }" size="small" stripe border
+    <el-table :data="pagedTree" row-key="id" :tree-props="{ children: 'children' }" size="small" stripe border
               default-expand-all v-loading="loading">
       <el-table-column prop="name" label="组织名称" min-width="220" />
       <el-table-column prop="code" label="编码" width="150" />
@@ -36,8 +36,13 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="dl-pagination">
+      <el-pagination :current-page="page.page" :page-size="page.size" :total="tree.length"
+        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+        @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
 
-    <el-dialog v-model="dlg" :title="form.id ? '编辑组织' : '新增组织'" width="440px">
+    <el-drawer v-model="dlg" :title="form.id ? '编辑组织' : '新增组织'" size="560px">
       <el-form :model="form" label-width="72px">
         <el-form-item label="上级">
           <el-select v-model="form.parent_id" style="width:100%" clearable placeholder="顶级组织">
@@ -52,12 +57,12 @@
         <el-button @click="dlg = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, OfficeBuilding } from '@element-plus/icons-vue'
 import { api, errMsg, type OrgRow, type TenantRow } from '@/api'
@@ -80,6 +85,14 @@ const filtered = computed(() => {
 })
 const visibleCount = computed(() => filtered.value.length)
 const tree = computed<OrgRow[]>(() => build(filtered.value))
+
+// 客户端分页：只切顶层节点，children 完整保留在父节点下
+const page = reactive({ page: 1, size: 10 })
+const pagedTree = computed(() => tree.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
+// 关键字 / 租户切换变化复位到第一页
+watch([keyword, tenantId], () => { page.page = 1 })
 function build(list: OrgRow[]): OrgRow[] {
   const map = new Map<number, OrgRow>()
   list.forEach((o) => map.set(o.id, { ...o, children: [] }))

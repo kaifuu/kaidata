@@ -52,7 +52,7 @@
         </el-button>
         <div class="toolbar-actions"><span class="count-badge">命中 <b>{{ rows.length }}</b></span></div>
       </div>
-      <el-table :data="rows" size="small" stripe v-loading="loading" @selection-change="onSel">
+      <el-table :data="paged" size="small" stripe v-loading="loading" @selection-change="onSel">
         <el-table-column type="selection" width="42" :selectable="(r: any) => r.status === 'OPEN' || r.status === 'ASSIGNED'" />
         <el-table-column label="严重度" width="90">
           <template #default="{ row }"><span class="st-pill" :class="sevMeta(row.severity).type"><i class="dot" />{{ sevText(row.severity) }}</span></template>
@@ -97,10 +97,15 @@
           <div class="table-empty"><el-icon class="empty-ic"><Tickets /></el-icon><div>{{ rows.length ? '无匹配工单' : '暂无工单（质量检测 FAIL 会自动建单）' }}</div></div>
         </template>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
     </div>
 
     <!-- 派单弹窗（单条 / 批量） -->
-    <el-dialog v-model="assignDlg" :title="assignRow ? `派单 - ${assignRow.table_name}` : `批量派单（${selection.length} 条）`" width="480px">
+    <el-drawer v-model="assignDlg" :title="assignRow ? `派单 - ${assignRow.table_name}` : `批量派单（${selection.length} 条）`" size="580px">
       <el-form label-width="90px" size="small">
         <el-form-item label="处理人" required>
           <el-select v-model="assignForm.assignee" filterable placeholder="选择处理人" style="width:100%">
@@ -117,7 +122,7 @@
       </el-form>
       <template #footer><el-button @click="assignDlg = false">取消</el-button>
         <el-button type="primary" :loading="acting" @click="doAssign">确认派单</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 工单详情抽屉 -->
     <el-drawer v-model="detailDlg" :title="`工单详情 - ${detail?.table_name || ''}`" size="640px">
@@ -196,6 +201,11 @@ const SEV: Record<string, { label: string; type: string }> = {
 }
 
 const rows = ref<any[]>([]); const loading = ref(false); const stats = ref<any>({})
+// 客户端分页：工单列表按页切片（筛选走服务端参数，load 后复位第一页）
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const users = ref<any[]>([]); const selection = ref<any[]>([])
 const fStatus = ref(''); const fSeverity = ref(''); const fKeyword = ref(''); const fOverdue = ref(false)
 const assignDlg = ref(false); const assignRow = ref<any>(null); const acting = ref(false)
@@ -213,6 +223,7 @@ function toggleStatus(k: string) { fStatus.value = fStatus.value === k ? '' : k 
 function onSel(s: any[]) { selection.value = s }
 
 async function load() {
+  page.page = 1
   loading.value = true
   try {
     rows.value = await api.govQualityIssues({

@@ -57,6 +57,7 @@ public class ContainerBuildExecutor {
 
     // ============ 构建 ============
     public long submitBuild(long versionId, String user) {
+        sweep();   // 顺手清理过期 live 态（原先无人调用，10 分钟兜底清理成死代码）
         long runId = System.currentTimeMillis();
         live.put(versionId, new LiveState("RUNNING", "提交构建任务...\n", runId));
         pool.submit(() -> doBuild(versionId, runId, user));
@@ -127,6 +128,7 @@ public class ContainerBuildExecutor {
 
     // ============ 部署 ============
     public long submitDeploy(long versionId, long serverId, String user, boolean withStack, boolean withData, String dumpFile) {
+        sweep();
         long deployId = System.currentTimeMillis();
         live.put(deployId, new LiveState("RUNNING", "开始部署...\n", deployId));
         pool.submit(() -> doDeploy(versionId, serverId, deployId, user, withStack, withData, dumpFile));
@@ -205,12 +207,12 @@ public class ContainerBuildExecutor {
             }
             append(st, "上传完成\n");
 
-            // 5. docker load（按需 sudo，超时 30min）
+            // 5. docker load（按需 sudo，超时 30min；逐行流式回调，load 层数时前端也能滚屏）
             String loadCmd = sudoLoad ? "sudo -S -p '' " + dockerBin + " load -i " + remote
                                       : dockerBin + " load -i " + remote;
             append(st, "$ " + (sudoLoad ? "sudo " : "") + dockerBin + " load -i " + remote + "\n");
-            RemoteCmdExec.ExecResult ld = RemoteCmdExec.runCmd(c, loadCmd, 1800, sudoLoad ? sudoPwd : null);
-            append(st, ld.log);
+            RemoteCmdExec.ExecResult ld = RemoteCmdExec.runCmd(c, loadCmd, 1800, sudoLoad ? sudoPwd : null,
+                    line -> append(st, line + "\n"));
             if (!ld.ok) throw new RuntimeException("docker load 失败: " + ld.err);
 
             // 6. 清理 /tmp 暂存（失败不阻塞）
@@ -399,11 +401,11 @@ public class ContainerBuildExecutor {
         if (sd.ok) append(st, "已将 Kafka EXTERNAL 广播地址改为 host.docker.internal:9094\n");
         else append(st, "⚠ Kafka 广播地址补丁未生效（不影响登录，实时接入可能需手工调整）: " + sd.err + "\n");
 
-        // e. compose up（远端自行拉镜像，超时 30min；重复部署幂等——已有镜像不重拉）
+        // e. compose up（远端自行拉镜像，超时 30min；重复部署幂等——已有镜像不重拉；逐行流式滚屏）
         append(st, "$ " + (sud.isEmpty() ? "" : "sudo ") + compose + " -f " + remoteBase + "/docker-compose.yml up -d（远端拉取镜像，耗时视网络）\n");
         RemoteCmdExec.ExecResult up = RemoteCmdExec.runCmd(c,
-                sud + compose + " -f " + shq(remoteBase + "/docker-compose.yml") + " up -d", 1800, pwd);
-        if (up.log != null && !up.log.isEmpty()) append(st, up.log + (up.log.endsWith("\n") ? "" : "\n"));
+                sud + compose + " -f " + shq(remoteBase + "/docker-compose.yml") + " up -d", 1800, pwd,
+                line -> append(st, line + "\n"));
         if (!up.ok) throw new RuntimeException("远端 compose up 失败（常见原因：无法访问镜像仓库拉取，可在远端 /etc/docker/daemon.json 配置 registry-mirrors 后重试）: " + up.err);
 
         // f. 等 StarRocks 可查询（仿 bring-up.sh：容器内 mysql 客户端探 9030，60×3s）
@@ -502,7 +504,12 @@ public class ContainerBuildExecutor {
     }
 
     // ---- 助手 ----
-    private void append(LiveState st, String s) { if (st != null) st.log += s; }
+    /** 追加 live 日志并设上限（超 ~400KB 只留尾部，防超长部署把内存/轮询响应撑爆；历史表仍存完整 200KB 截断版）。 */
+    private void append(LiveState st, String s) {
+        if (st == null) return;
+        st.log += s;
+        if (st.log.length() > 400000) st.log = st.log.substring(st.log.length() - 400000);
+    }
     /** 远端 shell 单引号包裹（内部 ' 转义为 '\'')，供 -e KEY=VALUE 等含特殊字符参数。 */
     private static String shq(String v) { return "'" + v.replace("'", "'\\''") + "'"; }
     /** 端口合法性：1-65535 数字，非法/为空回退 80。 */

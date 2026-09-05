@@ -3,7 +3,7 @@
     <div class="card-title"><span>资产审核</span><span class="role-tag">系统管理员</span></div>
     <el-tabs v-model="tab">
       <el-tab-pane label="待审资产" name="pending">
-        <el-table :data="rows" size="small" stripe border v-loading="loading">
+        <el-table :data="pendPaged" size="small" stripe border v-loading="loading">
           <el-table-column prop="name" label="资产名" min-width="140" />
           <el-table-column prop="asset_type" label="类型" width="80" />
           <el-table-column label="来源" min-width="160"><template #default="{ row }">{{ row.source_type }} #{{ row.source_id }}</template></el-table-column>
@@ -12,9 +12,14 @@
           <el-table-column prop="create_by" label="提交人" width="100" />
           <el-table-column label="操作" width="200"><template #default="{ row }"><el-button link size="small" type="success" @click="doApprove(row)">通过</el-button><el-button link size="small" type="danger" @click="doReject(row)">驳回</el-button><el-button link size="small" type="primary" @click="openHistory(row)">历史</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="pendPage.page" :page-size="pendPage.size" :total="rows.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onPendSize" @current-change="onPendPage" />
+        </div>
       </el-tab-pane>
       <el-tab-pane label="全部资产" name="all">
-        <el-table :data="allRows" size="small" stripe border v-loading="loadingAll">
+        <el-table :data="allPaged" size="small" stripe border v-loading="loadingAll">
           <el-table-column prop="name" label="资产名" min-width="140" />
           <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag size="small" :type="stType(row.status)">{{ row.status }}</el-tag></template></el-table-column>
           <el-table-column prop="create_by" label="提交人" width="100" />
@@ -26,6 +31,11 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="allPage.page" :page-size="allPage.size" :total="allRows.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onAllSize" @current-change="onAllPage" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -33,23 +43,31 @@
       <el-input v-model="cmt" type="textarea" :rows="3" placeholder="审核意见" />
       <template #footer><el-button @click="cmtDlg = false">取消</el-button><el-button type="primary" @click="confirmCmt">确定</el-button></template>
     </el-dialog>
-    <el-dialog v-model="histDlg" :title="`审核历史 - ${cur?.name || ''}`" width="600px">
+    <el-drawer v-model="histDlg" :title="`审核历史 - ${cur?.name || ''}`" size="700px">
       <el-table :data="hist" size="small" border>
         <el-table-column prop="action" label="动作" width="80"><template #default="{ row }"><el-tag size="small" :type="row.action === '通过' ? 'success' : row.action === '驳回' ? 'danger' : 'warning'">{{ row.action }}</el-tag></template></el-table-column>
         <el-table-column prop="comment" label="意见" min-width="180" />
         <el-table-column prop="auditor" label="审核人" width="100" />
         <el-table-column prop="audit_time" label="时间" width="160" />
       </el-table>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, errMsg } from '@/api'
 const tab = ref('pending')
 const rows = ref<any[]>([]); const loading = ref(false)
 const allRows = ref<any[]>([]); const loadingAll = ref(false)
+const pendPage = reactive({ page: 1, size: 10 })
+const pendPaged = computed(() => rows.value.slice((pendPage.page - 1) * pendPage.size, pendPage.page * pendPage.size))
+function onPendSize(s: number) { pendPage.size = s; pendPage.page = 1 }
+function onPendPage(p: number) { pendPage.page = p }
+const allPage = reactive({ page: 1, size: 10 })
+const allPaged = computed(() => allRows.value.slice((allPage.page - 1) * allPage.size, allPage.page * allPage.size))
+function onAllSize(s: number) { allPage.size = s; allPage.page = 1 }
+function onAllPage(p: number) { allPage.page = p }
 const cmtDlg = ref(false); const cmtTitle = ref(''); const cmt = ref(''); const pendingAction = ref<'approve'|'reject'>('approve'); const curId = ref(0)
 const histDlg = ref(false); const cur = ref<any>(null); const hist = ref<any[]>([])
 const stType = (s: string): any => ({ 通过: 'success', 待审: 'warning', 驳回: 'danger', 草稿: 'info', 下线: 'info' } as any)[s] || ''

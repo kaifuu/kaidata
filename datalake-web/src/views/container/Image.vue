@@ -27,7 +27,7 @@
         <el-button :icon="Search" @click="load">查询</el-button>
       </div>
 
-      <el-table :data="rows" v-loading="loading" stripe size="small">
+      <el-table :data="paged" v-loading="loading" stripe size="small">
         <el-table-column prop="name" label="镜像名" min-width="120" show-overflow-tooltip />
         <el-table-column prop="tag" label="Tag" width="100" show-overflow-tooltip />
         <el-table-column prop="version_label" label="版本说明" min-width="130" show-overflow-tooltip />
@@ -46,10 +46,15 @@
         </el-table-column>
         <template #empty><div class="table-empty">暂无镜像版本，点击「新增版本」创建</div></template>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
     </div>
 
     <!-- 新增/编辑 -->
-    <el-dialog v-model="editDlg" :title="form.id ? '编辑版本' : '新增版本'" width="520px">
+    <el-drawer v-model="editDlg" :title="form.id ? '编辑版本' : '新增版本'" size="620px">
       <el-form :model="form" label-width="90px">
         <el-form-item label="镜像名"><el-input v-model="form.name" placeholder="如 datalake" /></el-form-item>
         <el-form-item label="Tag"><el-input v-model="form.tag" placeholder="如 v1.0.0" /></el-form-item>
@@ -61,12 +66,12 @@
         <el-button @click="editDlg = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 构建日志 -->
     <el-dialog v-model="buildDlg" :title="buildDlgTitle" width="760px" :close-on-click-modal="false" :before-close="cancelBuild">
       <div class="build-head"><span>状态：</span><el-tag :type="buildStatusType" size="small">{{ buildStatusText }}</el-tag></div>
-      <pre class="build-log">{{ buildLog || '等待日志...' }}</pre>
+      <LogStream :log="buildLog" :running="buildStatus === 'RUNNING'" />
       <template #footer>
         <el-button v-if="buildStatus === 'RUNNING'" disabled>构建中...</el-button>
         <el-button v-else type="primary" @click="buildDlg = false">关闭</el-button>
@@ -74,7 +79,7 @@
     </el-dialog>
 
     <!-- 详情 -->
-    <el-dialog v-model="detailDlg" title="版本详情" width="760px">
+    <el-drawer v-model="detailDlg" title="版本详情" size="860px">
       <el-descriptions :column="2" border size="small" v-if="detail">
         <el-descriptions-item label="镜像名">{{ detail.name }}</el-descriptions-item>
         <el-descriptions-item label="Tag">{{ detail.tag }}</el-descriptions-item>
@@ -88,7 +93,7 @@
       <div class="sub-title">构建历史（点击行展开查看完整日志）</div>
       <el-table :data="detail?.buildRuns || []" size="small" stripe max-height="260">
         <el-table-column type="expand">
-          <template #default="{ row }"><pre class="build-log" style="max-height:300px">{{ row.log_text || row.error_msg || '（无日志）' }}</pre></template>
+          <template #default="{ row }"><LogStream :log="row.log_text || row.error_msg || '（无日志）'" height="300px" style="padding:0 12px" /></template>
         </el-table-column>
         <el-table-column prop="action" label="动作" width="80" />
         <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.status === 'SUCCESS' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag></template></el-table-column>
@@ -104,21 +109,26 @@
         <el-table-column prop="end_time" label="结束" width="150" />
         <el-table-column prop="triggered_by" label="执行人" />
       </el-table>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Box, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
+import LogStream from '@/components/LogStream.vue'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
 const kw = ref('')
 const statusFilter = ref('')
 const dockerOk = ref(false)
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 
 const editDlg = ref(false)
 const form = ref<any>({ id: null, name: 'datalake', tag: '', version_label: '', expose_port: '80', remark: '' })
@@ -136,6 +146,7 @@ const detailDlg = ref(false)
 const detail = ref<any>(null)
 
 async function load() {
+  page.page = 1
   loading.value = true
   try {
     const [info, list] = await Promise.all([api.containerDockerInfo(), api.containerVersionList({ kw: kw.value, status: statusFilter.value })])
@@ -250,6 +261,5 @@ onBeforeUnmount(() => { if (buildTimer) clearInterval(buildTimer) })
 .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .table-empty { padding: 32px 0; color: var(--tech-text-muted); text-align: center; }
 .build-head { margin-bottom: 8px; font-size: 13px; color: var(--tech-text); }
-.build-log { background: var(--tech-bg-2, var(--el-bg-color)); border: 1px solid var(--tech-panel-border, var(--el-border-color)); border-radius: 8px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--tech-text); }
 .sub-title { margin: 16px 0 8px; font-size: 13px; font-weight: 700; color: var(--tech-text); }
 </style>

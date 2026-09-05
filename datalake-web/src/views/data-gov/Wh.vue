@@ -3,7 +3,7 @@
     <div class="card-title"><span>数据仓库 · 分层管理</span><span class="role-tag">系统管理员</span></div>
     <el-tabs v-model="tab">
       <el-tab-pane label="分层管理" name="layer">
-        <el-table :data="layers" size="small" stripe border v-loading="loading">
+        <el-table :data="layerPaged" size="small" stripe border v-loading="loading">
           <el-table-column prop="code" label="层级编码" width="110" />
           <el-table-column prop="name" label="名称" min-width="120" />
           <el-table-column prop="sort" label="排序" width="70" />
@@ -16,6 +16,11 @@
           </el-table-column>
           <el-table-column label="操作" width="140"><template #default="{ row }"><el-button link size="small" type="primary" @click="openLayer(row)">编辑</el-button><el-button link size="small" type="danger" @click="delLayer(row)">删除</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="layerPage.page" :page-size="layerPage.size" :total="layers.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onLayerSizeChange" @current-change="onLayerPageChange" />
+        </div>
         <div class="hint">分层（ODS/DWD/DWS/ADS/DIM）绑定数据源后，数据探查/接入的"所属层级"即从此选取目标数据源；命名规范用于巡检存量表名。</div>
       </el-tab-pane>
       <el-tab-pane label="分层画像" name="stats">
@@ -46,7 +51,7 @@
       </el-tab-pane>
       <el-tab-pane label="主题域" name="subject">
         <div style="margin-bottom:10px"><el-button type="primary" size="small" @click="openSubject()"><el-icon><Plus /></el-icon> 新增主题域</el-button></div>
-        <el-table :data="subjects" row-key="id" size="small" border default-expand-all>
+        <el-table :data="subjectPaged" row-key="id" size="small" border default-expand-all>
           <el-table-column prop="code" label="编码" width="140" />
           <el-table-column prop="name" label="名称" min-width="160" />
           <el-table-column prop="sort" label="排序" width="80" />
@@ -58,10 +63,15 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="subjectPage.page" :page-size="subjectPage.size" :total="subjects.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onSubjectSizeChange" @current-change="onSubjectPageChange" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="layerDlg" :title="layerForm.code ? '编辑层级' : '新增层级'" width="440px">
+    <el-drawer v-model="layerDlg" :title="layerForm.code ? '编辑层级' : '新增层级'" size="560px">
       <el-form :model="layerForm" label-width="80px" size="small">
         <el-form-item label="编码"><el-input v-model="layerForm.code" :disabled="!!layerForm.code" placeholder="如 dwd" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="layerForm.name" /></el-form-item>
@@ -69,7 +79,7 @@
         <el-form-item label="命名规范"><el-input v-model="layerForm.naming_pattern" placeholder="^dwd_" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="layerDlg = false">取消</el-button><el-button type="primary" @click="saveLayer">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <el-dialog v-model="bindDlg" title="绑定数据源" width="420px">
       <el-select v-model="bindDs" placeholder="选择数据源" style="width:100%">
@@ -78,7 +88,7 @@
       <template #footer><el-button @click="bindDlg = false">取消</el-button><el-button type="primary" @click="doBind">绑定</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="subjectDlg" :title="subjectForm.id ? '编辑主题域' : '新增主题域'" width="440px">
+    <el-drawer v-model="subjectDlg" :title="subjectForm.id ? '编辑主题域' : '新增主题域'" size="560px">
       <el-form :model="subjectForm" label-width="80px" size="small">
         <el-form-item label="编码"><el-input v-model="subjectForm.code" placeholder="trade" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="subjectForm.name" placeholder="交易域" /></el-form-item>
@@ -86,7 +96,7 @@
         <el-form-item label="排序"><el-input-number v-model="subjectForm.sort" :min="0" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="subjectDlg = false">取消</el-button><el-button type="primary" @click="saveSubject">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
@@ -108,6 +118,16 @@ const subjects = ref<any[]>([])
 const subjectDlg = ref(false); const subjectForm = reactive<any>({ id: null, code: '', name: '', parent_id: 0, sort: 1 })
 
 const subjectTreeData = computed(() => subjects.value.map((s: any) => ({ ...s, value: s.id, label: s.code + ' / ' + s.name })))
+
+// 客户端分页：分层表 + 主题域树表（只切顶层，children 保留在父节点下）
+const layerPage = reactive({ page: 1, size: 10 })
+const layerPaged = computed(() => layers.value.slice((layerPage.page - 1) * layerPage.size, layerPage.page * layerPage.size))
+const subjectPage = reactive({ page: 1, size: 10 })
+const subjectPaged = computed(() => subjects.value.slice((subjectPage.page - 1) * subjectPage.size, subjectPage.page * subjectPage.size))
+function onLayerSizeChange(s: number) { layerPage.size = s; layerPage.page = 1 }
+function onLayerPageChange(p: number) { layerPage.page = p }
+function onSubjectSizeChange(s: number) { subjectPage.size = s; subjectPage.page = 1 }
+function onSubjectPageChange(p: number) { subjectPage.page = p }
 
 function fmtNum(n: any) { const v = Number(n) || 0; return v >= 10000000 ? (v / 10000000).toFixed(1) + ' 千万' : v >= 10000 ? (v / 10000).toFixed(1) + ' 万' : String(v) }
 

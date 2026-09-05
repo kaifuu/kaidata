@@ -43,14 +43,14 @@ public final class RemoteCmdExec {
 
     /** 测试 SSH 连通（握手 + echo ok）。 */
     public static Map<String, Object> test(Conn c) {
-        ExecResult r = exec(c, "echo ok", 15, null);
+        ExecResult r = exec(c, "echo ok", 15, null, null);
         if (r.ok) return Map.of("ok", true, "msg", "SSH 连通成功");
         return Map.of("ok", false, "msg", (r.err == null || r.err.isEmpty()) ? "连接失败" : r.err);
     }
 
     /** 执行远端命令，捕获 stdout（log）/stderr（err）。 */
     public static ExecResult runCmd(Conn c, String cmd, int timeoutSec) {
-        return exec(c, cmd, timeoutSec, null);
+        return exec(c, cmd, timeoutSec, null, null);
     }
 
     /**
@@ -58,7 +58,16 @@ public final class RemoteCmdExec {
      * <p>密码走 stdin 而非拼进命令行，避免出现在远端 ps/sh 历史。
      */
     public static ExecResult runCmd(Conn c, String cmd, int timeoutSec, String stdinData) {
-        return exec(c, cmd, timeoutSec, stdinData);
+        return exec(c, cmd, timeoutSec, stdinData, null);
+    }
+
+    /**
+     * 执行远端命令并按行流式回调 stdout（onLine 每收到一行即触发，行尾 \r\n 已剥离）。
+     * <p>用于部署等长命令的实时日志滚屏——原实现命令结束后才整体返回，30 分钟的
+     * docker load 期间前端日志零增量。回调在 IO 线程同步执行，应只做轻量追加。
+     */
+    public static ExecResult runCmd(Conn c, String cmd, int timeoutSec, String stdinData, java.util.function.Consumer<String> onLine) {
+        return exec(c, cmd, timeoutSec, stdinData, onLine);
     }
 
     /** 流式上传大文件：ChannelSftp.put(InputStream, remotePath)（默认 OVERWRITE，分块传输不进内存）。 */
@@ -93,11 +102,13 @@ public final class RemoteCmdExec {
         return s;
     }
 
-    private static ExecResult exec(Conn c, String cmd, int timeoutSec, String stdinData) {
+    private static ExecResult exec(Conn c, String cmd, int timeoutSec, String stdinData, java.util.function.Consumer<String> onLine) {
         Session s = null; ChannelExec ch = null;
         ExecResult r = new ExecResult();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream errb = new ByteArrayOutputStream();
+        // 逐行流式回调的行缓冲（按整行一次性 UTF-8 解码，天然规避多字节字符被读拆断）
+        ByteArrayOutputStream lineBuf = onLine == null ? null : new ByteArrayOutputStream();
         try {
             s = newSession(c);
             ch = (ChannelExec) s.openChannel("exec");
@@ -114,13 +125,19 @@ public final class RemoteCmdExec {
                     int i = in.read(buf);
                     if (i < 0) break;
                     if (out.size() < 200000) out.write(buf, 0, i);
+                    if (lineBuf != null) emitLines(lineBuf, onLine, buf, i);
                 }
                 if (ch.isClosed()) {
-                    while (in.available() > 0) { int i = in.read(buf); if (i < 0) break; if (out.size() < 200000) out.write(buf, 0, i); }
+                    while (in.available() > 0) { int i = in.read(buf); if (i < 0) break; if (out.size() < 200000) out.write(buf, 0, i); if (lineBuf != null) emitLines(lineBuf, onLine, buf, i); }
                     break;
                 }
                 if (System.currentTimeMillis() > deadline) { r.err = "远端命令超时（" + timeoutSec + "s）"; break; }
                 try { Thread.sleep(100); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            }
+            // 收尾：无换行结尾的残行也回调出去
+            if (lineBuf != null && lineBuf.size() > 0) {
+                onLine.accept(lineBuf.toString(StandardCharsets.UTF_8).stripTrailing());
+                lineBuf.reset();
             }
             r.log = out.toString(StandardCharsets.UTF_8);
             String e = errb.toString(StandardCharsets.UTF_8);
@@ -137,6 +154,21 @@ public final class RemoteCmdExec {
             if (s != null) try { s.disconnect(); } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    /** 把本次读到的 buf[0..len) 按 \n 切行回调（\r 剥离），残行留在 lineBuf 等下一批。 */
+    private static void emitLines(ByteArrayOutputStream lineBuf, java.util.function.Consumer<String> onLine, byte[] buf, int len) {
+        for (int k = 0; k < len; k++) {
+            byte b = buf[k];
+            if (b == '\n') {
+                String ln = lineBuf.toString(StandardCharsets.UTF_8);
+                lineBuf.reset();
+                if (ln.endsWith("\r")) ln = ln.substring(0, ln.length() - 1);
+                onLine.accept(ln);
+            } else {
+                lineBuf.write(b);
+            }
+        }
     }
 
     private static String rootMsg(Throwable e) {

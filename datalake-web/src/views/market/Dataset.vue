@@ -28,7 +28,7 @@
     </div>
 
     <div class="grid2" v-loading="loading">
-      <div v-for="r in rows" :key="r.asset_id" class="rcard">
+      <div v-for="r in paged" :key="r.asset_id" class="rcard">
         <div class="rhead"><el-icon class="ricon"><Files /></el-icon><div class="rtitle">{{ r.name }}</div><el-tag size="small" round effect="plain">{{ r.security_level || '内部' }}</el-tag></div>
         <div class="rtable mono">{{ r.schema_name }}.{{ r.table_name }}</div>
         <div class="rdesc">{{ r.comment || r.description || '暂无描述' }}</div>
@@ -41,9 +41,14 @@
       </div>
       <div v-if="!rows.length" class="empty">暂无已审核通过的表资产（需在「数据资产」挂载表资产并通过审核）</div>
     </div>
+    <div class="dl-pagination">
+      <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+        @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
 
     <!-- 表结构 / 样例 -->
-    <el-dialog v-model="schemaDlg" :title="`表结构 · ${curAsset?.name || ''}`" width="820px" top="6vh">
+    <el-drawer v-model="schemaDlg" :title="`表结构 · ${curAsset?.name || ''}`" size="900px">
       <el-tabs v-model="schemaTab">
         <el-tab-pane label="表结构" name="struct">
           <el-table :data="schemaCols" size="small" border max-height="380">
@@ -59,10 +64,10 @@
           <div class="muted" v-if="sample">{{ sample.rowsRead }} 行（LIMIT 10）</div>
         </el-tab-pane>
       </el-tabs>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 订阅申请 -->
-    <el-dialog v-model="subDlg" title="提交订阅申请" width="520px">
+    <el-drawer v-model="subDlg" title="提交订阅申请" size="620px">
       <div class="muted mb">将订阅 {{ subItems.length }} 个库表：{{ subNames }}</div>
       <el-form label-width="86px" size="small">
         <el-form-item label="开放方式"><el-radio-group v-model="subForm.open_type"><el-radio value="API">API</el-radio><el-radio value="TABLE">库表</el-radio></el-radio-group></el-form-item>
@@ -81,7 +86,7 @@
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="subDlg = false">取消</el-button><el-button type="primary" @click="submitSub">提交申请</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 购物车 -->
     <el-drawer v-model="cartDrawer" title="我的购物车" size="520px">
@@ -102,6 +107,11 @@ import { api, errMsg } from '@/api'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
+// 客户端分页：卡片栅格按页切片
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const kw = ref('')
 const tagId = ref<number | null>(null)
 const tags = ref<any[]>([])
@@ -138,6 +148,7 @@ function buildTree(flat: any[]): any[] {
 }
 
 async function loadResources() {
+  page.page = 1 // 新检索结果复位到第一页
   loading.value = true
   try {
     const [r, t, c] = await Promise.all([

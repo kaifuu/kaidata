@@ -251,3 +251,27 @@ html.dark .el-pagination { --el-pagination-bg-color: transparent; --el-paginatio
 
 /* 操作列 link 按钮间距 */
 .row-actions { display: inline-flex; gap: 4px; align-items: center; }
+
+/* ---------- 全局字号排版（统一管理台密度：紧凑但不局促） ---------- */
+body { font-size: 14px; }
+
+/* 表格：正文 13px、表头 12.5px 加粗、行高适度 */
+.el-table { font-size: 13px; }
+.el-table th.el-table__cell { font-size: 12.5px; font-weight: 600; color: var(--tech-text); }
+.el-table .cell { line-height: 1.5; }
+
+/* 表单：标签与内容 13.5px；size=small 表单 12.5px */
+.el-form-item__label { font-size: 13.5px; }
+.el-form--small .el-form-item__label { font-size: 12.5px; }
+.el-form-item__label { font-weight: 500; }
+
+/* 弹窗 / 抽屉标题统一 15px 加粗 */
+.el-dialog__title, .el-drawer__title { font-size: 15px; font-weight: 600; color: var(--tech-text); }
+
+/* 描述列表 / 标签 / 分页 / 树 / 下拉 */
+.el-descriptions { font-size: 13px; }
+.el-descriptions__label { font-weight: 500; }
+.el-tag { font-size: 12px; }
+.el-pagination { font-size: 12.5px; --el-pagination-font-size: 12.5px; }
+.el-tree { font-size: 13px; }
+.el-select-dropdown__item { font-size: 13px; }

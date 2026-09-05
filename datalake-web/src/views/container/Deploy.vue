@@ -15,10 +15,10 @@
     </div>
 
     <div class="dl-card">
-      <el-table :data="rows" v-loading="loading" stripe size="small">
+      <el-table :data="paged" v-loading="loading" stripe size="small">
         <el-table-column type="expand">
           <template #default="{ row }">
-            <pre class="deploy-log">{{ row.log_text || row.error_msg || '（无日志）' }}</pre>
+            <LogStream :log="row.log_text || row.error_msg || '（无日志）'" height="300px" style="padding:0 12px" />
           </template>
         </el-table-column>
         <el-table-column label="镜像" min-width="170"><template #default="{ row }"><span class="mono">{{ row.image_name }}:{{ row.tag }}</span></template></el-table-column>
@@ -31,10 +31,15 @@
         <el-table-column prop="triggered_by" label="执行人" width="100" />
         <template #empty><div class="table-empty">暂无部署记录，点击「发起部署」</div></template>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
     </div>
 
     <!-- 发起部署 -->
-    <el-dialog v-model="deployDlg" title="发起部署" width="520px">
+    <el-drawer v-model="deployDlg" title="发起部署" size="620px">
       <el-form label-width="90px">
         <el-form-item label="镜像版本">
           <el-select v-model="deployForm.versionId" placeholder="选择已保存的镜像" style="width:100%">
@@ -63,12 +68,12 @@
         <el-button @click="deployDlg = false">取消</el-button>
         <el-button type="primary" :loading="deploying" @click="doDeploy">部署</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 部署进度 -->
     <el-dialog v-model="progressDlg" title="部署进度" width="720px" :close-on-click-modal="false" :before-close="cancelProgress">
-      <div class="build-head"><span>状态：</span><el-tag :type="statusType(depStatus)" size="small">{{ depStatus }}</el-tag></div>
-      <pre class="build-log">{{ depLog || '等待日志...' }}</pre>
+      <div class="build-head"><span>状态：</span><el-tag :type="statusType(depStatus)" size="small">{{ depStatusText }}</el-tag></div>
+      <LogStream :log="depLog" :running="depStatus === 'RUNNING'" />
       <template #footer>
         <el-button v-if="depStatus === 'RUNNING'" disabled>部署中...</el-button>
         <el-button v-else type="primary" @click="progressDlg = false">关闭</el-button>
@@ -78,15 +83,20 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Promotion, Refresh } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
+import LogStream from '@/components/LogStream.vue'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
 const versions = ref<any[]>([])
 const servers = ref<any[]>([])
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 
 const deployDlg = ref(false)
 const deployForm = ref<any>({ versionId: null, serverId: null, withStack: false, withData: false })
@@ -98,6 +108,7 @@ const depLog = ref('')
 let timer: any = null
 
 async function load() {
+  page.page = 1
   loading.value = true
   try { rows.value = await api.containerDeployList() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }
@@ -125,16 +136,24 @@ async function doDeploy() {
 }
 function poll(deployId: number) {
   if (timer) clearInterval(timer)
+  let noneTicks = 0
   timer = setInterval(async () => {
     try {
       const st = await api.containerDeployStatus(deployId)
       depLog.value = st.log || ''; depStatus.value = st.status
       if (st.status !== 'RUNNING' && st.status !== 'NONE') { if (timer) clearInterval(timer); timer = null; load() }
+      // NONE 持续 30s：live 态大概率因后端重启丢失，停止轮询避免"部署中"假死
+      else if (st.status === 'NONE' && ++noneTicks > 15) {
+        if (timer) clearInterval(timer); timer = null
+        depStatus.value = 'LOST'
+        depLog.value = '部署任务不在运行中（服务可能重启过），请重新发起部署。'
+      }
     } catch (e: any) { if (timer) clearInterval(timer); timer = null }
   }, 2000)
 }
 function cancelProgress(done: any) { if (timer) { clearInterval(timer); timer = null } done() }
-function statusType(s: string): any { return s === 'SUCCESS' ? 'success' : s === 'FAIL' ? 'danger' : s === 'RUNNING' ? 'warning' : 'info' }
+const depStatusText = computed(() => ({ RUNNING: '部署中', SUCCESS: '成功', FAIL: '失败', LOST: '任务丢失' } as any)[depStatus.value] || depStatus.value)
+function statusType(s: string): any { return s === 'SUCCESS' ? 'success' : s === 'FAIL' || s === 'LOST' ? 'danger' : s === 'RUNNING' ? 'warning' : 'info' }
 
 onMounted(load)
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
@@ -155,5 +174,4 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .dim { color: var(--tech-text-muted); }
 .table-empty { padding: 32px 0; color: var(--tech-text-muted); text-align: center; }
 .build-head { margin-bottom: 8px; font-size: 13px; color: var(--tech-text); }
-.build-log, .deploy-log { background: var(--tech-bg-2, var(--el-bg-color)); border: 1px solid var(--tech-panel-border, var(--el-border-color)); border-radius: 8px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--tech-text); }
 </style>

@@ -6,7 +6,7 @@
       <span class="muted" style="margin-left:auto">基于已审核通过的资产开放 · API / 库表两种方式 · 调用走 appkey 鉴权 + 限次/限流/限时长</span>
     </div>
 
-    <el-table :data="rows" size="small" stripe border v-loading="loading">
+    <el-table :data="paged" size="small" stripe border v-loading="loading">
       <el-table-column prop="name" label="授权名" min-width="120" show-overflow-tooltip />
       <el-table-column label="资产" min-width="150">
         <template #default="{ row }">
@@ -33,9 +33,14 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="dl-pagination">
+      <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+        @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
 
     <!-- 新建授权 -->
-    <el-dialog v-model="dlg" title="新建数据开放授权" width="680px">
+    <el-drawer v-model="dlg" title="新建数据开放授权" size="780px">
       <el-form :model="form" label-width="100px" size="small">
         <el-form-item label="授权名" required><el-input v-model="form.name" placeholder="如：客户名单查询API" /></el-form-item>
         <el-form-item label="关联资产" required>
@@ -76,7 +81,7 @@
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg = false">取消</el-button><el-button type="primary" @click="save">创建并生成 appKey</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 创建结果 / 重置密钥 -->
     <el-dialog v-model="resultDlg" title="授权凭证" width="560px">
@@ -136,6 +141,10 @@ const API_BASE = `${location.protocol}//${location.hostname}:8090`
 const rows = ref<any[]>([])
 const assetOptions = ref<any[]>([])
 const loading = ref(false)
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 
 const dlg = ref(false)
 const form = reactive<any>({ name: '', asset_id: null, open_type: 'API', fields: [], param_field: '', grantee: '', limit_count: 0, limit_qps: 0, expire_time: null })
@@ -171,6 +180,7 @@ function parseColumns(cj: string): string[] {
 function assetTag(s?: string) { return s === '通过' ? 'success' : s === '驳回' ? 'danger' : s === '待审' ? 'warning' : 'info' }
 
 async function load() {
+  page.page = 1
   loading.value = true
   try {
     const [g, a] = await Promise.all([api.openGrants(), api.openGrantAssets()])

@@ -4,12 +4,17 @@
     <el-tabs v-model="tab">
       <el-tab-pane label="资产目录" name="tree">
         <el-button size="small" type="primary" @click="openNode()" style="margin-bottom:10px"><el-icon><Plus /></el-icon> 新增节点</el-button>
-        <el-table :data="tree" row-key="id" :tree-props="{ children: 'children' }" size="small" border default-expand-all>
+        <el-table :data="pagedTree" row-key="id" :tree-props="{ children: 'children' }" size="small" border default-expand-all>
           <el-table-column prop="name" label="名称" min-width="180" />
           <el-table-column prop="code" label="编码" width="140" />
           <el-table-column prop="node_type" label="类型" width="100" />
           <el-table-column label="操作" width="200"><template #default="{ row }"><el-button link size="small" type="success" @click="openNode(null, row)">新增下级</el-button><el-button link size="small" type="primary" @click="openNode(row)">编辑</el-button><el-button link size="small" type="danger" @click="delNode(row)">删除</el-button></template></el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="treePage.page" :page-size="treePage.size" :total="tree.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onTreeSize" @current-change="onTreePage" />
+        </div>
       </el-tab-pane>
       <el-tab-pane label="资产浏览" name="asset">
         <div style="margin-bottom:8px;display:flex;gap:8px">
@@ -17,7 +22,7 @@
           <el-select v-model="fStatus" placeholder="状态" clearable size="small" style="width:140px" @change="loadAssets"><el-option v-for="s in ['草稿','待审','通过','驳回','下线']" :key="s" :label="s" :value="s" /></el-select>
           <el-input v-model="fKw" placeholder="资产名/说明" size="small" style="width:200px" clearable @change="loadAssets" />
         </div>
-        <el-table :data="assets" size="small" stripe border v-loading="loadingA">
+        <el-table :data="pagedAssets" size="small" stripe border v-loading="loadingA">
           <el-table-column prop="name" label="资产名" min-width="140" />
           <el-table-column prop="asset_type" label="类型" width="80" />
           <el-table-column prop="catalog_name" label="目录" width="120" />
@@ -33,10 +38,15 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="assetPage.page" :page-size="assetPage.size" :total="assets.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onAssetSize" @current-change="onAssetPage" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="nodeDlg" :title="nodeForm.id ? '编辑节点' : '新增节点'" width="440px">
+    <el-drawer v-model="nodeDlg" :title="nodeForm.id ? '编辑节点' : '新增节点'" size="560px">
       <el-form :model="nodeForm" label-width="70px" size="small">
         <el-form-item label="上级"><el-select v-model="nodeForm.parent_id" clearable placeholder="顶级" style="width:100%"><el-option v-for="c in parentOpts" :key="c.id" :label="c.label" :value="c.id" /></el-select></el-form-item>
         <el-form-item label="编码"><el-input v-model="nodeForm.code" /></el-form-item>
@@ -44,16 +54,16 @@
         <el-form-item label="类型"><el-select v-model="nodeForm.node_type" style="width:100%"><el-option v-for="t in ['业务域','主题','分类']" :key="t" :label="t" :value="t" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="nodeDlg = false">取消</el-button><el-button type="primary" @click="saveNode">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
-    <el-dialog v-model="histDlg" :title="`生命周期 - ${cur?.name || ''}`" width="640px">
+    <el-drawer v-model="histDlg" :title="`生命周期 - ${cur?.name || ''}`" size="740px">
       <el-table :data="hist" size="small" border v-loading="histLoading">
         <el-table-column prop="action" label="动作" width="90"><template #default="{ row }"><el-tag size="small" :type="actType(row.action)">{{ row.action }}</el-tag></template></el-table-column>
         <el-table-column prop="comment" label="意见" min-width="200" show-overflow-tooltip />
         <el-table-column prop="auditor" label="操作人" width="100" />
         <el-table-column prop="audit_time" label="时间" width="160" />
       </el-table>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 <script setup lang="ts">
@@ -70,6 +80,15 @@ const flatNodes = computed(() => { const out: any[] = []; const walk = (ns: any[
 const parentOpts = computed(() => flatNodes.value)
 const assets = ref<any[]>([]); const loadingA = ref(false)
 const fCatalog = ref<number | null>(null); const fStatus = ref(''); const fKw = ref('')
+// 客户端分页：树表只切顶层节点（children 完整保留），浏览表全量切片
+const treePage = reactive({ page: 1, size: 10 })
+const pagedTree = computed(() => tree.value.slice((treePage.page - 1) * treePage.size, treePage.page * treePage.size))
+function onTreeSize(s: number) { treePage.size = s; treePage.page = 1 }
+function onTreePage(p: number) { treePage.page = p }
+const assetPage = reactive({ page: 1, size: 10 })
+const pagedAssets = computed(() => assets.value.slice((assetPage.page - 1) * assetPage.size, assetPage.page * assetPage.size))
+function onAssetSize(s: number) { assetPage.size = s; assetPage.page = 1 }
+function onAssetPage(p: number) { assetPage.page = p }
 const stType = (s: string): any => ({ 通过: 'success', 待审: 'warning', 驳回: 'danger', 草稿: 'info', 下线: 'info' } as any)[s] || ''
 const actType = (a: string): any => ({ 通过: 'success', 上线: 'success', 驳回: 'danger', 下线: 'warning', 解绑: 'info', 提交: 'warning' } as any)[a] || ''
 
@@ -95,7 +114,7 @@ async function loadTree() { try { tree.value = await api.assetCatalogTree() } ca
 function openNode(row?: any, parent?: any) { Object.assign(nodeForm, { id: null, code: '', name: '', parent_id: null, node_type: '分类', sort: 1 }, row ? { ...row } : parent ? { parent_id: parent.id } : {}); nodeDlg.value = true }
 async function saveNode() { if (!nodeForm.name) return ElMessage.warning('填名称'); try { await api.assetSaveCatalog({ ...nodeForm }); ElMessage.success('保存成功'); nodeDlg.value = false; await loadTree() } catch (e:any) { ElMessage.error(errMsg(e)) } }
 async function delNode(row: any) { await ElMessageBox.confirm(`删除节点 ${row.name}？`, '提示', { type: 'warning' }); try { await api.assetDeleteCatalog(row.id); ElMessage.success('已删除'); await loadTree() } catch (e:any) { ElMessage.error(errMsg(e)) } }
-async function loadAssets() { loadingA.value = true; try { assets.value = await api.assetList({ catalogId: fCatalog.value || undefined, status: fStatus.value || undefined, kw: fKw.value || undefined }) } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loadingA.value = false } }
+async function loadAssets() { assetPage.page = 1; loadingA.value = true; try { assets.value = await api.assetList({ catalogId: fCatalog.value || undefined, status: fStatus.value || undefined, kw: fKw.value || undefined }) } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loadingA.value = false } }
 onMounted(() => { loadTree(); loadAssets() })
 </script>
 <style scoped>

@@ -9,7 +9,7 @@
           <el-button type="primary" size="small" @click="openStore()"><el-icon><Plus /></el-icon> 新增存储源</el-button>
         </div>
       </div>
-      <el-table :data="stores" size="small" stripe border v-loading="loading">
+      <el-table :data="pagedStores" size="small" stripe border v-loading="loading">
         <el-table-column prop="id" label="ID" width="130" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column label="类型" width="80"><template #default="{ row }"><el-tag size="small">{{ row.type }}</el-tag></template></el-table-column>
@@ -23,6 +23,11 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="storePage.page" :page-size="storePage.size" :total="stores.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onStoreSize" @current-change="onStorePage" />
+      </div>
     </div>
 
     <!-- 文件浏览器 -->
@@ -42,7 +47,7 @@
         <div class="breadcrumb">路径: <el-link type="primary" @click="cd('')">{{ currentStore?.base_path || '/' }}</el-link>
           <template v-for="(seg, i) in pathSegs" :key="i"> / <el-link type="primary" @click="cd(pathUpto(i))">{{ seg }}</el-link></template>
         </div>
-        <el-table :data="files" size="small" border v-loading="browsing" @row-dblclick="onDblClick">
+        <el-table :data="pagedFiles" size="small" border v-loading="browsing" @row-dblclick="onDblClick">
           <el-table-column prop="name" label="名称" min-width="240">
             <template #default="{ row }"><el-icon v-if="row.isDir" style="margin-right:4px"><Folder /></el-icon>{{ row.name }}</template>
           </el-table-column>
@@ -56,6 +61,11 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="dl-pagination">
+          <el-pagination :current-page="filePage.page" :page-size="filePage.size" :total="files.length"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+            @size-change="onFileSize" @current-change="onFilePage" />
+        </div>
         <div style="margin-top:10px">
           <el-button size="small" @click="tab = 'ingested'">查看已接入文件</el-button>
         </div>
@@ -63,7 +73,7 @@
     </div>
 
     <!-- 存储源编辑 -->
-    <el-dialog v-model="storeDlg" :title="storeForm.id ? '编辑存储源' : '新增存储源'" width="500px">
+    <el-drawer v-model="storeDlg" :title="storeForm.id ? '编辑存储源' : '新增存储源'" size="600px">
       <el-form :model="storeForm" label-width="80px">
         <el-form-item label="名称"><el-input v-model="storeForm.name" /></el-form-item>
         <el-form-item label="类型">
@@ -79,7 +89,7 @@
         <el-form-item label="状态"><el-radio-group v-model="storeForm.status"><el-radio value="NORMAL">正常</el-radio><el-radio value="DISABLED">停用</el-radio></el-radio-group></el-form-item>
       </el-form>
       <template #footer><el-button @click="storeDlg = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveStore">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 新建目录 -->
     <el-dialog v-model="mkdirDlg" title="新建目录" width="360px">
@@ -94,7 +104,7 @@
     </el-dialog>
 
     <!-- 接入配置 -->
-    <el-dialog v-model="ingestDlg" :title="`接入 ${ingestFile?.name || ''}`" width="560px">
+    <el-drawer v-model="ingestDlg" :title="`接入 ${ingestFile?.name || ''}`" size="660px">
       <el-form label-width="90px">
         <el-form-item label="文件类型"><el-radio-group v-model="ingestType"><el-radio value="csv">CSV</el-radio><el-radio value="json">JSONL</el-radio></el-radio-group></el-form-item>
         <el-form-item label="目标表名"><el-input v-model="ingestTarget" placeholder="留空自动生成 ods_file_xxx" /></el-form-item>
@@ -106,7 +116,7 @@
           <el-table-column v-for="c in ingestResult.columns" :key="c" :prop="c" :label="c" min-width="110" show-overflow-tooltip />
         </el-table>
       </div>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
@@ -128,6 +138,15 @@ const curPath = ref('')
 const files = ref<any[]>([])
 const browsing = ref(false)
 const tab = ref('browser')
+// 客户端分页：存储源表 / 文件浏览表
+const storePage = reactive({ page: 1, size: 10 })
+const pagedStores = computed(() => stores.value.slice((storePage.page - 1) * storePage.size, storePage.page * storePage.size))
+const filePage = reactive({ page: 1, size: 10 })
+const pagedFiles = computed(() => files.value.slice((filePage.page - 1) * filePage.size, filePage.page * filePage.size))
+function onStoreSize(s: number) { storePage.size = s; storePage.page = 1 }
+function onStorePage(p: number) { storePage.page = p }
+function onFileSize(s: number) { filePage.size = s; filePage.page = 1 }
+function onFilePage(p: number) { filePage.page = p }
 
 const mkdirDlg = ref(false); const mkdirName = ref('')
 const copyDlg = ref(false); const copyDst = ref(''); const copySrc = ref('')
@@ -169,6 +188,7 @@ function cd(p: string) { curPath.value = p; browse() }
 function onDblClick(row: any) { if (row.isDir) { curPath.value = row.path; browse() } }
 async function browse() {
   if (!currentStore.value) return
+  filePage.page = 1 // 切目录复位到第一页
   browsing.value = true
   try { files.value = await api.daBrowse(currentStore.value.id, curPath.value) } catch (e: any) { files.value = []; ElMessage.error(errMsg(e, '浏览失败')) }
   finally { browsing.value = false }

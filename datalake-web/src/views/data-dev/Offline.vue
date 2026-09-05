@@ -66,7 +66,7 @@
               <el-button :icon="Refresh" @click="loadTasks">刷新</el-button>
             </div>
           </div>
-          <el-table :data="tasks" stripe v-loading="loading" class="task-table">
+          <el-table :data="paged" stripe v-loading="loading" class="task-table">
             <el-table-column label="任务名" min-width="150">
               <template #default="{ row }">
                 <span class="task-name">{{ row.name }}</span>
@@ -116,19 +116,24 @@
               </div>
             </template>
           </el-table>
+          <div class="dl-pagination">
+            <el-pagination :current-page="page.page" :page-size="page.size" :total="tasks.length"
+              :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+              @size-change="onSizeChange" @current-change="onPageChange" />
+          </div>
         </div>
       </el-col>
     </el-row>
 
     <!-- 分类弹窗 -->
-    <el-dialog v-model="catDlg" :title="catForm.id ? '编辑分类' : '新建分类'" width="400px">
+    <el-drawer v-model="catDlg" :title="catForm.id ? '编辑分类' : '新建分类'" size="560px">
       <el-form :model="catForm" label-width="80px" size="small">
         <el-form-item label="名称"><el-input v-model="catForm.name" /></el-form-item>
         <el-form-item label="父分类"><el-select v-model="catForm.parent_id" clearable style="width:100%"><el-option label="(顶级)" :value="0" /><el-option v-for="c in flatCats" :key="c.id" :label="c.name" :value="c.id" /></el-select></el-form-item>
         <el-form-item label="排序"><el-input v-model.number="catForm.sort" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="catDlg = false">取消</el-button><el-button type="primary" @click="saveCat">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 任务 drawer（按 job_type 切换编辑器）-->
     <el-drawer v-model="taskDlg" :title="taskForm.id ? '编辑任务' : '新建任务'" size="60%" :destroy-on-close="false">
@@ -223,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, EditPen, Delete, VideoPlay, Document, Setting, Share, Coin, Clock, FolderOpened, Connection } from '@element-plus/icons-vue'
@@ -254,6 +259,10 @@ const treeData = ref<any[]>([])
 const curCatalog = ref<any>(null)
 const tasks = ref<any[]>([])
 const loading = ref(false)
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => tasks.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const kw = ref('')
 const jobTypeFilter = ref('')
 const catDlg = ref(false)
@@ -280,7 +289,7 @@ function parseJson(s: any): any { try { return typeof s === 'string' && s ? JSON
 
 async function loadTree() { try { treeData.value = await api.devCatalogTree(MODULE); flatCats.value = flatten(treeData.value) } catch (e: any) { ElMessage.error(errMsg(e)) } }
 function onCatalog(n: any) { curCatalog.value = n; loadTasks() }
-async function loadTasks() { loading.value = true; try { tasks.value = await api.devOfflineTasks(curCatalog.value?.id, kw.value || undefined, jobTypeFilter.value || undefined) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
+async function loadTasks() { page.page = 1; loading.value = true; try { tasks.value = await api.devOfflineTasks(curCatalog.value?.id, kw.value || undefined, jobTypeFilter.value || undefined) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 function openCatDlg(n?: any) { catForm.value = n ? { ...n } : { parent_id: curCatalog.value?.id || 0, sort: 0, name: '' }; catDlg.value = true }
 async function saveCat() { if (!catForm.value.name) return ElMessage.warning('填名称'); catForm.value.module_type = MODULE; try { await api.devSaveCatalog(catForm.value); ElMessage.success('已保存'); catDlg.value = false; await loadTree() } catch (e: any) { ElMessage.error(errMsg(e)) } }
 async function delCat(n: any) { try { await ElMessageBox.confirm(`删除分类 ${n.name}?`) } catch { return } try { await api.devDeleteCatalog(n.id); ElMessage.success('已删除'); await loadTree() } catch (e: any) { ElMessage.error(errMsg(e)) } }

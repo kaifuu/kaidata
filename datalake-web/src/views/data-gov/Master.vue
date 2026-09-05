@@ -1,7 +1,7 @@
 <template>
   <div class="dl-card">
     <div class="card-title"><span>主数据</span><span class="role-tag">系统管理员</span></div>
-    <el-table :data="masters" size="small" stripe border v-loading="loading">
+    <el-table :data="paged" size="small" stripe border v-loading="loading">
       <el-table-column prop="code" label="编码" width="140" />
       <el-table-column prop="name" label="名称" min-width="120" />
       <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
@@ -16,8 +16,13 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="dl-pagination">
+      <el-pagination :current-page="page.page" :page-size="page.size" :total="masters.length"
+        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+        @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
 
-    <el-dialog v-model="dlg" :title="form.id ? '编辑主数据' : '新增主数据'" width="540px">
+    <el-drawer v-model="dlg" :title="form.id ? '编辑主数据' : '新增主数据'" size="640px">
       <el-form :model="form" label-width="80px" size="small">
         <el-form-item label="编码"><el-input v-model="form.code" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
@@ -25,7 +30,7 @@
         <el-form-item label="字段定义"><el-input v-model="form.fields_json" type="textarea" :rows="3" placeholder='[{"name":"code","type":"VARCHAR(64)","required":true},{"name":"name","type":"VARCHAR(128)","required":true}]' /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg = false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 记录抽屉：动态列 + 动态表单 + 变更审计 -->
     <el-drawer v-model="recDlg" :title="`主数据记录 - ${cur?.name || ''}`" size="860px">
@@ -58,7 +63,7 @@
     </el-drawer>
 
     <!-- 动态表单：按字段定义渲染 + 编码失焦查重 -->
-    <el-dialog v-model="recFormDlg" :title="recForm.id ? '编辑记录' : '新增记录'" width="520px">
+    <el-drawer v-model="recFormDlg" :title="recForm.id ? '编辑记录' : '新增记录'" size="620px">
       <el-form label-width="110px" size="small">
         <el-form-item v-for="f in fields" :key="f.name" :label="f.name" :required="f.required">
           <el-input v-if="isNum(f.type)" v-model="recForm.data[f.name]" :placeholder="f.type" @blur="checkCode(f.name)" />
@@ -67,10 +72,10 @@
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="recFormDlg = false">取消</el-button><el-button type="primary" @click="saveRec">保存</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 引用统计 -->
-    <el-dialog v-model="refsDlg" :title="`引用统计 - ${cur?.name || ''}`" width="760px">
+    <el-drawer v-model="refsDlg" :title="`引用统计 - ${cur?.name || ''}`" size="860px">
       <el-tabs>
         <el-tab-pane :label="`模型字段 (${refs.modelRefs?.length || 0})`">
           <el-table :data="refs.modelRefs || []" size="small" border max-height="320">
@@ -87,7 +92,7 @@
           </el-table>
         </el-tab-pane>
       </el-tabs>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
@@ -103,6 +108,12 @@ const records = ref<any[]>([]); const audits = ref<any[]>([])
 const recFormDlg = ref(false); const recForm = reactive<any>({ id: null, data: {} })
 const codeMsg = ref(''); const codeDup = ref(false)
 const refsDlg = ref(false); const refs = ref<any>({})
+
+// 主数据列表客户端分页
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => masters.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 
 const fields = computed<any[]>(() => { try { return JSON.parse(cur.value?.fields_json || '[]') } catch { return [] } })
 const codeField = computed(() => {

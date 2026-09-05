@@ -36,7 +36,7 @@
         <el-button @click="reset">重置</el-button>
         <div class="toolbar-actions"><span class="count-badge">命中 {{ rows.length }}</span></div>
       </div>
-      <el-table :data="rows" v-loading="loading" stripe size="small">
+      <el-table :data="paged" v-loading="loading" stripe size="small">
         <el-table-column prop="id" label="执行ID" width="150"><template #default="{ row }"><span class="mono">{{ row.id }}</span></template></el-table-column>
         <el-table-column label="镜像" min-width="170" show-overflow-tooltip>
           <template #default="{ row }"><span class="mono">{{ row.image_name || ('#' + row.version_id) }}{{ row.tag ? ':' + row.tag : '' }}</span></template>
@@ -54,35 +54,48 @@
         </el-table-column>
         <template #empty><div class="table-empty">暂无打包记录，去「打包发布」发起一次构建</div></template>
       </el-table>
+      <div class="dl-pagination">
+        <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
+          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+          @size-change="onSizeChange" @current-change="onPageChange" />
+      </div>
     </div>
 
-    <el-dialog v-model="logDlg" :title="`构建日志 · ${logRow ? logRow.id : ''}`" width="760px">
+    <el-drawer v-model="logDlg" :title="`构建日志 · ${logRow ? logRow.id : ''}`" size="860px" @closed="stopLive">
       <div class="build-head">
         <span>镜像：</span><span class="mono">{{ logRow?.image_name }}{{ logRow?.tag ? ':' + logRow.tag : '' }}</span>
         <span style="margin-left:12px">状态：</span>
         <el-tag :type="logRow?.status === 'SUCCESS' ? 'success' : 'danger'" size="small">{{ logRow?.status === 'SUCCESS' ? '成功' : '失败' }}</el-tag>
+        <el-tag v-if="liveRun" type="warning" size="small" class="live-tag"><i class="live-dot" />该版本重新构建中 · 实时接续</el-tag>
       </div>
-      <pre class="build-log">{{ logText || '（无日志）' }}</pre>
+      <LogStream :log="logText || '（无日志）'" :running="liveRun" />
       <template #footer><el-button type="primary" @click="logDlg = false">关闭</el-button></template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Clock, Refresh, Search } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
+import LogStream from '@/components/LogStream.vue'
 
 const all = ref<any[]>([])
 const rows = ref<any[]>([])
 const loading = ref(false)
+const page = reactive({ page: 1, size: 10 })
+const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
+function onSizeChange(s: number) { page.size = s; page.page = 1 }
+function onPageChange(p: number) { page.page = p }
 const kw = ref('')
 const statusFilter = ref('')
 
 const logDlg = ref(false)
 const logRow = ref<any>(null)
 const logText = ref('')
+const liveRun = ref(false)
+let liveTimer: any = null
 
 const chips = [
   { key: '', label: '全部', cls: 'c-all' },
@@ -91,6 +104,7 @@ const chips = [
 ]
 
 async function load() {
+  page.page = 1
   loading.value = true
   try { all.value = await api.containerBuildRunAll({ kw: kw.value, status: statusFilter.value }) } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
   rows.value = all.value
@@ -100,10 +114,30 @@ function toggleStatus(k: string) { statusFilter.value = statusFilter.value === k
 function count(status: string) { return all.value.filter((r) => r.status === status).length }
 
 async function openLog(row: any) {
-  logRow.value = row; logText.value = ''; logDlg.value = true
+  logRow.value = row; logText.value = ''; liveRun.value = false; logDlg.value = true
   try { const d: any = await api.containerBuildRunDetail(row.id); logText.value = d.log_text || d.error_msg || '' }
   catch (e: any) { ElMessage.error(errMsg(e)) }
+  // 探测该版本是否有正在进行的构建（内存 live 态）：有则切到实时日志接续滚屏
+  try {
+    const st: any = await api.containerBuildStatus(row.version_id)
+    if (st.status === 'RUNNING') { liveRun.value = true; pollLive(row.version_id) }
+  } catch { /* 探测失败不影响历史日志查看 */ }
 }
+function pollLive(versionId: number) {
+  stopLive()
+  liveTimer = setInterval(async () => {
+    try {
+      const st = await api.containerBuildStatus(versionId)
+      if (st.status === 'RUNNING') { logText.value = st.log || '' }
+      else {
+        stopLive()
+        logText.value = st.log || logText.value   // 终态日志落定
+        load()                                     // 历史列表同步出新记录
+      }
+    } catch (e: any) { stopLive() }
+  }, 2000)
+}
+function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null } liveRun.value = false }
 
 function duration(row: any): string {
   if (!row.start_time || !row.end_time) return '-'
@@ -116,6 +150,7 @@ function duration(row: any): string {
 }
 
 onMounted(load)
+onBeforeUnmount(stopLive)
 </script>
 
 <style scoped>
@@ -149,6 +184,8 @@ onMounted(load)
 .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .err-text { color: var(--tech-danger, #f56c6c); font-size: 12px; }
 .table-empty { padding: 32px 0; color: var(--tech-text-muted); text-align: center; }
-.build-head { margin-bottom: 8px; font-size: 13px; color: var(--tech-text); }
-.build-log { background: var(--tech-bg-2, var(--el-bg-color)); border: 1px solid var(--tech-panel-border, var(--el-border-color)); border-radius: 8px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--tech-text); }
+.build-head { margin-bottom: 8px; font-size: 13px; color: var(--tech-text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.live-tag { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tech-warn); animation: live-blink 1s ease-in-out infinite; }
+@keyframes live-blink { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
 </style>

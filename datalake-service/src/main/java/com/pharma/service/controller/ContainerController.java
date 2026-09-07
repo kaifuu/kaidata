@@ -210,12 +210,26 @@ public class ContainerController {
         return rows;
     }
 
+    /** 发布目标详情：密文四项解密回显（仅编辑抽屉用，SYS_ADMIN 鉴权；列表仍掩码）。 */
+    @GetMapping("/server/detail")
+    public Map<String, Object> serverDetail(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> s = jdbc.queryForMap(
+                "SELECT id,name,host,ssh_port,username,password,auth_type,private_key,key_passphrase,use_sudo,sudo_password," +
+                "auto_start,run_port,container_name,run_env,deploy_path,docker_bin,status,remark FROM meta.ct_server WHERE id=?", id);
+        s.put("password", crypto.decrypt(str(s.get("password"))));
+        s.put("private_key", crypto.decrypt(str(s.get("private_key"))));
+        s.put("key_passphrase", crypto.decrypt(str(s.get("key_passphrase"))));
+        s.put("sudo_password", crypto.decrypt(str(s.get("sudo_password"))));
+        return s;
+    }
+
     @PostMapping("/server")
     public Map<String, Object> createServer(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
         long id = System.currentTimeMillis();
         Timestamp now = new Timestamp(id);
-        jdbc.update("INSERT INTO meta.ct_server(id,name,host,ssh_port,username,password,auth_type,private_key,key_passphrase,use_sudo,sudo_password,auto_start,run_port,container_name,run_env,deploy_path,docker_bin,status,remark,create_time,update_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO meta.ct_server(id,name,host,ssh_port,username,password,auth_type,private_key,key_passphrase,use_sudo,sudo_password,auto_start,run_port,container_name,run_env,deploy_path,docker_bin,status,remark,create_time,update_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
                 crypto.encrypt(str(b.get("password"))), str(b.getOrDefault("auth_type", "PASSWORD")),
                 crypto.encrypt(str(b.get("private_key"))), crypto.encrypt(str(b.get("key_passphrase"))),
@@ -233,25 +247,19 @@ public class ContainerController {
         Authz.require(Authz.SYS_ADMIN);
         long id = lng(b.get("id"));
         Timestamp now = new Timestamp(System.currentTimeMillis());
-        // 密文类字段（密码/私钥/私钥口令）：表单回显 *** 或留空 = 不修改
-        boolean changePwd = secretChanged(b.get("password"));
-        boolean changeKey = secretChanged(b.get("private_key"));
-        boolean changePhrase = secretChanged(b.get("key_passphrase"));
-        boolean changeSudo = secretChanged(b.get("sudo_password"));
+        // 密文四项（密码/私钥/私钥口令/sudo密码）：编辑页回显解密明文——
+        // 值为 *** = 沿用已存（兼容列表行测试等旧入口）；字段已提供且非 ***（含空串）= 更新（空串即清除）；
+        // 字段未提供（null）= 不修改
         String authType = str(b.getOrDefault("auth_type", "PASSWORD"));
         if (authType.isEmpty()) authType = "PASSWORD";
-        if (changePwd) {
+        if (secretProvided(b.get("password")))
             jdbc.update("UPDATE meta.ct_server SET password=? WHERE id=?", crypto.encrypt(str(b.get("password"))), id);
-        }
-        if (changeKey) {
+        if (secretProvided(b.get("private_key")))
             jdbc.update("UPDATE meta.ct_server SET private_key=? WHERE id=?", crypto.encrypt(str(b.get("private_key"))), id);
-        }
-        if (changePhrase) {
+        if (secretProvided(b.get("key_passphrase")))
             jdbc.update("UPDATE meta.ct_server SET key_passphrase=? WHERE id=?", crypto.encrypt(str(b.get("key_passphrase"))), id);
-        }
-        if (changeSudo) {
+        if (secretProvided(b.get("sudo_password")))
             jdbc.update("UPDATE meta.ct_server SET sudo_password=? WHERE id=?", crypto.encrypt(str(b.get("sudo_password"))), id);
-        }
         jdbc.update("UPDATE meta.ct_server SET name=?,host=?,ssh_port=?,username=?,auth_type=?,use_sudo=?,auto_start=?,run_port=?,container_name=?,run_env=?,deploy_path=?,docker_bin=?,status=?,remark=?,update_time=? WHERE id=?",
                 str(b.get("name")), str(b.get("host")), (int) lng(b.get("ssh_port")), str(b.get("username")),
                 authType, "ON".equals(str(b.get("use_sudo"))) ? "ON" : "OFF",
@@ -337,6 +345,19 @@ public class ContainerController {
         return Map.of("status", st.status, "log", st.log);
     }
 
+    /** 部署记录详情（含完整日志）：RUNNING 时合并内存 live 态——刷新/重开窗口后重连滚屏。 */
+    @GetMapping("/deploy/detail")
+    public Map<String, Object> deployDetail(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT d.id,d.version_id,d.server_id,d.status,d.log_text,d.start_time,d.end_time,d.error_msg,d.triggered_by,d.with_stack,d.with_data," +
+                "v.name AS image_name,v.tag,s.name AS server_name FROM meta.ct_deploy_record d " +
+                "LEFT JOIN meta.ct_image_version v ON v.id=d.version_id LEFT JOIN meta.ct_server s ON s.id=d.server_id WHERE d.id=?", id);
+        ContainerBuildExecutor.LiveState st = exec.liveStatus(id);
+        if (st != null) { row.put("status", st.status); row.put("log_text", st.log); }
+        return row;
+    }
+
     @GetMapping("/deploy/list")
     public List<Map<String, Object>> deployList(@RequestParam(required = false) Long versionId,
                                                 @RequestParam(required = false) Long serverId) {
@@ -350,10 +371,9 @@ public class ContainerController {
     }
 
     // ---- 助手 ----
-    /** 密文类字段是否需要更新：非空且不是掩码 ***。 */
-    private static boolean secretChanged(Object v) {
-        String s = v == null ? "" : String.valueOf(v);
-        return !s.isEmpty() && !"***".equals(s);
+    /** 密文类字段是否按提交值更新：字段已提供（非 null，空串=清除）且不是掩码 ***。 */
+    private static boolean secretProvided(Object v) {
+        return v != null && !"***".equals(String.valueOf(v));
     }
     private String readDockerfile() {
         try { return Files.readString(Paths.get(dockerfilePath)); }

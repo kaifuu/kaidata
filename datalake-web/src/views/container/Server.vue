@@ -66,19 +66,20 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.auth_type !== 'KEY'" label="密码">
-          <el-input v-model="form.password" type="password" show-password :placeholder="form.id ? '不修改请留空' : ''" />
+          <el-input v-model="form.password" type="password" show-password :placeholder="form.id ? '留空保存将清除' : 'SSH 登录密码'" />
         </el-form-item>
         <template v-else>
           <el-form-item label="秘钥文件">
             <div class="key-row">
               <el-button size="small" :icon="Upload" @click="pickKey">选择文件</el-button>
               <span v-if="keyFileName" class="key-file">{{ keyFileName }}</span>
-              <span class="key-hint">{{ form.id && form.private_key === '***' ? '已保存，重新粘贴/选择可覆盖' : 'PEM 私钥（id_rsa / xxx.pem）' }}</span>
+              <span class="key-hint">{{ form.id ? '已解密回显，重新粘贴/选择可覆盖' : 'PEM 私钥（id_rsa / xxx.pem）' }}</span>
             </div>
-            <el-input v-model="form.private_key" type="textarea" :rows="5" class="key-area mono" :placeholder="form.id ? '不修改请留空' : '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'" />
+            <el-input v-model="form.private_key" type="textarea" :rows="5" class="key-area mono" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----" />
           </el-form-item>
           <el-form-item label="私钥口令">
-            <el-input v-model="form.key_passphrase" type="password" show-password placeholder="私钥无口令可留空" />
+            <el-input v-model="form.key_passphrase" type="password" show-password placeholder="私钥无口令可留空" style="width:240px" />
+            <span v-if="form.id && echoLoading" class="sudo-hint">回显中…</span>
           </el-form-item>
         </template>
         <el-form-item label="sudo 提权">
@@ -86,8 +87,8 @@
           <span class="sudo-hint">普通用户无目录写权限 / 不在 docker 组时开启</span>
         </el-form-item>
         <el-form-item v-if="form.use_sudo === 'ON'" label="sudo 密码">
-          <el-input v-model="form.sudo_password" type="password" show-password style="width:240px" :placeholder="form.id && form.sudo_password === '***' ? '不修改请留 ***' : '该用户 sudo 时的密码'" />
-          <span v-if="form.id && form.sudo_password === '***'" class="sudo-hint">已保存</span>
+          <el-input v-model="form.sudo_password" type="password" show-password style="width:240px" :placeholder="form.id ? '留空保存将清除' : '该用户 sudo 时的密码'" />
+          <span v-if="form.id && echoLoading" class="sudo-hint">回显中…</span>
         </el-form-item>
         <el-form-item label="自动启动">
           <el-switch v-model="form.auto_start" active-value="ON" inactive-value="OFF" />
@@ -107,7 +108,7 @@
       </el-form>
       <template #footer>
         <el-button @click="editDlg = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" :disabled="echoLoading" @click="save">保存</el-button>
       </template>
     </el-drawer>
     <input ref="keyInput" type="file" class="key-input" @change="readKey" />
@@ -131,6 +132,7 @@ const form = ref<any>(def())
 const saving = ref(false)
 const keyInput = ref<HTMLInputElement>()
 const keyFileName = ref('')
+const echoLoading = ref(false)
 
 function def() {
   return { id: null, name: '', host: '', ssh_port: 22, username: 'root', password: '', auth_type: 'PASSWORD', private_key: '', key_passphrase: '', use_sudo: 'OFF', sudo_password: '', auto_start: 'OFF', run_port: 80, container_name: '', run_env: '', deploy_path: '/opt/images', docker_bin: 'docker', status: 'NORMAL', remark: '' }
@@ -141,13 +143,18 @@ async function load() {
   loading.value = true
   try { rows.value = await api.containerServerList() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }
-function openEdit(row?: any) {
+async function openEdit(row?: any) {
   keyFileName.value = ''
-  // 密文类字段不回传：has_key/has_passphrase/has_sudo_pwd → 掩码 ***（保存/测试时表示沿用已存值）
-  form.value = row
-    ? { ...row, password: row.password || '', private_key: row.has_key ? '***' : '', key_passphrase: row.has_passphrase ? '***' : '', sudo_password: row.has_sudo_pwd ? '***' : '' }
-    : def()
+  if (!row) { form.value = def(); editDlg.value = true; return }
+  // 密文四项不随列表下发：先占位空，detail 接口解密回显真实内容（编辑所见即库中所存）
+  form.value = { ...row, password: '', private_key: '', key_passphrase: '', sudo_password: '' }
   editDlg.value = true
+  echoLoading.value = true
+  try {
+    const d: any = await api.containerServerDetail(row.id)
+    form.value = { ...form.value, password: d.password || '', private_key: d.private_key || '', key_passphrase: d.key_passphrase || '', sudo_password: d.sudo_password || '' }
+  } catch (e: any) { ElMessage.error('密文回显失败：' + errMsg(e)) }
+  finally { echoLoading.value = false }
 }
 function pickKey() { keyInput.value?.click() }
 function readKey(e: Event) {

@@ -512,6 +512,36 @@ public class MetaSeedRunner implements ApplicationRunner {
                 "PROPERTIES(\"replication_num\"=\"1\")");
         boolean m31 = "31".equals(kv("schema_ver"));
         if (!m31) schemaBump("31");
+
+        // ============ 数仓规划升级：巡检闭环 + 容量趋势（schema_ver=32） ============
+        // 命名巡检违规落库（状态机 OPEN→TICKETED→RESOLVED/IGNORED，支持派单到质量工单中心）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_naming_issue (id BIGINT, layer_code VARCHAR(32), table_name VARCHAR(255), " +
+                "pattern VARCHAR(255), suggest VARCHAR(255), status VARCHAR(16), ticket_id BIGINT, first_found DATETIME, " +
+                "last_seen DATETIME, resolve_time DATETIME) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
+                "PROPERTIES(\"replication_num\"=\"1\")");
+        // 巡检执行历史（checked/violate 趋势曲线）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_naming_run (id BIGINT, run_time DATETIME, checked INT, violate INT) " +
+                "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        // 分层容量历史快照（每日定时记每层表数/行数/存储，画像趋势图）
+        exec("CREATE TABLE IF NOT EXISTS meta.gov_layer_stats_history (id BIGINT, snap_date DATE, layer_code VARCHAR(32), " +
+                "tables_cnt INT, rows_cnt BIGINT, size_bytes BIGINT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
+                "PROPERTIES(\"replication_num\"=\"1\")");
+        boolean m32 = "32".equals(kv("schema_ver"));
+        if (!m32) schemaBump("32");
+
+        // ============ v33：gov_naming_issue 改 PRIMARY KEY（schema_ver=33） ============
+        // StarRocks DUPLICATE KEY 表不支持 UPDATE：巡检复扫刷 last_seen / 自动核销 / 派单 / 状态流转
+        // 全是 UPDATE → 第二次巡检起必 500（首巡 INSERT 正常，极易漏测）。DROP 重建，存量 2 条演示
+        // 违规下轮巡检自动重录；DROP 属破坏性操作，必须门控，否则每次启动丢数据。
+        boolean m33 = "33".equals(kv("schema_ver"));
+        if (!m33) {
+            exec("DROP TABLE IF EXISTS meta.gov_naming_issue");
+            exec("CREATE TABLE IF NOT EXISTS meta.gov_naming_issue (id BIGINT, layer_code VARCHAR(32), table_name VARCHAR(255), " +
+                    "pattern VARCHAR(255), suggest VARCHAR(255), status VARCHAR(16), ticket_id BIGINT, first_found DATETIME, " +
+                    "last_seen DATETIME, resolve_time DATETIME) PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
+                    "PROPERTIES(\"replication_num\"=\"1\")");
+            schemaBump("33");
+        }
     }
 
     /** 带日志的幂等 UPDATE/DELETE（吞异常但打印根因，便于排查迁移未生效）。 */
@@ -809,6 +839,17 @@ public class MetaSeedRunner implements ApplicationRunner {
             jdbc.update("INSERT INTO ods.dem_order VALUES (93105, 9303, 699.00, '5', '2026-08-10 11:20:00')");
             jdbc.update("INSERT INTO ods.dem_order VALUES (93106, 9303, 12.80, '2', '2026-08-12 16:00:00')");
         } catch (Exception ignored) {} // PRIMARY KEY 模型重跑 upsert，幂等
+
+        // ---------- 主数据演示种子：性别主数据（对齐性别代码集 9001），主数据管理开箱即有可点内容 ----------
+        if (cnt("SELECT COUNT(*) FROM meta.gov_master WHERE id=9901") == 0)
+            jdbc.update("INSERT INTO meta.gov_master(id, code, name, description, fields_json, create_time) VALUES (9901, 'GENDER', '性别', '演示-性别主数据（对齐性别代码集）', ?, ?)",
+                    "[{\"name\":\"code\",\"type\":\"VARCHAR(64)\",\"required\":true},{\"name\":\"name\",\"type\":\"VARCHAR(128)\",\"required\":true}]", now);
+        String[][] genderRecs = {{"9911", "1", "男"}, {"9912", "2", "女"}, {"9913", "0", "未知"}};
+        for (String[] g : genderRecs) {
+            if (cnt("SELECT COUNT(*) FROM meta.gov_master_record WHERE id=" + g[0]) == 0)
+                jdbc.update("INSERT INTO meta.gov_master_record(id, master_id, data_json, create_time) VALUES (?, 9901, ?, ?)",
+                        Long.parseLong(g[0]), "{\"code\":\"" + g[1] + "\",\"name\":\"" + g[2] + "\"}", now);
+        }
 
         // ---------- 全链路演示：数据模型(挂标准) → 元数据 → 资产(通过) → 数据服务(开放) ----------
         // ① 数据模型：用户域模型 + dem_user 表，gender 字段挂「性别代码」标准(element_id=9101)

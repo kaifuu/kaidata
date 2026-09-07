@@ -137,8 +137,9 @@
             <el-form-item label="任务名称"><el-input v-model="form.name" placeholder="探查任务名" /></el-form-item>
             <el-form-item label="所属层级">
               <el-select v-model="form.target_db" style="width:100%" @change="checkExists">
-                <el-option v-for="l in ['ods','dwd','dws','dim','ads']" :key="l" :label="l.toUpperCase() + ' 层'" :value="l" />
+                <el-option v-for="l in layers" :key="l.code" :label="`${l.code.toUpperCase()} 层（${l.name || l.code}）`" :value="l.code" />
               </el-select>
+              <div v-if="layerBindingHint" class="muted layer-hint"><el-icon><Link /></el-icon> {{ layerBindingHint }}</div>
             </el-form-item>
             <el-form-item label="首次建表"><el-switch v-model="form.first_create_table" /><span class="muted" style="margin-left:8px">目标库已存在同名表则只记录版本不建表</span></el-form-item>
             <el-form-item label="结构告警"><el-switch v-model="form.alert_enabled" /><span class="muted" style="margin-left:8px">表结构变化时审计/预警</span></el-form-item>
@@ -283,13 +284,24 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, InfoFilled, Document, DataAnalysis, CopyDocument } from '@element-plus/icons-vue'
+import { Plus, InfoFilled, Document, DataAnalysis, CopyDocument, Link } from '@element-plus/icons-vue'
 import { api, errMsg, type DataSourceRow, type ProfileJobRow } from '@/api'
 import LogStream from '@/components/LogStream.vue'
 
 const jobs = ref<ProfileJobRow[]>([])
 const dsList = ref<DataSourceRow[]>([])
 const elements = ref<any[]>([])
+// 数仓分层（动态）+ 层→数据源绑定提示
+const layers = ref<any[]>([])
+const layerBinds = ref<any[]>([])
+const layerBindingHint = computed(() => {
+  const code = form.target_db
+  if (!code) return ''
+  const binds = layerBinds.value.filter((b: any) => (b.layer_code || '').toLowerCase() === String(code).toLowerCase())
+  if (!binds.length) return `该层未绑定数据源 → 建表写入主库 StarRocks`
+  const txt = binds.map((b: any) => `${b.ds_name}（${b.ds_type}）`).join('、')
+  return `该层绑定：${txt} → 首次建表将按绑定写入该目标`
+})
 const loading = ref(false)
 const runningId = ref<number | null>(null)
 const current = ref<ProfileJobRow | null>(null)
@@ -381,8 +393,10 @@ function isNumeric(t: string) { return /(int|long|bigint|double|decimal|float|nu
 async function load() {
   loading.value = true
   try {
-    const [j, d, e] = await Promise.all([api.daProfileJobs(), api.daSources(), api.govElements()])
+    const [j, d, e, ls, bs] = await Promise.all([api.daProfileJobs(), api.daSources(), api.govElements(), api.govLayers(), api.govLayerDs().catch(() => [])])
     jobs.value = j; dsList.value = d; elements.value = (e || [])
+    layers.value = (ls || []).filter((l: any) => l.status !== 'DISABLED')
+    layerBinds.value = bs || []
   } catch (e) { ElMessage.error(errMsg(e, '加载失败')) } finally { loading.value = false }
 }
 
@@ -603,6 +617,7 @@ onMounted(load)
 .sub-t { font-weight: 600; margin-bottom: 10px; color: var(--tech-text); display: flex; align-items: baseline; justify-content: space-between; }
 .sub-t-cnt { font-weight: 400; }
 .table-list { max-height: 460px; overflow-y: auto; }
+.layer-hint { display: flex; align-items: center; gap: 5px; margin-top: 4px; line-height: 1.5; }
 .table-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px; border-radius: 4px; }
 .table-row.on { background: color-mix(in srgb, var(--tech-primary) 10%, transparent); }
 .table-row.disabled { opacity: 0.5; }

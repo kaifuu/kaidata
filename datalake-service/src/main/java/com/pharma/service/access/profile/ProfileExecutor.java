@@ -5,6 +5,8 @@ import com.pharma.service.access.adapter.DataSourceAdapter;
 import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.DataSourceLoader;
+import com.pharma.service.access.layer.LayerRouter;
+import com.pharma.service.access.meta.MetaCollectExecutor;
 import com.pharma.service.access.util.StarRocksDdlBuilder;
 import com.pharma.service.access.util.SqlBuilder;
 import com.pharma.service.access.util.TypeMapper;
@@ -30,7 +32,8 @@ public class ProfileExecutor {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataSourceLoader loader;
     @Autowired private DataSourceAdapterRegistry registry;
-    @Autowired private AutoModler autoModler;
+    @Autowired private LayerRouter layerRouter;
+    @Autowired private MetaCollectExecutor metaCollectExecutor;
     private final ObjectMapper json = new ObjectMapper();
 
     public Map<String, Object> run(long jobId) {
@@ -56,6 +59,11 @@ public class ProfileExecutor {
             DataSourceAdapter adapter = registry.adapter(ds.type);
             DataSource pool = registry.getPool(ds);
             log.append("源数据源: ").append(ds.name).append(" (").append(ds.type).append(")\n");
+            if (targetDb != null && !targetDb.isEmpty()) {
+                // 建表目标按「层→绑定数据源」路由（无绑定=主库 StarRocks 兜底）
+                log.append("目标层级 ").append(targetDb).append(" → ")
+                        .append(LayerRouter.describe(layerRouter.resolve(targetDb), targetDb)).append("\n");
+            }
 
             List<Map<String, Object>> tableCfgs = jdbc.queryForList(
                     "SELECT id, table_name, columns_config FROM meta.ing_profile_table WHERE job_id=?", jobId);
@@ -143,17 +151,22 @@ public class ProfileExecutor {
         // 同步技术元数据到 gov_meta_table（探查即采集）
         upsertMeta(dsId, sp[0] == null ? "" : sp[0], sp[1], columnsJson);
 
-        // ⑥ 首次探查 + 目标无表 → 自动建模
+        // ⑥ 首次探查 + 目标无表 → 自动建模（LayerRouter 按层绑定路由：主库/湖表/绑定内部库）
         if (firstCreate && curVer == 1 && targetDb != null && !targetDb.isEmpty()) {
             List<StarRocksDdlBuilder.ColumnDef> ddlCols = new ArrayList<>();
             for (Map<String, Object> c : curCols) {
                 ddlCols.add(new StarRocksDdlBuilder.ColumnDef(str(c.get("name")), TypeMapper.mapByName(str(c.get("type")))));
             }
             for (StarRocksDdlBuilder.ColumnDef ec : parseExtra(extra)) ddlCols.add(ec);
-            boolean created = autoModler.createIfAbsent(targetDb, safeName(tableName), ddlCols, null);
-            log.append("  [").append(tableName).append("] v").append(curVer)
-                    .append(created ? " 自动建模→" + targetDb + "." + safeName(tableName) : " 建表跳过(目标已存在或未配层级)")
-                    .append("\n");
+            try {
+                String where = layerRouter.createIfAbsent(targetDb, safeName(tableName), ddlCols);
+                log.append("  [").append(tableName).append("] v").append(curVer)
+                        .append(where != null ? " 自动建模→" + where + "." + safeName(tableName) : " 建表跳过(目标已存在)")
+                        .append("\n");
+            } catch (IllegalArgumentException ne) {
+                // 命名规范前置校验不合规：跳过该表建表（不判任务失败），整改后重探即可
+                log.append("  [").append(tableName).append("] 建表拦截: ").append(ne.getMessage()).append("\n");
+            }
         }
 
         // ⑦ 结构变化预警（写审计 action）
@@ -169,20 +182,13 @@ public class ProfileExecutor {
 
     // -------- 助手 --------
 
-    /** 探查结果同步到技术元数据表（upsert）。 */
+    /**
+     * 探查结果同步到技术元数据表：委托 MetaCollectExecutor.upsertTable 版本化规则——
+     * 新表 INSERT+INIT 版本；已存在且结构变化只记待生效版本（source=INGEST），绝不静默覆盖现行
+     * columns_json（手工 MANUAL 结构/人工未应用的采集版本由此受保护），无变化仅刷 synced_time。
+     */
     private void upsertMeta(long dsId, String schema, String table, String colsJson) {
-        try {
-            List<Map<String, Object>> exist = jdbc.queryForList(
-                    "SELECT id FROM meta.gov_meta_table WHERE ds_id=? AND schema_name=? AND table_name=?", dsId, schema, table);
-            Timestamp now = new Timestamp(System.currentTimeMillis());
-            if (exist.isEmpty()) {
-                jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, row_count, synced_time) VALUES (?,?,?,?,?,?,?,?)",
-                        System.currentTimeMillis() + (long) (Math.random() * 1000), dsId, schema, table, "", colsJson, 0L, now);
-            } else {
-                jdbc.update("UPDATE meta.gov_meta_table SET columns_json=?, synced_time=? WHERE id=?",
-                        colsJson, now, ((Number) exist.get(0).get("id")).longValue());
-            }
-        } catch (Exception ignored) {}
+        metaCollectExecutor.upsertTable(dsId, schema, table, colsJson);
     }
 
     private Integer maxVersion(long jobId, String table) {

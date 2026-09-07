@@ -15,10 +15,10 @@
     </div>
 
     <div class="dl-card">
-      <el-table :data="paged" v-loading="loading" stripe size="small">
+      <el-table :data="paged" v-loading="loading" stripe size="small" row-key="id" @expand-change="onExpand">
         <el-table-column type="expand">
           <template #default="{ row }">
-            <LogStream :log="row.log_text || row.error_msg || '（无日志）'" height="300px" style="padding:0 12px" />
+            <LogStream :log="row.log_text || (row.status === 'RUNNING' ? '（连接部署日志…）' : '（展开加载日志…）')" :running="row.status === 'RUNNING'" height="300px" style="padding:0 12px" />
           </template>
         </el-table-column>
         <el-table-column label="镜像" min-width="170"><template #default="{ row }"><span class="mono">{{ row.image_name }}:{{ row.tag }}</span></template></el-table-column>
@@ -29,6 +29,11 @@
         <el-table-column prop="start_time" label="开始" width="160" />
         <el-table-column prop="end_time" label="结束" width="160" />
         <el-table-column prop="triggered_by" label="执行人" width="100" />
+        <el-table-column label="操作" width="70" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openLog(row)">日志</el-button>
+          </template>
+        </el-table-column>
         <template #empty><div class="table-empty">暂无部署记录，点击「发起部署」</div></template>
       </el-table>
       <div class="dl-pagination">
@@ -75,7 +80,7 @@
       <div class="build-head"><span>状态：</span><el-tag :type="statusType(depStatus)" size="small">{{ depStatusText }}</el-tag></div>
       <LogStream :log="depLog" :running="depStatus === 'RUNNING'" />
       <template #footer>
-        <el-button v-if="depStatus === 'RUNNING'" disabled>部署中...</el-button>
+        <el-button v-if="depStatus === 'RUNNING'" disabled>后台执行中，可关闭窗口（远端不受影响）</el-button>
         <el-button v-else type="primary" @click="progressDlg = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -111,6 +116,51 @@ async function load() {
   page.page = 1
   loading.value = true
   try { rows.value = await api.containerDeployList() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
+  watchRunning()
+}
+
+// ---- 部署可见性：RUNNING 记录原位自刷（列表 5s + 展开行日志 5s），关窗/刷新后可重连 ----
+const expandedIds = new Set<number>()
+async function onExpand(row: any, expanded: any[]) {
+  if (expanded.includes(row)) { expandedIds.add(row.id); await hydrate(row) }
+  else expandedIds.delete(row.id)
+}
+/** 拉单条详情（含完整日志；RUNNING 时后端合并内存 live 态）并原位写回行。 */
+async function hydrate(row: any) {
+  try {
+    const d: any = await api.containerDeployDetail(row.id)
+    row.status = d.status
+    row.log_text = d.log_text || d.error_msg || ''
+  } catch (e: any) { row.log_text = '（日志加载失败：' + errMsg(e) + '）' }
+}
+/** 行级「日志」：重连进度弹窗——RUNNING 继续滚屏轮询，已结束直接看完整日志。 */
+async function openLog(row: any) {
+  progressDlg.value = true
+  depStatus.value = row.status || 'RUNNING'
+  depLog.value = ''
+  try {
+    const d: any = await api.containerDeployDetail(row.id)
+    depStatus.value = d.status
+    depLog.value = d.log_text || d.error_msg || '（无日志）'
+    if (d.status === 'RUNNING') poll(row.id)
+  } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+let listTimer: any = null
+/** 存在 RUNNING 部署时每 5s 原位刷新列表（不整表替换，保住展开状态）；全部结束后自停。 */
+function watchRunning() {
+  if (listTimer) { clearInterval(listTimer); listTimer = null }
+  if (!rows.value.some((r: any) => r.status === 'RUNNING')) return
+  listTimer = setInterval(async () => {
+    let fresh: any[] = []
+    try { fresh = await api.containerDeployList() } catch (e: any) { return }
+    const byId = new Map(rows.value.map((r: any) => [r.id, r]))
+    for (const f of fresh) { const old = byId.get(f.id); if (old) Object.assign(old, f); else rows.value.unshift(f) }
+    const ids = new Set(fresh.map((f: any) => f.id))
+    rows.value = rows.value.filter((r: any) => ids.has(r.id))
+    // 展开行刷新：RUNNING 滚屏；翻到终态后再补拉一次完整日志（此前快照缺结尾）
+    for (const r of rows.value) if (expandedIds.has(r.id) && (r.status === 'RUNNING' || r.log_text !== undefined)) hydrate(r)
+    if (!rows.value.some((r: any) => r.status === 'RUNNING') && listTimer) { clearInterval(listTimer); listTimer = null }
+  }, 5000)
 }
 async function openDeploy() {
   deployForm.value = { versionId: null, serverId: null, withStack: false, withData: false }
@@ -156,7 +206,7 @@ const depStatusText = computed(() => ({ RUNNING: '部署中', SUCCESS: '成功',
 function statusType(s: string): any { return s === 'SUCCESS' ? 'success' : s === 'FAIL' || s === 'LOST' ? 'danger' : s === 'RUNNING' ? 'warning' : 'info' }
 
 onMounted(load)
-onBeforeUnmount(() => { if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { if (timer) clearInterval(timer); if (listTimer) clearInterval(listTimer) })
 </script>
 
 <style scoped>

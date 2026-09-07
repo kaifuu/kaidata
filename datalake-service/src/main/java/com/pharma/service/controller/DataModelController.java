@@ -21,6 +21,7 @@ public class DataModelController {
     @Autowired private DevScriptExecutor scriptExecutor;
     @Autowired private com.pharma.service.access.adapter.DataSourceLoader loader;
     @Autowired private com.pharma.service.access.ingest.IcebergWriter icebergWriter;
+    @Autowired private com.pharma.service.access.layer.LayerRouter layerRouter;
     private final ObjectMapper json = new ObjectMapper();
 
     // ===== 模型 =====
@@ -278,33 +279,87 @@ public class DataModelController {
         return Map.of("ddl", buildDdl(tableId), "db", layer, "table", str(t.get("name")));
     }
 
-    /** 一键建物理表：StarRocks 走 DDL→DevScriptExecutor；iceberg 数据源经 REST Catalog 建湖表
-     *  （IcebergWriter.createTable，namespace=layer）。成功后登记元数据（模型→物理→数据地图闭环）。 */
+    /** 一键建物理表：显式选数据源时按原路径（StarRocks DDL→DevScriptExecutor / iceberg 湖表）；
+     *  不选（dsId=0）按「层→绑定数据源」自动路由（LayerRouter：绑定湖→湖表、绑定内部库→方言建表、
+     *  无绑定→主库，主库保留 PRIMARY KEY 模型）。建表前按层 naming_pattern 前置校验。
+     *  成功后登记元数据（模型→物理→数据地图闭环）。 */
     @PostMapping("/table/create-physical")
-    public Map<String, Object> createPhysical(@RequestParam long tableId, @RequestParam long dsId) {
+    public Map<String, Object> createPhysical(@RequestParam long tableId,
+                                              @RequestParam(required = false, defaultValue = "0") long dsId) {
         Authz.require(Authz.SYS_ADMIN);
+        Map<String, Object> t = jdbc.queryForMap("SELECT name, layer FROM meta.gov_model_table WHERE id=?", tableId);
+        String layer = str(t.get("layer"));
+        if (layer.isEmpty()) layer = "ods";
+        String name = str(t.get("name"));
+        // 命名规范前置校验（违规拦截并给出建议名）
+        String bad = layerRouter.validateNaming(layer, name);
+        if (bad != null) return Map.of("success", false, "msg", bad);
+
         boolean ok;
-        String ddl;
-        String created;
-        if (lakeDsType(dsId).equals("iceberg")) {
-            Map<String, Object> t = jdbc.queryForMap("SELECT name, layer FROM meta.gov_model_table WHERE id=?", tableId);
-            String ns = str(t.get("layer")); if (ns.isEmpty()) ns = "demo";
-            ddl = buildIcebergDdl(tableId, ns);
-            created = icebergWriter.createTable(loader.load(dsId), ns, str(t.get("name")), modelCols(tableId)) + "";
-            ok = true;
+        String ddl = "";
+        String target;
+        String errMsg = "";
+        String dsType = dsId > 0 ? lakeDsType(dsId) : (layerRouter.resolve(layer).kind().equals("ICEBERG") ? "iceberg" : "");
+        if (dsType.equals("iceberg")) {
+            long realDs = dsId > 0 ? dsId : layerRouter.resolve(layer).dsId();
+            ddl = buildIcebergDdl(tableId, layer);
+            boolean created = icebergWriter.createTable(loader.load(realDs), layer, name, modelCols(tableId));
+            ok = created;
+            target = com.pharma.service.access.adapter.IcebergAdapter.SR_CATALOG + "." + layer + "（湖表）";
+            if (!created) errMsg = "湖表已存在：" + target + "." + name;
+        } else if (dsId <= 0) {
+            // 按层绑定自动路由（无绑定=主库，主库保留 pk 主键模型）
+            try {
+                String where = layerRouter.createIfAbsent(layer, name, modelDdlCols(tableId), pkOf(tableId));
+                ddl = buildDdl(tableId);
+                ok = where != null;
+                target = where == null ? layer : where;
+                if (!ok) errMsg = "目标已存在同名表，未重复创建";
+            } catch (IllegalArgumentException ne) {
+                return Map.of("success", false, "msg", ne.getMessage());
+            } catch (Exception e) {
+                return Map.of("success", false, "msg", "建表失败：" + rootMsgOf(e), "ddl", buildDdl(tableId));
+            }
         } else {
             ddl = buildDdl(tableId);
             Map<String, Object> r = scriptExecutor.executeSql(dsId, ddl);
             ok = "SUCCESS".equals(str(r.get("status")));
-            created = ok ? "true" : str(r.get("msg"));
+            errMsg = str(r.get("msg"));
+            target = "ds#" + dsId;
         }
         boolean registered = false;
-        if (ok) registered = registerMeta(tableId, dsId);
+        if (ok) registered = registerMeta(tableId, dsId > 0 ? dsId : 0);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", ok);
-        out.put("msg", ok ? (registered ? "建表成功，已同步登记元数据" : "建表成功（元数据登记失败，可到采集管理手动同步）") : str(created));
+        out.put("msg", ok ? (registered ? "建表成功 → " + target + "，已同步登记元数据" : "建表成功 → " + target + "（元数据登记失败，可到采集管理手动同步）") : errMsg);
         out.put("ddl", ddl);
+        out.put("target", target);
         return out;
+    }
+
+    /** 模型字段 → 建表列定义（类型空则 STRING）。 */
+    private List<StarRocksDdlBuilder.ColumnDef> modelDdlCols(long tableId) {
+        List<StarRocksDdlBuilder.ColumnDef> cols = new ArrayList<>();
+        for (Map<String, Object> f : jdbc.queryForList(
+                "SELECT name, data_type FROM meta.gov_model_field WHERE table_id=? ORDER BY id", tableId)) {
+            String ty = str(f.get("data_type"));
+            cols.add(new StarRocksDdlBuilder.ColumnDef(str(f.get("name")), ty.isEmpty() ? "STRING" : ty));
+        }
+        return cols;
+    }
+
+    /** 模型表首个主键字段名（无则空串）。 */
+    private String pkOf(long tableId) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT name FROM meta.gov_model_field WHERE table_id=? AND is_pk=1 ORDER BY id LIMIT 1", tableId);
+        return rows.isEmpty() ? "" : str(rows.get(0).get("name"));
+    }
+
+    private static String rootMsgOf(Throwable e) {
+        Throwable cur = e;
+        for (int i = 0; i < 6 && cur.getCause() != null && cur.getCause() != cur; i++) cur = cur.getCause();
+        String m = cur.getMessage();
+        return m == null ? cur.getClass().getSimpleName() : (cur.getClass().getSimpleName() + ": " + m);
     }
 
     /** 目标数据源类型（ing_datasource.type；不存在返回空串走原 StarRocks 路径）。 */

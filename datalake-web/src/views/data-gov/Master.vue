@@ -1,6 +1,11 @@
 <template>
   <div class="dl-card">
     <div class="card-title"><span>主数据</span><span class="role-tag">系统管理员</span></div>
+    <div class="dl-toolbar">
+      <el-button size="small" type="primary" @click="open()"><el-icon><Plus /></el-icon> 新增主数据</el-button>
+      <span class="muted">定义字段 → 维护记录（编码自动查重）→ 变更全程审计</span>
+      <div class="toolbar-actions"><span class="muted">共 {{ masters.length }} 个定义</span></div>
+    </div>
     <el-table :data="paged" size="small" stripe border v-loading="loading">
       <el-table-column prop="code" label="编码" width="140" />
       <el-table-column prop="name" label="名称" min-width="120" />
@@ -20,6 +25,9 @@
       <el-pagination :current-page="page.page" :page-size="page.size" :total="masters.length"
         :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
         @size-change="onSizeChange" @current-change="onPageChange" />
+    </div>
+    <div v-if="!masters.length && !loading" class="empty-tip muted">
+      还没有主数据定义。点上方「新增主数据」：填编码/名称，字段定义给一条 name/type/required 的 JSON 数组（已预填模板），保存后进「记录」维护数据。
     </div>
 
     <el-drawer v-model="dlg" :title="form.id ? '编辑主数据' : '新增主数据'" size="640px">
@@ -99,6 +107,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 
 const masters = ref<any[]>([]); const loading = ref(false)
@@ -128,7 +137,8 @@ function isNum(t: string) { return /^(INT|BIGINT|LONG|DECIMAL|DOUBLE|FLOAT)/i.te
 function actionText(a: string) { return a === 'CREATE' ? '新增' : a === 'UPDATE' ? '修改' : '删除' }
 
 async function load() { loading.value = true; try { masters.value = await api.govMasters() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
-function open(row?: any) { Object.assign(form, { id: null, code: '', name: '', description: '', fields_json: '' }, row || {}); dlg.value = true }
+const FIELD_TPL = '[{"name":"code","type":"VARCHAR(64)","required":true},{"name":"name","type":"VARCHAR(128)","required":true}]'
+function open(row?: any) { Object.assign(form, { id: null, code: '', name: '', description: '', fields_json: FIELD_TPL }, row || {}); dlg.value = true }
 async function save() { try { await api.govSaveMaster({ ...form }); ElMessage.success('保存成功'); dlg.value = false; await load() } catch (e:any) { ElMessage.error(errMsg(e)) } }
 async function del(row: any) { await ElMessageBox.confirm(`删除主数据 ${row.code}？`, '提示', { type: 'warning' }); try { await api.govDeleteMaster(row.id); ElMessage.success('已删除'); await load() } catch (e:any) { ElMessage.error(errMsg(e)) } }
 
@@ -186,4 +196,6 @@ onMounted(load)
 .audit-json .muted { text-decoration: line-through; }
 .dup-msg { color: var(--el-color-danger); font-size: 12px; margin-top: 2px; }
 .ok-msg { color: var(--el-color-success); font-size: 12px; margin-top: 2px; }
+.empty-tip { padding: 18px 8px; text-align: center; line-height: 1.8; }
+.toolbar-actions { margin-left: auto; }
 </style>

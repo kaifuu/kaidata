@@ -24,11 +24,19 @@
         <div v-else class="hint">按类型展示全部{{ assetType === 'api' ? '接口' : '文件' }}资产。</div>
       </el-col>
       <el-col :span="19">
+        <div v-if="assetType === 'table'" class="subj-bar">
+          <span class="hint">主题域</span>
+          <el-select v-model="subjectId" size="small" clearable filterable placeholder="全部主题域" style="width:220px" @change="loadList">
+            <el-option v-for="s in subjectOpts" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+          <span class="hint" style="margin-left:auto">共 {{ rows.length }} 张表</span>
+        </div>
         <el-table :data="pagedRows" size="small" stripe border v-loading="loading" highlight-current-row @row-click="openDetail">
           <template v-if="assetType === 'table'">
             <el-table-column prop="table_name" label="表名" min-width="170" />
-            <el-table-column prop="cn_name" label="中文名" min-width="120" />
-            <el-table-column prop="layer_code" label="层级" width="80" />
+            <el-table-column prop="cn_name" label="中文名" min-width="110" />
+            <el-table-column prop="layer_code" label="层级" width="70" />
+            <el-table-column label="主题域" width="100"><template #default="{ row }">{{ row.subject_name || '—' }}</template></el-table-column>
             <el-table-column label="填充度" width="80"><template #default="{ row }">{{ row.fill_percent || 0 }}%</template></el-table-column>
             <el-table-column prop="mount_status" label="挂载" width="70" />
           </template>
@@ -197,6 +205,7 @@ import { api, errMsg } from '@/api'
 const theme = 'tech-dark'
 const assetType = ref<'table' | 'api' | 'file'>('table')
 const kw = ref('')
+const subjectId = ref<number | undefined>(undefined)
 const loading = ref(false)
 const rows = ref<any[]>([])
 const catalog = ref<any[]>([])
@@ -250,7 +259,7 @@ async function loadList() {
   loading.value = true
   page.value = 1
   try {
-    if (assetType.value === 'table') rows.value = await api.govMetaList({})
+    if (assetType.value === 'table') rows.value = await api.govMetaList(subjectId.value ? { subjectId: subjectId.value } : {})
     else if (assetType.value === 'api') rows.value = await api.govMetaApiList()
     else rows.value = await api.govMetaFileList({})
   } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
@@ -334,6 +343,7 @@ onMounted(async () => { try { catalog.value = await api.assetCatalogTree(); subj
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .hint { color: var(--tech-text-muted); font-size: 13px; }
 .search-bar { margin-bottom: 4px; }
+.subj-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sec { font-weight: 600; margin: 12px 0 6px; color: var(--tech-text-muted); font-size: 13px; }
 .empty { color: var(--tech-text-muted); font-size: 13px; padding: 30px 0; text-align: center; }
 .chart { width: 100%; height: 520px; }

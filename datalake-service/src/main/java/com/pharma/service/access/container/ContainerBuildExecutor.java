@@ -1,6 +1,7 @@
 package com.pharma.service.access.container;
 
 import com.pharma.service.access.util.CryptoUtil;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,7 +9,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Component;
 
+import java.io.FilterOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * 容器镜像构建/部署异步执行器。仿 DevOfflineScheduler：固定线程池 + 内存 live 态供前端轮询，
@@ -47,6 +54,27 @@ public class ContainerBuildExecutor {
         return t;
     });
     private final Map<Long, LiveState> live = new ConcurrentHashMap<>();
+
+    /**
+     * 启动兜底：上次进程退出时仍 RUNNING 的部署记录改判 FAIL——执行线程随进程死亡
+     * （SSH 通道断开，远端命令一并终止），不能让记录永远停在「部署中」。
+     */
+    @PostConstruct
+    public void initStaleDeploy() {
+        try {
+            for (Map<String, Object> r : jdbc.queryForList(
+                    "SELECT id, version_id, server_id, start_time, triggered_by, with_stack, with_data FROM meta.ct_deploy_record WHERE status='RUNNING'")) {
+                long id = lng(r.get("id"));
+                jdbc.update("DELETE FROM meta.ct_deploy_record WHERE id=?", id);
+                jdbc.update("INSERT INTO meta.ct_deploy_record(id, version_id, server_id, status, log_text, start_time, end_time, error_msg, triggered_by, with_stack, with_data) " +
+                                "VALUES (?,?,?,'FAIL',?,?,?,?,?,?,?)",
+                        id, lng(r.get("version_id")), lng(r.get("server_id")),
+                        "（服务重启，部署中断：执行线程随进程退出，远端命令已一并终止，请重新发起部署）",
+                        r.get("start_time"), new Timestamp(System.currentTimeMillis()),
+                        "后端重启，部署中断", str(r.get("triggered_by")), str(r.get("with_stack")), str(r.get("with_data")));
+            }
+        } catch (Exception ignored) { /* 首启库表未建时忽略 */ }
+    }
 
     /** 随部署附带大数据栈时上传的编排资产（相对仓库 docker/ 目录；缺失跳过并记日志）。 */
     private static final String[] STACK_FILES = {
@@ -132,6 +160,14 @@ public class ContainerBuildExecutor {
         sweep();
         long deployId = System.currentTimeMillis();
         live.put(deployId, new LiveState("RUNNING", "开始部署...\n", deployId));
+        // 先落一条 RUNNING 记录：部署期间关闭日志窗口/刷新页面，列表仍可见，重开可重连看进展
+        // （完成时 doDeploy finally 里 DELETE+INSERT 收口为终态；DUPLICATE KEY 不支持 UPDATE）
+        try {
+            jdbc.update("INSERT INTO meta.ct_deploy_record(id, version_id, server_id, status, log_text, start_time, end_time, error_msg, triggered_by, with_stack, with_data) " +
+                            "VALUES (?,?,?,'RUNNING','',?,NULL,'',?,?,?)",
+                    deployId, versionId, serverId, new Timestamp(deployId), user,
+                    withStack ? "ON" : "OFF", withData ? "ON" : "OFF");
+        } catch (Exception ignored) {}
         pool.submit(() -> doDeploy(versionId, serverId, deployId, user, withStack, withData, dumpFile));
         return deployId;
     }
@@ -199,14 +235,15 @@ public class ContainerBuildExecutor {
                 if (!sv.ok) throw new RuntimeException("sudo 验证失败（检查 sudo 密码/权限）: " + sv.err);
             }
 
-            // 4. 流式 SFTP 上传 tar
-            String remote = uploadDir + "/" + tarName;
-            append(st, "SFTP 上传 " + tarName + " -> " + host + ":" + remote + " ...\n");
+            // 4. 流式 SFTP 上传（边 gzip 压缩边传：docker save 的 tar 层未压缩，gzip 后约为原始 1/3，
+            //    网络耗时同比例下降；远端 docker load 自动识别 .gz，无需解压步骤）
+            String remote = uploadDir + "/" + tarName + ".gz";
             Path local = Paths.get(imageDir).resolve(tarName);
-            try (InputStream in = Files.newInputStream(local)) {
-                RemoteCmdExec.uploadStream(c, remote, in);
-            }
-            append(st, "上传完成\n");
+            append(st, "SFTP 上传 " + tarName + ".gz -> " + host + ":" + remote + "（边压缩边传）...\n");
+            long t0 = System.currentTimeMillis();
+            long gzBytes = gzipUpload(c, local, remote);
+            append(st, String.format("上传完成：%.1fMB → %.1fMB（gzip），耗时 %.0fs\n",
+                    Files.size(local) / 1048576.0, gzBytes / 1048576.0, (System.currentTimeMillis() - t0) / 1000.0));
 
             // 5. docker load（按需 sudo，超时 30min；逐行流式回调，load 层数时前端也能滚屏）
             String loadCmd = sudoLoad ? "sudo -S -p '' " + dockerBin + " load -i " + remote
@@ -342,6 +379,8 @@ public class ContainerBuildExecutor {
             append(st, "\n✗ " + err + "\n");
         } finally {
             try {
+                // DUPLICATE KEY 不支持 UPDATE：先 DELETE 掉提交时的 RUNNING 行，再写终态（含完整日志）
+                jdbc.update("DELETE FROM meta.ct_deploy_record WHERE id=?", deployId);
                 jdbc.update("INSERT INTO meta.ct_deploy_record(id, version_id, server_id, status, log_text, start_time, end_time, error_msg, triggered_by, with_stack, with_data) " +
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?)", deployId, versionId, serverId, ok ? "SUCCESS" : "FAIL", st.log,
                         new Timestamp(start), new Timestamp(System.currentTimeMillis()), err, user,
@@ -403,20 +442,49 @@ public class ContainerBuildExecutor {
         if (sd.ok) append(st, "已将 Kafka EXTERNAL 广播地址改为 host.docker.internal:9094\n");
         else append(st, "⚠ Kafka 广播地址补丁未生效（不影响登录，实时接入可能需手工调整）: " + sd.err + "\n");
 
-        // e. compose up（远端自行拉镜像，超时 30min；重复部署幂等——已有镜像不重拉；逐行流式滚屏）
-        append(st, "$ " + (sud.isEmpty() ? "" : "sudo ") + compose + " -f " + remoteBase + "/docker-compose.yml up -d（远端拉取镜像，耗时视网络）\n");
+        // e. 远端拉取镜像（单独分步：拉取进展逐行滚屏可监控；重复部署幂等——已有镜像秒过）
+        append(st, "\n$ " + (sud.isEmpty() ? "" : "sudo ") + compose + " -f " + remoteBase + "/docker-compose.yml pull（远端拉取镜像，耗时视网络）\n");
+        RemoteCmdExec.ExecResult pull = RemoteCmdExec.runCmd(c,
+                sud + compose + " -f " + shq(remoteBase + "/docker-compose.yml") + " pull", 1800, pwd,
+                line -> append(st, line + "\n"));
+        if (!pull.ok)
+            // build 型服务（iceberg-rest）无 registry 镜像可拉会在此报错——降级为警告，交给 up 兜底（up 时自构建）
+            append(st, "⚠ 拉取未完全成功（build 型服务属正常；若为拉取失败可在远端 /etc/docker/daemon.json 配置 registry-mirrors）: " + pull.err + "\n");
+
+        // e2. compose up（镜像已就位：创建并启动容器；iceberg-rest 为 build 型服务在此构建）
+        append(st, "\n$ " + (sud.isEmpty() ? "" : "sudo ") + compose + " -f " + remoteBase + "/docker-compose.yml up -d\n");
         RemoteCmdExec.ExecResult up = RemoteCmdExec.runCmd(c,
-                sud + compose + " -f " + shq(remoteBase + "/docker-compose.yml") + " up -d", 1800, pwd,
+                sud + compose + " -f " + shq(remoteBase + "/docker-compose.yml") + " up -d", 900, pwd,
                 line -> append(st, line + "\n"));
         if (!up.ok) throw new RuntimeException("远端 compose up 失败（常见原因：无法访问镜像仓库拉取，可在远端 /etc/docker/daemon.json 配置 registry-mirrors 后重试）: " + up.err);
 
-        // f. 等 StarRocks 可查询（仿 bring-up.sh：容器内 mysql 客户端探 9030，60×3s）
+        // e3. 栈容器状态一览（docker ps 走 compose 项目 label，v1/v2 通吃）——一眼判断是否都启动成功
+        RemoteCmdExec.ExecResult psr = RemoteCmdExec.runCmd(c,
+                sud + dockerBin + " ps -a --filter label=com.docker.compose.project=bigdata --format '{{.Names}}\\t{{.State}}\\t{{.Status}}'", 30, pwd);
+        if (psr.ok) {
+            int running = 0, total = 0;
+            for (String ln : (psr.log == null ? "" : psr.log).split("\n")) {
+                String t = ln.trim();
+                if (t.isEmpty()) continue;
+                total++;
+                if (t.contains("\trunning")) running++;
+                append(st, "  " + t.replace("\t", "  |  ") + "\n");
+            }
+            if (total > 0 && running == total) append(st, "✓ 栈容器全部运行中（" + running + "/" + total + "）\n");
+            else append(st, "⚠ 栈容器 " + running + "/" + total + " 运行中，未启动的请看 docker logs <容器名> 排查\n");
+        }
+
+        // f. 等 StarRocks 可查询（仿 bring-up.sh：容器内 mysql 客户端探 9030；Java 侧循环便于日志心跳）
+        String srq = sud + dockerBin + " exec pharma-starrocks mysql -h127.0.0.1 -P9030 -uroot -e \"SELECT 1\" >/dev/null 2>&1 && echo CT_SR_OK";
         append(st, "等待远端 StarRocks 就绪...\n");
-        String srq = dockerBin + " exec pharma-starrocks mysql -h127.0.0.1 -P9030 -uroot -e \"SELECT 1\" >/dev/null 2>&1";
-        String waitSr = "i=0; while [ $i -lt 60 ]; do " + srq + " && echo CT_SR_OK && break; i=$((i+1)); sleep 3; done";
-        RemoteCmdExec.ExecResult ws = RemoteCmdExec.runCmd(c, sud + "sh -c " + shq(waitSr), 220, pwd);
-        if (ws.log == null || !ws.log.contains("CT_SR_OK"))
-            throw new RuntimeException("远端 StarRocks 180s 未就绪，请上远端执行 docker logs pharma-starrocks 排查");
+        boolean srOk = false;
+        for (int i = 1; i <= 60; i++) {
+            RemoteCmdExec.ExecResult ws = RemoteCmdExec.runCmd(c, srq, 15, pwd);
+            if (ws.ok && ws.log != null && ws.log.contains("CT_SR_OK")) { srOk = true; break; }
+            if (i % 5 == 0) append(st, "  等待 StarRocks 就绪… " + (i * 3) + "s / 180s\n");
+            try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+        }
+        if (!srOk) throw new RuntimeException("远端 StarRocks 180s 未就绪，请上远端执行 docker logs pharma-starrocks 排查");
         append(st, "StarRocks 就绪\n");
 
         // g. 数仓分层库初始化（幂等 CREATE DATABASE IF NOT EXISTS；重定向放 sh -c 内，stdin 只走 sudo 密码）
@@ -508,6 +576,43 @@ public class ContainerBuildExecutor {
             else b.append(ch);
         }
         return b.append('\'').toString();
+    }
+
+    /** 边压缩边上传：后台 gzip 泵线程把文件压进管道，SFTP 读管道直传远端（内存占用恒定，不落 .gz 中间文件）。返回压缩后字节数。 */
+    private static long gzipUpload(RemoteCmdExec.Conn c, Path local, String remotePath) {
+        PipedInputStream pin = new PipedInputStream(512 * 1024);
+        CountingOutputStream cnt;
+        try {
+            cnt = new CountingOutputStream(new PipedOutputStream(pin));
+        } catch (IOException e) {
+            throw new RuntimeException("gzip 管道初始化失败: " + e.getMessage(), e);   // 实际不会发生（全新未连接管道）
+        }
+        Thread pump = new Thread(() -> {
+            try (OutputStream gz = new GZIPOutputStream(cnt, 256 * 1024);
+                 InputStream fin = Files.newInputStream(local)) {
+                fin.transferTo(gz);
+            } catch (IOException ignored) {
+                // 读端（SFTP）失败中断管道属预期，错误由 uploadStream 统一抛出
+            }
+        }, "gzip-upload");
+        pump.setDaemon(true);
+        pump.start();
+        try {
+            RemoteCmdExec.uploadStream(c, remotePath, pin);
+        } finally {
+            try { pin.close(); } catch (IOException ignored) {}
+            try { pump.join(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        }
+        return cnt.count();
+    }
+
+    /** 计数输出流：统计压缩后送入管道的字节数（即实际上传量）。仅泵线程写、join 后读。 */
+    private static final class CountingOutputStream extends FilterOutputStream {
+        private long cnt;
+        CountingOutputStream(OutputStream out) { super(out); }
+        @Override public void write(int b) throws IOException { out.write(b); cnt++; }
+        @Override public void write(byte[] b, int off, int len) throws IOException { out.write(b, off, len); cnt += len; }
+        long count() { return cnt; }
     }
 
     public LiveState liveStatus(long id) { return live.get(id); }

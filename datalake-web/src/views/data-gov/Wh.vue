@@ -96,11 +96,11 @@
         <div class="stats-charts" v-loading="loadingStats">
           <div class="chart-panel">
             <div class="cp-t"><el-icon><PieChart /></el-icon> 各层表数占比<span class="muted">共 {{ statTotalTables }} 张</span></div>
-            <v-chart :option="pieOption" :theme="theme.chartTheme" autoresize class="ch" />
+            <v-chart :option="pieOption" :theme="chartTheme" autoresize class="ch" />
           </div>
           <div class="chart-panel">
             <div class="cp-t"><el-icon><Histogram /></el-icon> 各层行数分布<span class="muted">共 {{ fmtNum(statTotalRows) }} 行</span></div>
-            <v-chart :option="barOption" :theme="theme.chartTheme" autoresize class="ch" />
+            <v-chart :option="barOption" :theme="chartTheme" autoresize class="ch" />
           </div>
         </div>
         <!-- 画像卡片（点击钻取表清单） -->
@@ -109,6 +109,7 @@
             <div class="stat-card stat-click" @click="openLayerTables(s)">
               <div class="stat-head">
                 <b>{{ s.code }}</b><span class="muted">{{ s.name }}</span>
+                <el-tag v-if="!s.db_exists" size="small" type="danger" effect="plain">库未初始化</el-tag>
                 <el-tag size="small" :type="s.source === 'physical' ? 'success' : 'info'" effect="plain">{{ s.source === 'physical' ? '实测' : '登记' }}</el-tag>
               </div>
               <div class="stat-row"><span>物理表</span><b>{{ s.tables }}<span class="unit">张</span></b></div>
@@ -125,33 +126,95 @@
               </div>
               <div class="stat-foot">
                 <span class="muted">最近更新 {{ fmtShort(s.last_update) }}</span>
-                <span class="link">表清单 →</span>
+                <span class="foot-right">
+                  <el-button v-if="!s.db_exists" link size="small" type="warning" @click.stop="initLayerDb(s)">初始化库</el-button>
+                  <span class="link">表清单 →</span>
+                </span>
               </div>
             </div>
           </el-col>
         </el-row>
-        <div class="hint"><el-icon><InfoFilled /></el-icon> 点击卡片查看层内表清单；存储/行数为 StarRocks information_schema 实测，命名合规来自命名巡检规则，绑定数与分层管理共享。</div>
+        <!-- 近30天容量趋势（每日快照） -->
+        <div class="chart-panel" v-loading="loadingTrend">
+          <div class="cp-t">
+            <el-icon><TrendCharts /></el-icon> 近30天各层行数趋势
+            <span class="muted">每日 01:37 自动快照（历史 {{ trendDates.length }} 天）</span>
+            <el-button size="small" style="margin-left:auto" :loading="snapshotting" @click="snapshotNow">立即快照</el-button>
+          </div>
+          <v-chart :option="trendOption" :theme="chartTheme" autoresize class="ch" style="height:230px" />
+          <div v-if="!trendDates.length" class="empty-tip muted">暂无历史快照，点右上「立即快照」记录今日基线</div>
+        </div>
+        <div class="hint"><el-icon><InfoFilled /></el-icon> 点击卡片查看层内表清单；存储/行数为 StarRocks information_schema 实测，命名合规来自命名巡检规则，绑定数与分层管理共享；「库未初始化」= 该层绑定目标上还没有层编码库，可点「初始化库」按绑定路由创建。</div>
       </el-tab-pane>
       <el-tab-pane label="命名巡检" name="naming">
-        <div style="margin-bottom:10px"><el-button size="small" type="primary" :loading="loadingNaming" @click="runNamingCheck">立即巡检</el-button></div>
+        <div class="dl-toolbar" style="padding:0;margin-bottom:10px">
+          <el-button size="small" type="primary" :loading="loadingNaming" @click="runNamingCheck">立即巡检</el-button>
+          <span class="muted">扫描 = 元数据登记表 ∪ 主库物理表直扫 · 每日 02:43 自动巡检，违规落库并告警 · 派单走质量工单中心</span>
+          <div class="toolbar-actions"><span v-if="namingRuns.length" class="muted">上次 {{ fmtTime(namingRuns[0].run_time) }}</span></div>
+        </div>
         <template v-if="naming">
-          <el-alert v-if="naming.checked === 0" title="没有可巡检的表（需先在元数据采集登记表且分层配置命名规范）" type="info" :closable="false" />
+          <el-alert v-if="naming.checked === 0" title="没有可巡检的表（需元数据登记表或层编码库有物理表，且分层配置了命名规范）" type="info" :closable="false" />
           <el-alert v-else-if="naming.violate === 0" :title="`巡检通过：${naming.checked} 张表全部符合分层命名规范`" type="success" :closable="false" style="margin-bottom:10px" />
           <el-alert v-else :title="`发现 ${naming.violate}/${naming.checked} 张表命名不规范`" type="warning" :closable="false" style="margin-bottom:10px" />
-          <el-table v-if="naming.violations?.length" :data="naming.violations" size="small" border max-height="420">
-            <el-table-column prop="layer" label="层" width="90" />
-            <el-table-column prop="table" label="表名" min-width="200"><template #default="{ row }"><code>{{ row.table }}</code></template></el-table-column>
-            <el-table-column prop="pattern" label="命名规范" width="140" />
-            <el-table-column prop="suggest" label="建议表名" min-width="200"><template #default="{ row }"><span class="suggest">{{ row.suggest }}</span></template></el-table-column>
+          <el-table v-if="naming.violations?.length" :data="namingPaged" size="small" border max-height="420">
+            <el-table-column prop="layer" label="层" width="70" />
+            <el-table-column prop="table" label="表名" min-width="170"><template #default="{ row }"><code>{{ row.table }}</code></template></el-table-column>
+            <el-table-column prop="pattern" label="命名规范" width="110" />
+            <el-table-column prop="suggest" label="建议表名" min-width="160"><template #default="{ row }"><span class="suggest">{{ row.suggest }}</span></template></el-table-column>
+            <el-table-column label="状态" width="130">
+              <template #default="{ row }">
+                <el-tag v-if="row.status === 'TICKETED'" size="small" type="warning">已派单 #{{ row.ticket_id }}</el-tag>
+                <el-tag v-else size="small" type="danger">待处理</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="发现时间" width="150">
+              <template #default="{ row }">
+                <div class="muted">首 {{ fmtShort(row.first_found) }}</div>
+                <div class="muted">近 {{ fmtShort(row.last_seen) }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <div class="row-actions">
+                  <el-button size="small" link type="primary" :disabled="row.status === 'TICKETED'" @click="openAssign(row)">派单</el-button>
+                  <el-button size="small" link type="primary" @click="copyFixSql(row)">复制SQL</el-button>
+                  <el-button size="small" link type="success" @click="markResolved(row)">已整改</el-button>
+                  <el-button size="small" link @click="ignoreIssue(row)">忽略</el-button>
+                </div>
+              </template>
+            </el-table-column>
           </el-table>
+          <div v-else-if="naming.checked > 0" class="empty-tip muted">无未结违规（已整改/已忽略的不在列表，改名后复核自动关闭）</div>
+          <div class="dl-pagination" v-if="naming.violations?.length">
+            <el-pagination :current-page="namingPage.page" :page-size="namingPage.size" :total="naming.violations.length"
+              :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next, jumper" size="small" background
+              @size-change="onNamingSizeChange" @current-change="onNamingPageChange" />
+          </div>
         </template>
+        <div v-if="namingRuns.length > 1" class="chart-panel" style="margin-top:12px">
+          <div class="cp-t"><el-icon><TrendCharts /></el-icon> 巡检历史<span class="muted">巡检表数 / 违规数 趋势</span></div>
+          <v-chart :option="namingRunsOption" :theme="chartTheme" autoresize class="ch" style="height:200px" />
+        </div>
       </el-tab-pane>
       <el-tab-pane label="主题域" name="subject">
-        <div style="margin-bottom:10px"><el-button type="primary" size="small" @click="openSubject()"><el-icon><Plus /></el-icon> 新增主题域</el-button></div>
+        <!-- 主题域画像统计 -->
+        <el-row :gutter="10" style="margin-bottom:10px">
+          <el-col :span="6"><div class="stat-card"><div class="stat-head"><b>{{ subjectStat.roots }}</b><span class="muted">根主题域</span></div></div></el-col>
+          <el-col :span="6"><div class="stat-card"><div class="stat-head"><b>{{ subjectStat.children }}</b><span class="muted">子域</span></div></div></el-col>
+          <el-col :span="6"><div class="stat-card"><div class="stat-head"><b>{{ subjectStat.models }}</b><span class="muted">挂载模型</span></div></div></el-col>
+          <el-col :span="6"><div class="stat-card"><div class="stat-head"><b>{{ subjectStat.assets }}</b><span class="muted">挂载资产</span></div></div></el-col>
+        </el-row>
+        <div style="margin-bottom:10px">
+          <el-button type="primary" size="small" @click="openSubject()"><el-icon><Plus /></el-icon> 新增主题域</el-button>
+          <span class="muted" style="margin-left:8px">主题域在 数据模型（domain）/ 元数据补录（subject_id）/ 数据资产（subject_id）三处统一引用</span>
+        </div>
         <el-table :data="subjectPaged" row-key="id" size="small" border default-expand-all>
-          <el-table-column prop="code" label="编码" width="140" />
-          <el-table-column prop="name" label="名称" min-width="160" />
-          <el-table-column prop="sort" label="排序" width="80" />
+          <el-table-column prop="code" label="编码" width="130" />
+          <el-table-column prop="name" label="名称" min-width="150" />
+          <el-table-column label="模型数" width="80" align="center"><template #default="{ row }">{{ row.model_count ?? 0 }}</template></el-table-column>
+          <el-table-column label="资产数" width="80" align="center"><template #default="{ row }">{{ row.asset_count ?? 0 }}</template></el-table-column>
+          <el-table-column label="子域数" width="80" align="center"><template #default="{ row }">{{ row.child_count ?? 0 }}</template></el-table-column>
+          <el-table-column prop="sort" label="排序" width="70" />
           <el-table-column label="操作" width="150">
             <template #default="{ row }">
               <el-button link size="small" type="primary" @click="openSubject(row, null)">编辑</el-button>
@@ -250,16 +313,45 @@
       </el-form>
       <template #footer><el-button @click="subjectDlg = false">取消</el-button><el-button type="primary" @click="saveSubject">保存</el-button></template>
     </el-drawer>
+
+    <!-- 命名违规派单（复用质量工单中心） -->
+    <el-dialog v-model="assignDlg" title="命名违规派单" width="480px">
+      <div class="muted" style="margin-bottom:10px" v-if="assignRow">
+        <code>{{ assignRow.layer }}.{{ assignRow.table }}</code> → 建议 <span class="suggest">{{ assignRow.suggest }}</span>
+      </div>
+      <el-form :model="assignForm" label-width="80px" size="small">
+        <el-form-item label="处理人">
+          <el-select v-model="assignForm.assignee" filterable allow-create default-first-option placeholder="选择或输入处理人账号" style="width:100%">
+            <el-option v-for="u in issueUsers" :key="u.username" :label="`${u.name}（${u.username}）`" :value="u.username" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="截止时间">
+          <el-date-picker v-model="assignForm.deadline" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" placeholder="SLA 截止（选填）" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="严重度">
+          <el-select v-model="assignForm.severity" style="width:100%">
+            <el-option label="严重(CRITICAL)" value="CRITICAL" />
+            <el-option label="主要(MAJOR)" value="MAJOR" />
+            <el-option label="次要(MINOR)" value="MINOR" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="muted" style="line-height:1.7">工单进入「运维中心 → 工单中心」完整生命周期（处理/复核/关闭 + SLA 超期提醒）；整改 SQL（RENAME 语句）随工单样例保存，可导出核对。</div>
+      <template #footer><el-button @click="assignDlg = false">取消</el-button><el-button type="primary" :loading="assigning" @click="doAssign">派单</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Folder, Edit, Delete, PieChart, Histogram, InfoFilled } from '@element-plus/icons-vue'
+import { Plus, Folder, Edit, Delete, PieChart, Histogram, InfoFilled, TrendCharts } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 import { VChart } from '@/echarts'
 import { theme } from '@/theme'
+// 顶层持有 computed，模板里自动解包为字符串；直接内联 theme.chartTheme 传的是 ComputedRefImpl 对象，
+// echarts 深克隆 ref 内部循环引用图会爆栈（RangeError: Maximum call stack size exceeded）
+const chartTheme = theme.chartTheme
 
 const tab = ref('layer')
 const loading = ref(false)
@@ -391,7 +483,90 @@ const barOption = computed(() => ({
   }]
 }))
 async function loadStats() { loadingStats.value = true; try { stats.value = await api.govLayerStats() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingStats.value = false } }
-async function runNamingCheck() { loadingNaming.value = true; try { naming.value = await api.govLayerNamingCheck() } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingNaming.value = false } }
+async function runNamingCheck() {
+  loadingNaming.value = true
+  try { naming.value = await api.govLayerNamingCheck(); namingPage.page = 1; await loadNamingRuns() }
+  catch (e: any) { ElMessage.error(errMsg(e)) } finally { loadingNaming.value = false }
+}
+
+// ===== 容量趋势（每日快照） + 层库初始化 =====
+const statsHistory = ref<any[]>([]); const loadingTrend = ref(false); const snapshotting = ref(false)
+async function loadTrend() { loadingTrend.value = true; try { statsHistory.value = await api.govLayerStatsHistory(30) } catch { statsHistory.value = [] } finally { loadingTrend.value = false } }
+const trendDates = computed(() => [...new Set(statsHistory.value.map((r: any) => String(r.snap_date).slice(0, 10)))].sort())
+const trendOption = computed(() => {
+  const dates = trendDates.value
+  const layers = [...new Set(statsHistory.value.map((r: any) => r.layer_code))]
+  const series = layers.map((lc: string) => {
+    const m = new Map(statsHistory.value.filter((r: any) => r.layer_code === lc).map((r: any) => [String(r.snap_date).slice(0, 10), r]))
+    return { name: lc, type: 'line', smooth: true, showSymbol: false, connectNulls: true, data: dates.map((d: string) => (m.has(d) ? Number(m.get(d).rows_cnt || 0) : null)) }
+  })
+  return {
+    tooltip: { trigger: 'axis', valueFormatter: (v: number) => fmtNum(v) },
+    legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    grid: { left: 8, right: 18, top: 16, bottom: 36, containLabel: true },
+    xAxis: { type: 'category', data: dates, boundaryGap: false },
+    yAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtNum(v) }, splitLine: { lineStyle: { type: 'dashed' } } },
+    series,
+  }
+})
+async function snapshotNow() {
+  snapshotting.value = true
+  try { const r: any = await api.govLayerStatsSnapshot(); ElMessage.success(`已记录 ${r.layers ?? 0} 层当日快照`); await Promise.all([loadTrend(), loadStats()]) }
+  catch (e: any) { ElMessage.error(errMsg(e)) } finally { snapshotting.value = false }
+}
+async function initLayerDb(s: any) {
+  try { await ElMessageBox.confirm(`在 ${s.code} 层的绑定目标上初始化「${s.code}」库？（未绑定数据源 → 主库 StarRocks）`, '初始化层库', { type: 'info' }) } catch { return }
+  try { const r: any = await api.govLayerInitDb(s.code); ElMessage.success(`已初始化：${r.target}`); await loadStats() }
+  catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+
+// ===== 命名巡检闭环：分页 / 派单 / 复制SQL / 整改 / 忽略 + 巡检历史 =====
+const namingRuns = ref<any[]>([])
+const issueUsers = ref<any[]>([])   // {username, name} 对象数组，同 Ticket.vue 派单下拉
+const namingPage = reactive({ page: 1, size: 10 })
+const namingPaged = computed(() => (naming.value?.violations || []).slice((namingPage.page - 1) * namingPage.size, namingPage.page * namingPage.size))
+function onNamingSizeChange(s: number) { namingPage.size = s; namingPage.page = 1 }
+function onNamingPageChange(p: number) { namingPage.page = p }
+async function loadNamingRuns() { try { namingRuns.value = await api.govLayerNamingRuns(30) } catch { namingRuns.value = [] } }
+async function loadIssueUsers() { try { issueUsers.value = await api.govQualityIssueUsers() } catch { issueUsers.value = [] } }
+const namingRunsOption = computed(() => {
+  const runs = [...namingRuns.value].reverse()
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    grid: { left: 8, right: 18, top: 14, bottom: 36, containLabel: true },
+    xAxis: { type: 'category', data: runs.map((r: any) => fmtShort(r.run_time)) },
+    yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { type: 'dashed' } } },
+    series: [
+      { name: '巡检表数', type: 'line', smooth: true, showSymbol: false, data: runs.map((r: any) => Number(r.checked || 0)) },
+      { name: '违规数', type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.12 }, data: runs.map((r: any) => Number(r.violate || 0)) },
+    ],
+  }
+})
+const assignDlg = ref(false); const assignRow = ref<any>(null); const assigning = ref(false)
+const assignForm = reactive<any>({ assignee: '', deadline: '', severity: 'MAJOR' })
+function openAssign(row: any) { assignRow.value = row; Object.assign(assignForm, { assignee: '', deadline: '', severity: 'MAJOR' }); assignDlg.value = true }
+async function doAssign() {
+  if (!assignForm.assignee) return ElMessage.warning('请选择处理人')
+  assigning.value = true
+  try {
+    const r: any = await api.govNamingAssign(assignRow.value.issue_id, assignForm.assignee, assignForm.deadline || undefined, assignForm.severity)
+    ElMessage.success(`已派单 #${r.ticketId}，到「运维中心 → 工单中心」跟踪处理`)
+    assignDlg.value = false; await runNamingCheck()
+  } catch (e: any) { ElMessage.error(errMsg(e)) } finally { assigning.value = false }
+}
+function copyFixSql(row: any) {
+  const sql = 'ALTER TABLE `' + row.layer + '`.`' + row.table + '` RENAME TO `' + row.suggest + '`;'
+  navigator.clipboard.writeText(sql).then(() => ElMessage.success('已复制整改 SQL'), () => ElMessage.warning('复制失败，请手动复制'))
+}
+async function markResolved(row: any) {
+  try { await ElMessageBox.confirm(`标记 ${row.layer}.${row.table} 已整改？（下轮巡检未再见到即自动关闭）`, '提示', { type: 'success' }) } catch { return }
+  try { await api.govNamingStatus(row.issue_id, 'RESOLVED'); ElMessage.success('已标记整改'); await runNamingCheck() } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
+async function ignoreIssue(row: any) {
+  try { await ElMessageBox.confirm(`忽略 ${row.layer}.${row.table} 的命名违规？（后续巡检不再计入违规）`, '提示', { type: 'warning' }) } catch { return }
+  try { await api.govNamingStatus(row.issue_id, 'IGNORED'); ElMessage.success('已忽略'); await runNamingCheck() } catch (e: any) { ElMessage.error(errMsg(e)) }
+}
 
 // ===== 层内表清单（画像钻取） =====
 const ltDlg = ref(false); const ltLoading = ref(false)
@@ -413,6 +588,15 @@ const subjectDlg = ref(false); const subjectForm = reactive<any>({ id: null, cod
 const subjectTreeData = computed(() => subjects.value.map((s: any) => ({ ...s, value: s.id, label: s.code + ' / ' + s.name })))
 const subjectPage = reactive({ page: 1, size: 10 })
 const subjectPaged = computed(() => subjects.value.slice((subjectPage.page - 1) * subjectPage.size, subjectPage.page * subjectPage.size))
+// 主题域画像统计（根/子域/模型/资产，父域含子域并入）
+const subjectStat = computed(() => {
+  let roots = 0, children = 0, models = 0, assets = 0
+  for (const s of subjects.value) {
+    roots++; models += Number(s.model_count || 0); assets += Number(s.asset_count || 0)
+    children += (s.children || []).length
+  }
+  return { roots, children, models, assets }
+})
 function onSubjectSizeChange(s: number) { subjectPage.size = s; subjectPage.page = 1 }
 function onSubjectPageChange(p: number) { subjectPage.page = p }
 async function loadSubjects() { try { subjects.value = await api.govSubjects() } catch { subjects.value = [] } }
@@ -431,7 +615,7 @@ async function delSubject(row: any) {
   try { await api.govDeleteSubject(row.id); ElMessage.success('已删除'); await loadSubjects() } catch (e: any) { ElMessage.error(errMsg(e)) }
 }
 
-onMounted(() => { load(); loadStats(); runNamingCheck(); loadSubjects() })
+onMounted(() => { load(); loadStats(); runNamingCheck(); loadSubjects(); loadTrend(); loadIssueUsers() })
 </script>
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
@@ -487,6 +671,7 @@ onMounted(() => { load(); loadStats(); runNamingCheck(); loadSubjects() })
 .stat-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--tech-panel-border); font-size: 11.5px; }
 .stat-foot .link { color: var(--tech-primary); }
 .stat-click:hover .link { text-decoration: underline; }
+.foot-right { display: inline-flex; align-items: center; gap: 8px; }
 .lt-name { font-size: 12.5px; }
 .suggest { color: var(--el-color-success); font-family: monospace; }
 </style>

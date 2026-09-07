@@ -4,6 +4,7 @@ import com.pharma.service.access.adapter.DataSourceAdapter;
 import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.DataSourceLoader;
+import com.pharma.service.access.layer.LayerRouter;
 import com.pharma.service.access.profile.AutoModler;
 import com.pharma.service.access.profile.ProfileExecutor;
 import com.pharma.service.access.profile.ProfileScheduler;
@@ -31,6 +32,7 @@ public class ProfileController {
     @Autowired private ProfileExecutor executor;
     @Autowired private ProfileScheduler scheduler;
     @Autowired private AutoModler autoModler;
+    @Autowired private LayerRouter layerRouter;
 
     // ==================== 任务 CRUD ====================
 
@@ -171,7 +173,7 @@ public class ProfileController {
         return Map.of("exists", autoModler.tableExists(db, t));
     }
 
-    /** 批量检查目标库中是否已存在同名表（供前端左侧表列表一次性置灰）。 */
+    /** 批量检查目标库中是否已存在同名表（供前端左侧表列表一次性置灰）。按层绑定路由判定。 */
     @GetMapping("/target-exists-batch")
     public Map<String, Boolean> targetExistsBatch(@RequestParam String db, @RequestParam String tables) {
         Authz.require(Authz.SYS_ADMIN);
@@ -179,7 +181,7 @@ public class ProfileController {
         for (String t : tables.split(",")) {
             if (t == null || t.isEmpty()) continue;
             String name = t.contains(".") ? t.substring(t.lastIndexOf('.') + 1) : t;
-            out.put(t, autoModler.tableExists(db, name));
+            out.put(t, layerRouter.targetExists(db, name));
         }
         return out;
     }

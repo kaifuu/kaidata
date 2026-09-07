@@ -243,7 +243,7 @@ export const api = {
   govModelTables: (modelId: number) => http.get('/data-gov/model/table', { params: { modelId } }).then((r) => r.data),
   // 模型落地：DDL 生成 / 一键建物理表 / 物理表逆向导入
   govModelDdl: (tableId: number) => http.get('/data-gov/model/table/ddl', { params: { tableId } }).then((r) => r.data),
-  govModelCreatePhysical: (tableId: number, dsId: number) => http.post('/data-gov/model/table/create-physical', null, { params: { tableId, dsId }, timeout: 60000 }).then((r) => r.data),
+  govModelCreatePhysical: (tableId: number, dsId = 0) => http.post('/data-gov/model/table/create-physical', null, { params: { tableId, dsId }, timeout: 60000 }).then((r) => r.data),
   govModelReverse: (metaIds: number[], modelId: number, layer: string) => http.post('/data-gov/model/reverse', null, { params: { metaIds: metaIds.join(','), modelId, layer } }).then((r) => r.data),
   govSaveModelTable: (b: any) => http.post('/data-gov/model/table', b).then((r) => r.data),
   govUpdateModelTable: (b: any) => http.put('/data-gov/model/table', b).then((r) => r.data),
@@ -270,7 +270,13 @@ export const api = {
   govDeleteSubject: (id: number) => http.delete('/data-gov/wh/subject', { params: { id } }).then((r) => r.data),
   govLayerStats: () => http.get('/data-gov/wh/layer/stats').then((r) => r.data),
   govLayerTables: (code: string) => http.get('/data-gov/wh/layer/tables', { params: { code } }).then((r) => r.data),
-  govLayerNamingCheck: () => http.get('/data-gov/wh/layer/naming-check').then((r) => r.data),
+  govLayerNamingCheck: () => http.get('/data-gov/wh/layer/naming-check', { timeout: 60000 }).then((r) => r.data),
+  govLayerNamingRuns: (limit = 30) => http.get('/data-gov/wh/layer/naming-runs', { params: { limit } }).then((r) => r.data),
+  govNamingAssign: (id: number, assignee: string, deadline?: string, severity = 'MAJOR') => http.post('/data-gov/wh/layer/naming-issue/assign', null, { params: { id, assignee, deadline, severity } }).then((r) => r.data),
+  govNamingStatus: (id: number, status: string) => http.post('/data-gov/wh/layer/naming-issue/status', null, { params: { id, status } }).then((r) => r.data),
+  govLayerStatsHistory: (days = 30) => http.get('/data-gov/wh/layer/stats-history', { params: { days } }).then((r) => r.data),
+  govLayerStatsSnapshot: () => http.post('/data-gov/wh/layer/stats-snapshot', null, { timeout: 60000 }).then((r) => r.data),
+  govLayerInitDb: (code: string) => http.post('/data-gov/wh/layer/init-db', null, { params: { code }, timeout: 60000 }).then((r) => r.data),
   // 数据质量
   govRules: (dimension?: string) => http.get('/data-gov/quality/rule', { params: dimension ? { dimension } : {} }).then((r) => r.data),
   govSaveRule: (b: any) => save('/data-gov/quality/rule', b),
@@ -300,7 +306,7 @@ export const api = {
   govDashboardQualityTrend: () => http.get('/data-gov/dashboard/quality/trend').then((r) => r.data),
   govDashboardTodo: () => http.get('/data-gov/dashboard/todo').then((r) => r.data),
   // 元数据
-  govMetaList: (params: { dsId?: number; kw?: string } = {}) => http.get('/data-gov/meta/list', { params }).then((r) => r.data),
+  govMetaList: (params: { dsId?: number; kw?: string; subjectId?: number } = {}) => http.get('/data-gov/meta/list', { params }).then((r) => r.data),
   govMetaDetail: (id: number) => http.get('/data-gov/meta/detail', { params: { id } }).then((r) => r.data),
   govMetaSync: (dsId: number) => http.post('/data-gov/meta/sync', null, { params: { dsId }, timeout: 120000 }).then((r) => r.data),
   // 元数据采集任务 + 采集日志
@@ -342,6 +348,10 @@ export const api = {
   govMetaFillStats: () => http.get('/data-gov/meta/fill/stats').then((r) => r.data),
   govMetaFillList: (params: { type?: string; status?: string; kw?: string; dsId?: number; page?: number; size?: number }) =>
     http.get('/data-gov/meta/fill/list', { params }).then((r) => r.data),
+  govMetaDelete: (id: number) => http.delete('/data-gov/meta', { params: { id } }).then((r) => r.data),
+  govMetaColumns: (b: any) => http.post('/data-gov/meta/columns', b).then((r) => r.data),
+  govMetaFillTemplate: () => http.get('/data-gov/meta/fill/import-template', { responseType: 'blob' }).then((r) => r.data),
+  govMetaFillImport: (file: File) => { const fd = new FormData(); fd.append('file', file); return http.post('/data-gov/meta/fill/import', fd, { timeout: 60000 }).then((r) => r.data); },
   // 接口元数据 / 文件元数据补录
   govMetaApiList: (kw?: string) => http.get('/data-gov/meta/api/list', { params: kw ? { kw } : {} }).then((r) => r.data),
   govMetaApiDetail: (serviceId: number) => http.get('/data-gov/meta/api/detail', { params: { serviceId } }).then((r) => r.data),
@@ -524,10 +534,12 @@ export const api = {
   containerBuildRunDetail: (id: number) => http.get('/container/build-run/detail', { params: { id } }).then((r) => r.data),
   containerDownloadTicket: (id: number) => http.post('/container/version/download-ticket', null, { params: { id } }).then((r) => r.data),
   containerServerList: () => http.get('/container/server/list').then((r) => r.data),
+  containerServerDetail: (id: number) => http.get('/container/server/detail', { params: { id } }).then((r) => r.data),
   containerSaveServer: (b: any) => save('/container/server', b),
   containerDeleteServer: (id: number) => http.delete('/container/server', { params: { id } }).then((r) => r.data),
   containerTestServer: (b: any) => http.post('/container/server/test', b).then((r) => r.data),
   containerDeploy: (versionId: number, serverId: number, withStack = false, withData = false) => http.post('/container/deploy', null, { params: { versionId, serverId, withStack, withData } }).then((r) => r.data),
   containerDeployStatus: (deployId: number) => http.get('/container/deploy/status', { params: { deployId } }).then((r) => r.data),
-  containerDeployList: (params: { versionId?: number; serverId?: number } = {}) => http.get('/container/deploy/list', { params }).then((r) => r.data)
+  containerDeployList: (params: { versionId?: number; serverId?: number } = {}) => http.get('/container/deploy/list', { params }).then((r) => r.data),
+  containerDeployDetail: (id: number) => http.get('/container/deploy/detail', { params: { id } }).then((r) => r.data)
 }

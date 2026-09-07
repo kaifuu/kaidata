@@ -9,11 +9,14 @@
       <el-select v-model="mType" placeholder="模型类型" size="small" clearable style="width:130px">
         <el-option v-for="t in ['概念模型','逻辑模型','物理模型']" :key="t" :label="t" :value="t" />
       </el-select>
+      <el-select v-model="mDomain" placeholder="主题域" size="small" clearable filterable style="width:150px">
+        <el-option v-for="s in subjectFlat" :key="s.code" :label="`${s.name}（${s.code}）`" :value="s.code" />
+      </el-select>
       <div class="toolbar-actions"><span class="muted">共 {{ filtered.length }} 个模型</span></div>
     </div>
     <el-table :data="filtered" size="small" stripe border v-loading="loading">
       <el-table-column prop="name" label="模型名称" min-width="140" />
-      <el-table-column prop="domain" label="主题域" width="110" />
+      <el-table-column label="主题域" width="110"><template #default="{ row }">{{ domainText(row.domain) }}</template></el-table-column>
       <el-table-column prop="model_type" label="类型" width="95"><template #default="{ row }"><el-tag size="small">{{ row.model_type }}</el-tag></template></el-table-column>
       <el-table-column label="规模" width="130">
         <template #default="{ row }">
@@ -37,7 +40,11 @@
     <el-dialog v-model="dlg" :title="form.id ? '编辑模型' : '新增模型'" width="480px">
       <el-form :model="form" label-width="70px" size="small">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="主题域"><el-input v-model="form.domain" placeholder="如 生产/质量" /></el-form-item>
+        <el-form-item label="主题域">
+          <el-select v-model="form.domain" filterable allow-create default-first-option placeholder="选择主题域（可输入新值）" style="width:100%">
+            <el-option v-for="s in subjectFlat" :key="s.code" :label="`${s.name}（${s.code}）`" :value="s.code" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="类型"><el-select v-model="form.model_type" style="width:100%"><el-option v-for="t in ['概念模型','逻辑模型','物理模型']" :key="t" :label="t" :value="t" /></el-select></el-form-item>
         <el-form-item label="说明"><el-input v-model="form.description" type="textarea" :rows="2" /></el-form-item>
       </el-form>
@@ -231,15 +238,17 @@
     </el-dialog>
 
     <!-- 建物理表 -->
-    <el-dialog v-model="createDlg" title="一键建物理表" width="440px">
+    <el-dialog v-model="createDlg" title="一键建物理表" width="460px">
       <el-form label-width="80px" size="small">
-        <el-form-item label="目标表">{{ createInfo.table }}（{{ createInfo.db }}）</el-form-item>
-        <el-form-item label="数据源">
-          <el-select v-model="createDs" placeholder="选择目标数据源（StarRocks / Iceberg 湖）" style="width:100%" filterable>
-            <el-option v-for="d in sources" :key="d.id" :label="d.name" :value="d.id" />
+        <el-form-item label="目标表">{{ createInfo.table }}（{{ createInfo.db }} 层）</el-form-item>
+        <el-form-item label="建表目标">
+          <el-select v-model="createDs" style="width:100%" filterable>
+            <el-option :value="0" label="按层绑定自动路由（未绑定 → 主库 StarRocks）" />
+            <el-option v-for="d in sources" :key="d.id" :label="`${d.name}（${d.type}）`" :value="d.id" />
           </el-select>
+          <div v-if="createBindHint" class="muted layer-hint">{{ createBindHint }}</div>
         </el-form-item>
-        <div class="muted" style="font-size:12px;line-height:1.7">StarRocks：在数仓分层库建表；Iceberg 湖：namespace 取分层（ods/dwd/…），经 REST Catalog 建湖表，建后可入湖接入与快照回溯。</div>
+        <div class="muted" style="font-size:12px;line-height:1.7">自动路由按「数据仓库 → 分层管理」的层→数据源绑定落表（绑定湖→湖表 / 绑定内部库→方言建表）；显式选源时 StarRocks 走分层库，Iceberg 走 REST Catalog 湖表。建表前按层命名规范校验。</div>
       </el-form>
       <template #footer><el-button @click="createDlg = false">取消</el-button><el-button type="primary" :loading="creating" @click="doCreate">建表</el-button></template>
     </el-dialog>
@@ -314,11 +323,28 @@ import { Plus, Search } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 
 const models = ref<any[]>([]); const loading = ref(false)
-const mKw = ref(''); const mType = ref('')
+const mKw = ref(''); const mType = ref(''); const mDomain = ref('')
+// 主题域（gov_subject 树拍平，值=code；与数据地图/元数据同一套）
+const subjects = ref<any[]>([])
+const subjectFlat = computed(() => {
+  const out: any[] = []
+  const walk = (list: any[], prefix: string) => (list || []).forEach((s) => {
+    out.push({ id: s.id, code: s.code, name: prefix + s.name })
+    if (s.children?.length) walk(s.children, prefix + s.name + ' / ')
+  })
+  walk(subjects.value, '')
+  return out
+})
+const domainText = (d: string) => {
+  if (!d) return '—'
+  const s = subjectFlat.value.find((x) => x.code === d)
+  return s ? s.name : d
+}
 const filtered = computed(() => {
   const kw = mKw.value.trim().toLowerCase()
   return models.value.filter((m) =>
     (!mType.value || m.model_type === mType.value) &&
+    (!mDomain.value || m.domain === mDomain.value) &&
     (!kw || (m.name || '').toLowerCase().includes(kw) || (m.domain || '').toLowerCase().includes(kw) || (m.description || '').toLowerCase().includes(kw)))
 })
 const dlg = ref(false); const form = reactive<any>({ id: null, name: '', domain: '', model_type: '逻辑模型', description: '' })
@@ -332,6 +358,7 @@ const layerCodes = ref<string[]>(['ods', 'dwd', 'dws', 'ads', 'dim'])
 async function load() { loading.value = true; try { models.value = await api.govModels() } catch (e:any) { ElMessage.error(errMsg(e)) } finally { loading.value = false } }
 async function loadElements() { try { elements.value = await api.govElements() } catch { elements.value = [] } }
 async function loadLayers() { try { const ls = await api.govLayers(); if (ls.length) layerCodes.value = ls.map((l: any) => l.code) } catch { /* 本地兜底 */ } }
+async function loadSubjects() { try { subjects.value = await api.govSubjects() } catch { subjects.value = [] } }
 function open(row?: any) { Object.assign(form, { id: null, name: '', domain: '', model_type: '逻辑模型', description: '' }, row || {}); dlg.value = true }
 async function save() { try { await api.govSaveModel({ ...form }); ElMessage.success('保存成功'); dlg.value = false; await load() } catch (e:any) { ElMessage.error(errMsg(e)) } }
 async function del(row: any) { await ElMessageBox.confirm(`删除模型 ${row.name}？`, '提示', { type: 'warning' }); try { await api.govDeleteModel(row.id); ElMessage.success('已删除'); await load() } catch (e:any) { ElMessage.error(errMsg(e)) } }
@@ -555,15 +582,22 @@ async function delField(row: any) { try { await api.govDeleteModelField(row.id);
 const sources = ref<any[]>([])
 const ddlDlg = ref(false); const ddlInfo = reactive<any>({ ddl: '', db: '', table: '' })
 const createDlg = ref(false); const createInfo = reactive<any>({ tableId: 0, table: '', db: '' }); const createDs = ref<number>(0); const creating = ref(false)
+const layerBinds = ref<any[]>([])
+const createBindHint = computed(() => {
+  const code = String(createInfo.db || '').toLowerCase()
+  const binds = layerBinds.value.filter((b: any) => String(b.layer_code || '').toLowerCase() === code)
+  if (!binds.length) return `「${createInfo.db}」层未绑定数据源 → 将建到主库 StarRocks`
+  return `「${createInfo.db}」层绑定：${binds.map((b: any) => `${b.ds_name}（${b.ds_type}）`).join('、')}`
+})
 
 async function loadSources() { try { sources.value = await api.daSources() } catch { sources.value = [] } }
+async function loadLayerBinds() { try { layerBinds.value = await api.govLayerDs() } catch { layerBinds.value = [] } }
 async function showDdl(row: any) {
   try { const r: any = await api.govModelDdl(row.id); Object.assign(ddlInfo, { ddl: r.ddl, db: r.db, table: r.table }); ddlDlg.value = true }
   catch (e: any) { ElMessage.error(errMsg(e)) }
 }
 function openCreate(row: any) { Object.assign(createInfo, { tableId: row.id, table: row.name, db: row.layer || 'ods' }); createDs.value = 0; createDlg.value = true }
 async function doCreate() {
-  if (!createDs.value) return ElMessage.warning('请选择数据源')
   creating.value = true
   try { const r: any = await api.govModelCreatePhysical(createInfo.tableId, createDs.value); ElMessage[r.success ? 'success' : 'error'](r.msg || (r.success ? '建表成功' : '建表失败')); if (r.success) createDlg.value = false }
   catch (e: any) { ElMessage.error(errMsg(e)) } finally { creating.value = false }
@@ -620,12 +654,13 @@ async function doReverse() {
   catch (e: any) { ElMessage.error(errMsg(e)) } finally { reversing.value = false }
 }
 
-onMounted(() => { load(); loadElements(); loadSources(); loadLayers() })
+onMounted(() => { load(); loadElements(); loadSources(); loadLayers(); loadSubjects(); loadLayerBinds() })
 </script>
 <style scoped>
 .card-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 12px; }
 .role-tag { font-size: 12px; color: var(--tech-text-muted); border: 1px solid var(--tech-panel-border); padding: 2px 8px; border-radius: 4px; }
 .muted { color: var(--tech-text-muted); font-size: 12px; }
+.layer-hint { margin-top: 4px; line-height: 1.5; color: var(--tech-primary); }
 .sz { font-size: 12px; color: var(--tech-text-muted); }
 .sz b { color: var(--tech-text); }
 

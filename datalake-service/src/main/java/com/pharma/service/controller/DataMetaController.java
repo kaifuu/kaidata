@@ -5,13 +5,25 @@ import com.pharma.service.access.adapter.DataSourceAdapter;
 import com.pharma.service.access.adapter.DataSourceAdapterRegistry;
 import com.pharma.service.access.adapter.DataSourceDescriptor;
 import com.pharma.service.access.adapter.DataSourceLoader;
+import com.pharma.service.access.meta.MetaCollectExecutor;
 import com.pharma.service.access.meta.TableExtractor;
+import com.pharma.service.access.profile.VersionDiffer;
 import com.pharma.service.security.Authz;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.sql.DataSource;
+import java.io.ByteArrayOutputStream;
+import java.net.URLEncoder;
 import java.sql.Timestamp;
 import java.util.*;
 
@@ -27,24 +39,28 @@ public class DataMetaController {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private DataSourceLoader loader;
     @Autowired private DataSourceAdapterRegistry registry;
+    @Autowired private MetaCollectExecutor metaCollectExecutor;
     private final ObjectMapper json = new ObjectMapper();
 
     // ==================== 列表 / 详情 / 同步 ====================
 
     @GetMapping("/list")
     public List<Map<String, Object>> list(@RequestParam(required = false) Long dsId,
-                                          @RequestParam(required = false) String kw) {
+                                          @RequestParam(required = false) String kw,
+                                          @RequestParam(required = false) Long subjectId) {
         Authz.require(Authz.SYS_ADMIN);
-        StringBuilder sql = new StringBuilder("SELECT id, ds_id, schema_name, table_name, comment, cn_name, " +
-                "layer_code, subject_id, fill_percent, mount_status, current_version, synced_time, columns_json " +
-                "FROM meta.gov_meta_table WHERE 1=1");
+        StringBuilder sql = new StringBuilder("SELECT t.id, t.ds_id, t.schema_name, t.table_name, t.comment, t.cn_name, " +
+                "t.layer_code, t.subject_id, s.name AS subject_name, t.fill_percent, t.mount_status, t.current_version, " +
+                "t.synced_time, t.columns_json FROM meta.gov_meta_table t " +
+                "LEFT JOIN meta.gov_subject s ON s.id=t.subject_id WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        if (dsId != null) { sql.append(" AND ds_id=?"); args.add(dsId); }
+        if (dsId != null) { sql.append(" AND t.ds_id=?"); args.add(dsId); }
+        if (subjectId != null && subjectId > 0) { sql.append(" AND t.subject_id=?"); args.add(subjectId); }
         if (kw != null && !kw.isEmpty()) {
-            sql.append(" AND (table_name LIKE ? OR cn_name LIKE ? OR comment LIKE ?)");
+            sql.append(" AND (t.table_name LIKE ? OR t.cn_name LIKE ? OR t.comment LIKE ?)");
             String p = "%" + kw + "%"; args.add(p); args.add(p); args.add(p);
         }
-        sql.append(" ORDER BY ds_id, schema_name, table_name LIMIT 500");
+        sql.append(" ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT 500");
         return jdbc.queryForList(sql.toString(), args.toArray());
     }
 
@@ -76,7 +92,7 @@ public class DataMetaController {
                 String[] sp = com.pharma.service.access.util.SqlBuilder.splitTable(schema.isEmpty() ? table : schema + "." + table);
                 List<Map<String, Object>> cols = a.describeTable(pool, sp[0], sp[1]);
                 String colsJson = json.writeValueAsString(cols);
-                upsertMeta(dsId, schema, table, str(t.get("comment")), colsJson);
+                metaCollectExecutor.upsertTable(dsId, schema, table, colsJson);
                 count++;
             } catch (Exception ignored) {}
         }
@@ -119,23 +135,122 @@ public class DataMetaController {
         return out;
     }
 
-    // ==================== 补录保存 / 填充度 ====================
+    // ==================== 补录保存 / 新建登记 / 删除 / 结构编辑 ====================
 
+    private static final String[] BIZ_COLS = {"cn_name", "dept", "app_system", "resource_attr", "layer_code",
+            "subject_id", "share_type", "admin_owner", "admin_contact", "data_category", "security_level",
+            "mask_rule_id", "alert_def_id", "description"};
+
+    /**
+     * 补录保存（/fill/import 复用）。id==0 → 新建登记（自动采集覆盖不到的表：外部系统/未纳管数据源）；
+     * id>0 → 先读全行合并再整体写回——修复历史毁数据 bug：部分 payload 会把未传的业务列抹成空。
+     */
     @PostMapping("/save")
     public Map<String, Object> save(@RequestBody Map<String, Object> b) {
         Authz.require(Authz.SYS_ADMIN);
+        return doSave(b);
+    }
+
+    private Map<String, Object> doSave(Map<String, Object> b) {
         long id = lng(b.get("id"));
-        if (id == 0) throw new RuntimeException("补录需指定已存在的库表元数据 id");
-        int fill = calcFill(b);
         Timestamp now = new Timestamp(System.currentTimeMillis());
+        if (id == 0) {
+            long dsId = lng(b.get("ds_id"));
+            String schema = str(b.get("schema_name")).trim();
+            String table = str(b.get("table_name")).trim();
+            if (table.isEmpty()) throw new IllegalArgumentException("表名必填");
+            List<Map<String, Object>> dup = jdbc.queryForList(
+                    "SELECT id FROM meta.gov_meta_table WHERE ds_id=? AND schema_name=? AND table_name=?", dsId, schema, table);
+            if (!dup.isEmpty())
+                throw new IllegalArgumentException("该表已登记（#" + lng(dup.get(0).get("id")) + "），请直接补录，勿重复登记");
+            long metaId = System.currentTimeMillis() + (long) (Math.random() * 1000);
+            jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, " +
+                            "row_count, synced_time, fill_percent, current_version, mount_status, update_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    metaId, dsId, schema, table, str(b.get("comment")), "[]", 0L, now, calcFill(b), 1, "NONE", now);
+            jdbc.update("INSERT INTO meta.gov_meta_version(id, meta_id, version_n, columns_json, change_type, " +
+                            "change_detail, source, created_time) VALUES (?,?,?,?,?,?,?,?)",
+                    metaId + 1, metaId, 1, "[]", "INIT", "", "MANUAL", now);
+            return Map.of("success", true, "id", metaId, "fill_percent", calcFill(b));
+        }
+        Map<String, Object> cur = jdbc.queryForMap("SELECT " + String.join(", ", BIZ_COLS) +
+                " FROM meta.gov_meta_table WHERE id=?", id);
+        for (String k : BIZ_COLS) if (b.containsKey(k)) cur.put(k, b.get(k));
+        int fill = calcFill(cur);
         jdbc.update("UPDATE meta.gov_meta_table SET cn_name=?, dept=?, app_system=?, resource_attr=?, layer_code=?, " +
                         "subject_id=?, share_type=?, admin_owner=?, admin_contact=?, data_category=?, security_level=?, " +
                         "mask_rule_id=?, alert_def_id=?, description=?, fill_percent=?, update_time=? WHERE id=?",
-                str(b.get("cn_name")), str(b.get("dept")), str(b.get("app_system")), str(b.get("resource_attr")),
-                str(b.get("layer_code")), lng(b.get("subject_id")), str(b.get("share_type")), str(b.get("admin_owner")),
-                str(b.get("admin_contact")), str(b.get("data_category")), str(b.get("security_level")),
-                lng(b.get("mask_rule_id")), lng(b.get("alert_def_id")), str(b.get("description")), fill, now, id);
-        return Map.of("success", true, "fill_percent", fill);
+                str(cur.get("cn_name")), str(cur.get("dept")), str(cur.get("app_system")), str(cur.get("resource_attr")),
+                str(cur.get("layer_code")), lng(cur.get("subject_id")), str(cur.get("share_type")), str(cur.get("admin_owner")),
+                str(cur.get("admin_contact")), str(cur.get("data_category")), str(cur.get("security_level")),
+                lng(cur.get("mask_rule_id")), lng(cur.get("alert_def_id")), str(cur.get("description")), fill, now, id);
+        return Map.of("success", true, "id", id, "fill_percent", fill);
+    }
+
+    /** 删除表元数据（连带版本）；被资产挂载的禁止删（防资产悬空，须先解绑）。 */
+    @DeleteMapping("")
+    public Map<String, Object> delete(@RequestParam long id) {
+        Authz.require(Authz.SYS_ADMIN);
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT schema_name, table_name FROM meta.gov_meta_table WHERE id=?", id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("元数据不存在");
+        long mounted = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM meta.asset WHERE source_type='meta_table' AND source_id=?", Long.class, id);
+        if (mounted > 0)
+            throw new IllegalArgumentException("已有 " + mounted + " 个资产挂载此元数据，请先在「资产编目」解绑");
+        jdbc.update("DELETE FROM meta.gov_meta_version WHERE meta_id=?", id);
+        jdbc.update("DELETE FROM meta.gov_meta_field_map WHERE meta_id=?", id);
+        jdbc.update("DELETE FROM meta.gov_meta_table WHERE id=?", id);
+        return Map.of("success", true, "name",
+                str(rows.get(0).get("schema_name")) + "." + str(rows.get(0).get("table_name")));
+    }
+
+    /**
+     * 结构（字段清单）手工维护：登记 source='MANUAL' 的新版本并立即生效（现行结构永不被采集静默覆盖——
+     * 采集/探查结构变化只记待生效版本，人工「应用版本」后才替换）。
+     */
+    @PostMapping("/columns")
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> saveColumns(@RequestBody Map<String, Object> b) throws Exception {
+        Authz.require(Authz.SYS_ADMIN);
+        long id = lng(b.get("id"));
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT columns_json, current_version FROM meta.gov_meta_table WHERE id=?", id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("元数据不存在");
+        List<Map<String, Object>> cols = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        for (Object o : (List<Object>) b.getOrDefault("columns", List.of())) {
+            if (!(o instanceof Map)) continue;
+            Map<String, Object> c = (Map<String, Object>) o;
+            String name = str(c.get("name")).trim();
+            if (name.isEmpty()) throw new IllegalArgumentException("字段名不能为空");
+            if (!names.add(name.toLowerCase())) throw new IllegalArgumentException("字段名重复：" + name);
+            Map<String, Object> nc = new LinkedHashMap<>();
+            nc.put("name", name);
+            nc.put("type", str(c.get("type")));
+            nc.put("comment", str(c.get("comment")));
+            cols.add(nc);
+        }
+        String colsJson = json.writeValueAsString(cols);
+        String prevJson = str(rows.get(0).get("columns_json"));
+        Timestamp now = new Timestamp(System.currentTimeMillis());
+        int curVer = rows.get(0).get("current_version") == null ? 0 : ((Number) rows.get(0).get("current_version")).intValue();
+        VersionDiffer.Diff diff = prevJson.isEmpty() ? new VersionDiffer.Diff()
+                : VersionDiffer.diff(toTypeMap(prevJson), toTypeMap(colsJson));
+        int newVer = curVer;
+        if (diff.hasChange()) {
+            Integer prevMax = maxVersion(id);
+            newVer = (prevMax == null ? 0 : prevMax) + 1;
+            String changeDetail = "+[" + String.join(",", diff.added) + "] -[" + String.join(",", diff.removed) +
+                    "] ~[" + String.join(";", diff.typeChanged) + "]";
+            jdbc.update("INSERT INTO meta.gov_meta_version(id, meta_id, version_n, columns_json, change_type, " +
+                            "change_detail, source, created_time) VALUES (?,?,?,?,?,?,?,?)",
+                    System.currentTimeMillis() + newVer, id, newVer, colsJson, "手工修正", trimS(changeDetail, 2000), "MANUAL", now);
+        }
+        jdbc.update("UPDATE meta.gov_meta_table SET columns_json=?, current_version=?, update_time=? WHERE id=?",
+                colsJson, newVer, now, id);
+        Object cmt = b.get("comment");
+        if (cmt != null) jdbc.update("UPDATE meta.gov_meta_table SET comment=? WHERE id=?", str(cmt), id);
+        return Map.of("success", true, "version", newVer, "columns", cols.size());
     }
 
     @GetMapping("/fill")
@@ -455,23 +570,42 @@ public class DataMetaController {
                                         @RequestParam(defaultValue = "1") int page,
                                         @RequestParam(defaultValue = "20") int size) {
         Authz.require(Authz.SYS_ADMIN);
-        String table, nameCol, idCol;
-        if ("api".equalsIgnoreCase(type)) { table = "meta.gov_meta_api"; nameCol = "cn_name"; idCol = "service_id"; }
-        else if ("file".equalsIgnoreCase(type)) { table = "meta.gov_meta_file"; nameCol = "cn_name"; idCol = "id"; }
-        else { table = "meta.gov_meta_table"; nameCol = "table_name"; idCol = "id"; }
-        StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        if ("filled".equalsIgnoreCase(status)) where.append(" AND fill_percent>=100");
-        else where.append(" AND (fill_percent<100 OR fill_percent IS NULL)");
-        if (kw != null && !kw.isEmpty()) { where.append(" AND ").append(nameCol).append(" LIKE ?"); args.add("%" + kw + "%"); }
-        if (dsId != null && "table".equalsIgnoreCase(type)) { where.append(" AND ds_id=?"); args.add(dsId); }
-        long total = cntFill("SELECT COUNT(*) FROM " + table + where, args);
+        boolean filled = "filled".equalsIgnoreCase(status);
+        String fillCond = filled ? "fill_percent>=100" : "(fill_percent<100 OR fill_percent IS NULL)";
+        String tFillCond = filled ? "t.fill_percent>=100" : "(t.fill_percent<100 OR t.fill_percent IS NULL)";
+        List<Map<String, Object>> records;
+        long total;
         int offset = Math.max(0, (page - 1) * size);
-        String sql = "SELECT " + idCol + " AS id, " + nameCol + " AS name, fill_percent FROM " + table
-                + where + " ORDER BY fill_percent ASC LIMIT " + offset + "," + size;
-        List<Map<String, Object>> records = args.isEmpty()
-                ? jdbc.queryForList(sql)
-                : jdbc.queryForList(sql, args.toArray());
+        if ("table".equalsIgnoreCase(type) || type == null || type.isEmpty()) {
+            // 库表：全业务列富化（数据源名/主题域名/待生效版本数），供清单展示与补录抽屉回读
+            StringBuilder where = new StringBuilder(" WHERE " + tFillCond);
+            if (kw != null && !kw.isEmpty()) {
+                where.append(" AND (t.table_name LIKE ? OR t.cn_name LIKE ?)"); args.add("%" + kw + "%"); args.add("%" + kw + "%");
+            }
+            if (dsId != null) { where.append(" AND t.ds_id=?"); args.add(dsId); }
+            total = cntFill("SELECT COUNT(*) FROM meta.gov_meta_table t" + where, args);
+            records = jdbc.queryForList(
+                    "SELECT t.id, t.ds_id, t.schema_name, t.table_name AS name, t.table_name, t.cn_name, t.dept, " +
+                            "t.admin_owner, t.data_category, t.security_level, t.description, t.layer_code, t.subject_id, " +
+                            "s.name AS subject_name, d.name AS ds_name, t.fill_percent, t.synced_time, t.mount_status, " +
+                            "t.current_version, CASE WHEN v.maxv IS NULL OR v.maxv <= COALESCE(t.current_version, 0) THEN 0 " +
+                            "ELSE v.maxv - COALESCE(t.current_version, 0) END AS pending_versions " +
+                            "FROM meta.gov_meta_table t " +
+                            "LEFT JOIN meta.gov_subject s ON s.id = t.subject_id " +
+                            "LEFT JOIN meta.ing_datasource d ON d.id = t.ds_id " +
+                            "LEFT JOIN (SELECT meta_id, MAX(version_n) AS maxv FROM meta.gov_meta_version GROUP BY meta_id) v ON v.meta_id = t.id" +
+                            where + " ORDER BY t.fill_percent ASC LIMIT " + offset + "," + size, args.toArray());
+        } else {
+            String table = "api".equalsIgnoreCase(type) ? "meta.gov_meta_api" : "meta.gov_meta_file";
+            String nameCol = "api".equalsIgnoreCase(type) ? "cn_name" : "path";
+            String idCol = "api".equalsIgnoreCase(type) ? "service_id" : "id";
+            StringBuilder where = new StringBuilder(" WHERE " + fillCond);
+            if (kw != null && !kw.isEmpty()) { where.append(" AND ").append(nameCol).append(" LIKE ?"); args.add("%" + kw + "%"); }
+            total = cntFill("SELECT COUNT(*) FROM " + table + where, args);
+            records = jdbc.queryForList("SELECT " + idCol + " AS id, " + nameCol + " AS name, fill_percent FROM " + table
+                    + where + " ORDER BY fill_percent ASC LIMIT " + offset + "," + size, args.toArray());
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("records", records);
         out.put("total", total);
@@ -499,20 +633,163 @@ public class DataMetaController {
         catch (Exception e) { return 0; }
     }
 
+    // ==================== Excel 批量补录 ====================
+
+    private static final String[] FILL_HEADERS = {"库名", "表名", "中文名", "所属部门", "应用系统", "资源管理员",
+            "联系方式", "数据分类", "安全级别", "层级", "主题域编码", "共享类型", "业务描述"};
+
+    /** 补录导入模板（表头 + 示例行）。 */
+    @GetMapping("/fill/import-template")
+    public ResponseEntity<byte[]> fillImportTemplate() throws Exception {
+        Authz.require(Authz.SYS_ADMIN);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            XSSFSheet sheet = wb.createSheet("补录导入");
+            Row hr = sheet.createRow(0);
+            for (int i = 0; i < FILL_HEADERS.length; i++) {
+                hr.createCell(i).setCellValue(FILL_HEADERS[i]);
+                sheet.setColumnWidth(i, 16 * 256);
+            }
+            Row ex = sheet.createRow(1);
+            String[] vals = {"ods", "dem_user", "用户信息表", "数据部", "数仓平台", "admin",
+                    "admin@demo.cn", "业务数据", "", "ods", "trade", "内部", "核心用户主表"};
+            for (int i = 0; i < vals.length; i++) ex.createCell(i).setCellValue(vals[i]);
+            wb.write(out);
+        }
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename*=UTF-8''" + URLEncoder.encode("元数据补录导入模板.xlsx", "UTF-8").replace("+", "%20"))
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(out.toByteArray());
+    }
+
+    /** Excel 批量补录：按 库名+表名 匹配已登记表回填业务属性（走 /save 同一合并逻辑，不抹未填列）。 */
+    @PostMapping("/fill/import")
+    public Map<String, Object> fillImport(@RequestParam("file") MultipartFile file) throws Exception {
+        Authz.require(Authz.SYS_ADMIN);
+        Set<String> secCodes = codeSet("SELECT code FROM meta.sec_standard");
+        Set<String> layerCodes = codeSet("SELECT code FROM meta.gov_layer");
+        Map<String, Long> subjectByCode = new HashMap<>();
+        for (Map<String, Object> s : jdbc.queryForList("SELECT id, code FROM meta.gov_subject"))
+            subjectByCode.put(str(s.get("code")).toLowerCase(), lng(s.get("id")));
+        List<Map<String, Object>> results = new ArrayList<>();
+        int ok = 0;
+        try (XSSFWorkbook wb = new XSSFWorkbook(file.getInputStream())) {
+            XSSFSheet sheet = wb.getSheetAt(0);
+            Row hr = sheet.getRow(0);
+            if (hr == null) throw new IllegalArgumentException("Excel 为空");
+            Map<String, Integer> colIdx = new HashMap<>();
+            for (int i = 0; i < FILL_HEADERS.length; i++) colIdx.put(FILL_HEADERS[i], -1);
+            for (Cell c : hr) {
+                if (c.getCellType() == CellType.STRING && colIdx.containsKey(c.getStringCellValue().trim()))
+                    colIdx.put(c.getStringCellValue().trim(), c.getColumnIndex());
+            }
+            if (colIdx.get("库名") < 0 || colIdx.get("表名") < 0)
+                throw new IllegalArgumentException("表头必须包含「库名」「表名」列（请使用导入模板）");
+            for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                Row row = sheet.getRow(r);
+                if (row == null) continue;
+                String schema = cellStr(row, colIdx.get("库名"));
+                String table = cellStr(row, colIdx.get("表名"));
+                Map<String, Object> res = new LinkedHashMap<>();
+                res.put("schema", schema);
+                res.put("table", table);
+                try {
+                    if (table.isEmpty()) { res.put("status", "skip"); res.put("msg", "表名为空，跳过"); results.add(res); continue; }
+                    String cnName = cellStr(row, colIdx.get("中文名"));
+                    String sec = cellStr(row, colIdx.get("安全级别"));
+                    String layer = cellStr(row, colIdx.get("层级"));
+                    String subjCode = cellStr(row, colIdx.get("主题域编码"));
+                    if (!sec.isEmpty() && !secCodes.contains(sec))
+                        throw new IllegalArgumentException("安全级别编码不存在：" + sec + "（有效值见「安全标准」）");
+                    if (!layer.isEmpty() && !layerCodes.contains(layer))
+                        throw new IllegalArgumentException("层级不存在：" + layer);
+                    Long subjectId = null;
+                    if (!subjCode.isEmpty()) {
+                        subjectId = subjectByCode.get(subjCode.toLowerCase());
+                        if (subjectId == null) throw new IllegalArgumentException("主题域编码不存在：" + subjCode);
+                    }
+                    List<Map<String, Object>> hits = jdbc.queryForList(
+                            "SELECT id FROM meta.gov_meta_table WHERE schema_name=? AND table_name=?", schema, table);
+                    if (hits.isEmpty()) throw new IllegalArgumentException("未登记该表（请先在补录工作台「新增登记」）");
+                    if (hits.size() > 1) throw new IllegalArgumentException("跨数据源重名（" + hits.size() + " 个源），请在工作台按数据源筛选后逐个补录");
+                    Map<String, Object> b = new LinkedHashMap<>();
+                    b.put("id", lng(hits.get(0).get("id")));
+                    putIfHas(b, "cn_name", cnName);
+                    putIfHas(b, "dept", cellStr(row, colIdx.get("所属部门")));
+                    putIfHas(b, "app_system", cellStr(row, colIdx.get("应用系统")));
+                    putIfHas(b, "admin_owner", cellStr(row, colIdx.get("资源管理员")));
+                    putIfHas(b, "admin_contact", cellStr(row, colIdx.get("联系方式")));
+                    putIfHas(b, "data_category", cellStr(row, colIdx.get("数据分类")));
+                    putIfHas(b, "security_level", sec);
+                    putIfHas(b, "layer_code", layer);
+                    if (subjectId != null) b.put("subject_id", subjectId);
+                    putIfHas(b, "share_type", cellStr(row, colIdx.get("共享类型")));
+                    putIfHas(b, "description", cellStr(row, colIdx.get("业务描述")));
+                    Map<String, Object> sv = doSave(b);
+                    ok++;
+                    res.put("status", "ok");
+                    res.put("msg", "已保存，填充度 " + lng(sv.get("fill_percent")) + "%");
+                } catch (Exception e) {
+                    res.put("status", "fail");
+                    res.put("msg", rootMsgOf(e));
+                }
+                results.add(res);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("total", results.size());
+        out.put("ok", ok);
+        out.put("fail", results.size() - ok);
+        out.put("results", results);
+        return out;
+    }
+
+    private Set<String> codeSet(String sql) {
+        Set<String> s = new HashSet<>();
+        try { for (Map<String, Object> r : jdbc.queryForList(sql)) s.add(str(r.get("code"))); }
+        catch (Exception ignored) {}
+        return s;
+    }
+
+    private static void putIfHas(Map<String, Object> b, String k, String v) {
+        if (v != null && !v.trim().isEmpty()) b.put(k, v.trim());
+    }
+
+    private static String cellStr(Row row, int idx) {
+        if (idx < 0) return "";
+        Cell c = row.getCell(idx);
+        if (c == null) return "";
+        try {
+            if (c.getCellType() == CellType.STRING) return c.getStringCellValue().trim();
+            if (c.getCellType() == CellType.NUMERIC) {
+                double d = c.getNumericCellValue();
+                return d == Math.floor(d) ? String.valueOf((long) d) : String.valueOf(d);
+            }
+            if (c.getCellType() == CellType.BOOLEAN) return String.valueOf(c.getBooleanCellValue());
+            if (c.getCellType() == CellType.FORMULA) return str(c.getCellFormula());
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private static String rootMsgOf(Throwable e) {
+        Throwable cur = e;
+        for (int i = 0; i < 6 && cur.getCause() != null && cur.getCause() != cur; i++) cur = cur.getCause();
+        String m = cur.getMessage();
+        return m == null ? cur.getClass().getSimpleName() : m;
+    }
+
     // ==================== 助手 ====================
 
-    private void upsertMeta(long dsId, String schema, String table, String comment, String colsJson) {
-        List<Map<String, Object>> exist = jdbc.queryForList(
-                "SELECT id FROM meta.gov_meta_table WHERE ds_id=? AND schema_name=? AND table_name=?", dsId, schema, table);
-        Timestamp now = new Timestamp(System.currentTimeMillis());
-        if (exist.isEmpty()) {
-            jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, " +
-                            "row_count, synced_time, current_version, mount_status, fill_percent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    System.currentTimeMillis() + (long) (Math.random() * 1000), dsId, schema, table, comment, colsJson, 0L, now, 1, "NONE", 0);
-        } else {
-            jdbc.update("UPDATE meta.gov_meta_table SET comment=?, columns_json=?, synced_time=? WHERE id=?",
-                    comment, colsJson, now, ((Number) exist.get(0).get("id")).longValue());
-        }
+    private Map<String, String> toTypeMap(String colsJson) {
+        Map<String, String> m = new LinkedHashMap<>();
+        try { for (var n : json.readTree(colsJson)) m.put(n.get("name").asText(), n.get("type").asText()); }
+        catch (Exception ignored) {}
+        return m;
+    }
+
+    private static String trimS(String s, int max) {
+        return s == null ? "" : (s.length() > max ? s.substring(0, max) : s);
     }
 
     private Integer maxVersion(long metaId) {

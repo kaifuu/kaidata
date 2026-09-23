@@ -19,6 +19,9 @@ cd "$(dirname "$0")"
 export MSYS_NO_PATHCONV=1
 
 echo "==> [1/6] docker compose up -d"
+# Flink 连接器 jar 是 compose 的挂载源，缺失时 Docker 会把挂载点建成空目录 →
+# 容器起不来或静默无连接器。故先确保就位（幂等，已存在秒过）
+bash "$(dirname "$0")/fetch-flink-libs.sh"
 docker compose up -d
 
 echo "==> [2/6] 等待 Kafka 就绪并建 topic"

@@ -76,6 +76,11 @@ services:
     mem_limit: 1g
 
   # ---------- 流计算 Flink ----------
+  # 三个 Flink 容器都挂 flink-lib 里的连接器（逐个文件挂载，不能整目录挂 /opt/flink/lib
+  # ——那会盖掉镜像自带的 flink-dist/flink-table，集群直接起不来）：
+  #   flink-connector-jdbc / flink-connector-kafka：离线 FlinkDag 的 table/kafka 源汇必需；
+  #   mysql-connector-j：JDBC 连接器的驱动，缺它报 "No suitable driver"。
+  # jar 不在版本库（.gitignore 忽略 *.jar），由 docker/fetch-flink-libs.sh 下载（bring-up.sh 会自动调用）。
   flink-jm:
     image: flink:1.18-java17
     container_name: pharma-flink-jm
@@ -86,7 +91,11 @@ services:
         jobmanager.rpc.address: flink-jm
         taskmanager.numberOfTaskSlots: 4
         rest.port: 8081
-    volumes: [flink-jobs:/opt/flink/usrlib]
+    volumes:
+      - flink-jobs:/opt/flink/usrlib
+      - ./flink-lib/flink-connector-jdbc-3.1.2-1.18.jar:/opt/flink/lib/flink-connector-jdbc-3.1.2-1.18.jar:ro
+      - ./flink-lib/flink-connector-kafka-3.0.2-1.18.jar:/opt/flink/lib/flink-connector-kafka-3.0.2-1.18.jar:ro
+      - ./flink-lib/mysql-connector-j-8.3.0.jar:/opt/flink/lib/mysql-connector-j-8.3.0.jar:ro
     mem_limit: 512m
 
   flink-tm:
@@ -98,7 +107,11 @@ services:
         jobmanager.rpc.address: flink-jm
         taskmanager.numberOfTaskSlots: 4
     depends_on: [flink-jm]
-    volumes: [flink-jobs:/opt/flink/usrlib]
+    volumes:
+      - flink-jobs:/opt/flink/usrlib
+      - ./flink-lib/flink-connector-jdbc-3.1.2-1.18.jar:/opt/flink/lib/flink-connector-jdbc-3.1.2-1.18.jar:ro
+      - ./flink-lib/flink-connector-kafka-3.0.2-1.18.jar:/opt/flink/lib/flink-connector-kafka-3.0.2-1.18.jar:ro
+      - ./flink-lib/mysql-connector-j-8.3.0.jar:/opt/flink/lib/mysql-connector-j-8.3.0.jar:ro
     mem_limit: 768m
 
   # ---------- Flink SQL Gateway（离线 FlinkSQL/FlinkDag 作业提交入口，8083）----------
@@ -123,6 +136,12 @@ services:
         sql-gateway.endpoint.rest.address: 0.0.0.0
         sql-gateway.endpoint.rest.port: 8083
     depends_on: [flink-jm]
+    # 连接器 jar 同 flink-jm：语句在这里做校验/规划，缺 jar 会在 CREATE TABLE 时
+    # 报 Cannot discover a connector using option: 'connector'='jdbc'
+    volumes:
+      - ./flink-lib/flink-connector-jdbc-3.1.2-1.18.jar:/opt/flink/lib/flink-connector-jdbc-3.1.2-1.18.jar:ro
+      - ./flink-lib/flink-connector-kafka-3.0.2-1.18.jar:/opt/flink/lib/flink-connector-kafka-3.0.2-1.18.jar:ro
+      - ./flink-lib/mysql-connector-j-8.3.0.jar:/opt/flink/lib/mysql-connector-j-8.3.0.jar:ro
     mem_limit: 512m
 
   # ---------- Apache Hop Server（离线 Kettle/Hop 作业执行，8082→容器8080）----------

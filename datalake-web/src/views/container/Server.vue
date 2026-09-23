@@ -107,6 +107,7 @@
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer>
+        <el-button :loading="testing" :disabled="echoLoading" @click="testForm">测试连接</el-button>
         <el-button @click="editDlg = false">取消</el-button>
         <el-button type="primary" :loading="saving" :disabled="echoLoading" @click="save">保存</el-button>
       </template>
@@ -130,6 +131,7 @@ function onPageChange(p: number) { page.page = p }
 const editDlg = ref(false)
 const form = ref<any>(def())
 const saving = ref(false)
+const testing = ref(false)
 const keyInput = ref<HTMLInputElement>()
 const keyFileName = ref('')
 const echoLoading = ref(false)
@@ -172,6 +174,16 @@ async function save() {
   saving.value = true
   try { await api.containerSaveServer(form.value); ElMessage.success('保存成功'); editDlg.value = false; load() }
   catch (e: any) { ElMessage.error(errMsg(e)) } finally { saving.value = false }
+}
+// 抽屉内测试：编辑态密文已解密回显到表单，整体提交即「所见即所测」；
+// 新增态无 id，后端走表单明文直测分支
+async function testForm() {
+  if (!form.value.host) { ElMessage.warning('请先填写主机地址'); return }
+  testing.value = true
+  try {
+    const r: any = await api.containerTestServer({ ...form.value })
+    r.ok ? ElMessage.success(r.msg) : ElMessage.error(r.msg)
+  } catch (e: any) { ElMessage.error(errMsg(e)) } finally { testing.value = false }
 }
 async function test(row: any) {
   row._testing = true

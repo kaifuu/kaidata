@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Timestamp;
 
+import com.pharma.service.access.meta.LineageExtractor;
 import com.pharma.service.access.util.CryptoUtil;
 
 /**
@@ -25,7 +26,10 @@ public class MetaSeedRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbc;
     private final CryptoUtil crypto;
-    public MetaSeedRunner(JdbcTemplate jdbc, CryptoUtil crypto) { this.jdbc = jdbc; this.crypto = crypto; }
+    private final LineageExtractor lineageExtractor;
+    public MetaSeedRunner(JdbcTemplate jdbc, CryptoUtil crypto, LineageExtractor lineageExtractor) {
+        this.jdbc = jdbc; this.crypto = crypto; this.lineageExtractor = lineageExtractor;
+    }
 
     @Override
     public void run(ApplicationArguments args) {
@@ -542,6 +546,27 @@ public class MetaSeedRunner implements ApplicationRunner {
                     "PROPERTIES(\"replication_num\"=\"1\")");
             schemaBump("33");
         }
+
+        // ============ v34：元数据系统库过滤 + 演示种子补全（无新表） ============
+        boolean m34 = "34".equals(kv("schema_ver"));
+        if (!m34) {
+            // 一次性清理历史误采的系统库元数据（information_schema/_statistics_ 等，含其结构版本），
+            // 防污染数据地图/资产挂载/落标推荐；此后 sync/collect 均已按 SqlBuilder.isSystemSchema 跳过
+            try {
+                java.util.List<java.util.Map<String, Object>> noise = jdbc.queryForList(
+                        "SELECT id FROM meta.gov_meta_table WHERE LOWER(schema_name) IN " +
+                                "('information_schema','_statistics_','performance_schema','mysql','sys')");
+                for (java.util.Map<String, Object> n : noise) {
+                    long nid = ((Number) n.get("id")).longValue();
+                    jdbc.update("DELETE FROM meta.gov_meta_version WHERE meta_id=?", nid);
+                    jdbc.update("DELETE FROM meta.gov_meta_table WHERE id=?", nid);
+                }
+                System.out.println("[MetaSeed] 已清理系统库元数据噪音 " + noise.size() + " 条");
+            } catch (Exception e) {
+                System.err.println("[MetaSeed] 系统库元数据清理失败: " + e.getMessage());
+            }
+            schemaBump("34");
+        }
     }
 
     /** 带日志的幂等 UPDATE/DELETE（吞异常但打印根因，便于排查迁移未生效）。 */
@@ -919,6 +944,57 @@ public class MetaSeedRunner implements ApplicationRunner {
         if (cnt("SELECT COUNT(*) FROM meta.data_open_grant WHERE id=9801") == 0)
             jdbc.update("INSERT INTO meta.data_open_grant(id, name, asset_id, open_type, app_key, app_secret, grantee, fields_json, service_code, limit_count, limit_qps, expire_time, status, create_by, create_time) " +
                     "VALUES (9801, '演示用户表开放授权', ?, 'API', 'demouserapikey001', ?, 'demo_consumer', '[\"id\",\"name\",\"gender\"]', 'dem_user_open', 0, 0, NULL, 'ACTIVE', 'system', ?)", demAssetId, crypto.encrypt("demousersecret001"), now);
+
+        // ---------- ⑤ 离线接入种子：ods.dem_user → dwd.dwd_dem_user（补齐 dwd 层数据，喂分层画像） ----------
+        if (cnt("SELECT COUNT(*) FROM meta.ing_offline_job WHERE id=1788700000001") == 0)
+            jdbc.update("INSERT INTO meta.ing_offline_job(id, name, source_ds_id, source_table, target_ds_id, target_db, target_table, " +
+                            "strategy, inc_column, biz_key, last_sync_value, column_map, where_clause, status, create_by, create_time, update_time) " +
+                            "VALUES (1788700000001, 'ods→dwd-用户表同步', 9201, 'ods.dem_user', 9201, 'dwd', 'dwd_dem_user', " +
+                            "'FULL', '', '', '', '', '', 'ENABLED', 'system', ?, ?)", now, now);
+        // dwd 物理表：建表 + 首灌（FULL 重跑 TRUNCATE+INSERT，与作业执行不冲突）
+        exec("CREATE TABLE IF NOT EXISTS dwd.dwd_dem_user (id BIGINT, name VARCHAR(64), gender VARCHAR(4)) " +
+                "PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")");
+        try {
+            if (cnt("SELECT COUNT(*) FROM dwd.dwd_dem_user") == 0)
+                jdbc.update("INSERT INTO dwd.dwd_dem_user(id, name, gender) SELECT id, name, gender FROM ods.dem_user");
+        } catch (Exception ignored) {}
+        // dwd 表登记元数据（数据地图/分层钻取可见）
+        if (cnt("SELECT COUNT(*) FROM meta.gov_meta_table WHERE ds_id=9201 AND schema_name='dwd' AND table_name='dwd_dem_user'") == 0)
+            jdbc.update("INSERT INTO meta.gov_meta_table(id, ds_id, schema_name, table_name, comment, columns_json, row_count, synced_time, " +
+                            "layer_code, security_level, fill_percent, mount_status, current_version) " +
+                            "VALUES (9403, 9201, 'dwd', 'dwd_dem_user', '全链路演示-dwd用户表', ?, 3, ?, 'dwd', 'PUBLIC', 0, 'NONE', 1)",
+                    "[{\"name\":\"id\",\"type\":\"BIGINT\",\"comment\":\"主键\",\"pos\":1},{\"name\":\"name\",\"type\":\"VARCHAR(64)\",\"comment\":\"姓名\",\"pos\":2},{\"name\":\"gender\",\"type\":\"VARCHAR(4)\",\"comment\":\"性别\",\"pos\":3}]", now);
+
+        // ---------- ⑥ 实时接入种子：JDBC→Kafka 投递 + Kafka→SR 入仓 成对演示（默认停止，点启动即通） ----------
+        if (cnt("SELECT COUNT(*) FROM meta.ing_stream_job WHERE id=1788700000002") == 0)
+            jdbc.update("INSERT INTO meta.ing_stream_job(id, name, type, source_ds_id, source_query, kafka_topic, target_db, target_table, " +
+                            "columns_json, schedule_cron, catalog_id, status, props, create_by, create_time, update_time) " +
+                            "VALUES (1788700000002, '演示-用户表投递Kafka', 'JDBC_TO_KAFKA', 9201, 'SELECT id, name, gender FROM ods.dem_user', " +
+                            "'rt-dem-user', '', '', '', '30', 0, 'STOPPED', '', 'system', ?, ?)", now, now);
+        if (cnt("SELECT COUNT(*) FROM meta.ing_stream_job WHERE id=1788700000003") == 0)
+            jdbc.update("INSERT INTO meta.ing_stream_job(id, name, type, source_ds_id, source_query, kafka_topic, target_db, target_table, " +
+                            "columns_json, schedule_cron, catalog_id, status, props, create_by, create_time, update_time) " +
+                            "VALUES (1788700000003, '演示-Kafka入仓SR', 'KAFKA_TO_SR', 0, '', 'rt-dem-user', 'ods', 'ods_rt_dem_user', " +
+                            "'[{\"col\":\"id\",\"type\":\"BIGINT\",\"pk\":true},{\"col\":\"name\",\"type\":\"VARCHAR(64)\"},{\"col\":\"gender\",\"type\":\"VARCHAR(4)\"}]', " +
+                            "'', 0, 'STOPPED', '', 'system', ?, ?)", now, now);
+
+        // ---------- ⑦ 数据开发种子：脚本目录 + 2 个 SQL 脚本（模块开箱可演示） ----------
+        if (cnt("SELECT COUNT(*) FROM meta.dev_catalog WHERE id=1788700000004") == 0)
+            jdbc.update("INSERT INTO meta.dev_catalog(id, parent_id, name, module_type, sort, create_by, create_time) " +
+                    "VALUES (1788700000004, 0, '演示目录', 'SCRIPT', 1, 'system', ?)", now);
+        if (cnt("SELECT COUNT(*) FROM meta.dev_script WHERE id=1788700000005") == 0)
+            jdbc.update("INSERT INTO meta.dev_script(id, name, script_type, datasource_id, content, description, catalog_id, create_time, update_time) " +
+                    "VALUES (1788700000005, '用户表行数统计', 'SQL', 9201, 'SELECT COUNT(*) AS total FROM ods.dem_user', " +
+                    "'全链路演示-SQL脚本', 1788700000004, ?, ?)", now, now);
+        if (cnt("SELECT COUNT(*) FROM meta.dev_script WHERE id=1788700000006") == 0)
+            jdbc.update("INSERT INTO meta.dev_script(id, name, script_type, datasource_id, content, description, catalog_id, create_time, update_time) " +
+                    "VALUES (1788700000006, '湖表数据检查', 'SQL', 9201, 'SELECT * FROM iceberg_catalog.demo.dem_user LIMIT 10', " +
+                    "'全链路演示-湖表查询脚本（经 SR 外部目录查湖）', 1788700000004, ?, ?)", now, now);
+
+        // ---------- ⑧ 血缘重建：种子作业不走 Controller 保存路径（不触发 rebuild），启动时统一补登记（幂等，亦自愈用户作业） ----------
+        try { lineageExtractor.rebuildAll(); } catch (Exception e) {
+            System.err.println("[MetaSeed] 血缘重建失败: " + e.getMessage());
+        }
     }
 
     // -------- 幂等插入助手（存在则跳过） --------

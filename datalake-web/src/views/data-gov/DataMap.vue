@@ -262,6 +262,8 @@ async function loadList() {
     if (assetType.value === 'table') rows.value = await api.govMetaList(subjectId.value ? { subjectId: subjectId.value } : {})
     else if (assetType.value === 'api') rows.value = await api.govMetaApiList()
     else rows.value = await api.govMetaFileList({})
+    // 后端列表上限 2000：命中即提示收窄（数据源过滤/主题域/关键字），避免尾部静默丢失
+    if (rows.value.length >= 2000) ElMessage.warning('结果已达列表上限 2000 条，可能被截断，请通过主题域筛选或检索缩小范围')
   } catch (e: any) { ElMessage.error(errMsg(e)) } finally { loading.value = false }
 }
 function onType() { graphData.value = null; loadList() }

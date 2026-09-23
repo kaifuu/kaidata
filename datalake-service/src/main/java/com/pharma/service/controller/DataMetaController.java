@@ -44,24 +44,42 @@ public class DataMetaController {
 
     // ==================== 列表 / 详情 / 同步 ====================
 
+    /**
+     * 元数据表清单。默认返回数组（客户端分页，上限 2000，超出截断需收窄过滤）；
+     * 传 page 参数则走服务端分页，返回 {records, total}。
+     */
     @GetMapping("/list")
-    public List<Map<String, Object>> list(@RequestParam(required = false) Long dsId,
-                                          @RequestParam(required = false) String kw,
-                                          @RequestParam(required = false) Long subjectId) {
+    public Object list(@RequestParam(required = false) Long dsId,
+                       @RequestParam(required = false) String kw,
+                       @RequestParam(required = false) Long subjectId,
+                       @RequestParam(required = false, defaultValue = "0") int page,
+                       @RequestParam(required = false, defaultValue = "50") int size) {
         Authz.require(Authz.SYS_ADMIN);
-        StringBuilder sql = new StringBuilder("SELECT t.id, t.ds_id, t.schema_name, t.table_name, t.comment, t.cn_name, " +
+        StringBuilder where = new StringBuilder(
+                "SELECT t.id, t.ds_id, t.schema_name, t.table_name, t.comment, t.cn_name, " +
                 "t.layer_code, t.subject_id, s.name AS subject_name, t.fill_percent, t.mount_status, t.current_version, " +
                 "t.synced_time, t.columns_json FROM meta.gov_meta_table t " +
                 "LEFT JOIN meta.gov_subject s ON s.id=t.subject_id WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        if (dsId != null) { sql.append(" AND t.ds_id=?"); args.add(dsId); }
-        if (subjectId != null && subjectId > 0) { sql.append(" AND t.subject_id=?"); args.add(subjectId); }
+        if (dsId != null) { where.append(" AND t.ds_id=?"); args.add(dsId); }
+        if (subjectId != null && subjectId > 0) { where.append(" AND t.subject_id=?"); args.add(subjectId); }
         if (kw != null && !kw.isEmpty()) {
-            sql.append(" AND (t.table_name LIKE ? OR t.cn_name LIKE ? OR t.comment LIKE ?)");
+            where.append(" AND (t.table_name LIKE ? OR t.cn_name LIKE ? OR t.comment LIKE ?)");
             String p = "%" + kw + "%"; args.add(p); args.add(p); args.add(p);
         }
-        sql.append(" ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT 500");
-        return jdbc.queryForList(sql.toString(), args.toArray());
+        if (page > 0) {
+            // 服务端分页：LIMIT 偏移用逗号形式（SR/MySQL 通用）
+            Long total = jdbc.queryForObject("SELECT COUNT(*) FROM meta.gov_meta_table t LEFT JOIN meta.gov_subject s ON s.id=t.subject_id WHERE 1=1"
+                    + where.substring(where.indexOf("WHERE 1=1") + "WHERE 1=1".length()), Long.class, args.toArray());
+            int sz = Math.min(Math.max(size, 1), 200);
+            List<Map<String, Object>> records = jdbc.queryForList(
+                    where + " ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT " + sz + "," + ((page - 1) * sz), args.toArray());
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("records", records);
+            out.put("total", total == null ? 0 : total);
+            return out;
+        }
+        return jdbc.queryForList(where + " ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT 2000", args.toArray());
     }
 
     @GetMapping("/detail")
@@ -82,12 +100,17 @@ public class DataMetaController {
         DataSourceDescriptor ds = loader.load(dsId);
         DataSourceAdapter a = registry.adapter(ds.type);
         DataSource pool = registry.getPool(ds);
-        List<Map<String, Object>> tables = a.listTables(pool, null);
+        // 默认按数据源配置的库名收窄（db_name 为空才全库）；iceberg 湖源 schema 带 catalog 前缀，不按 db_name 过滤
+        String schemaFilter = null;
+        if (ds.dbName != null && !ds.dbName.isEmpty() && !"iceberg".equals(ds.type)) schemaFilter = ds.dbName;
+        List<Map<String, Object>> tables = a.listTables(pool, schemaFilter);
         int count = 0;
         for (Map<String, Object> t : tables) {
             String schema = str(t.get("schema_name"));
             String table = str(t.get("name"));
             if (table.isEmpty()) continue;
+            // 系统库（information_schema/_statistics_ 等）不入册
+            if (com.pharma.service.access.util.SqlBuilder.isSystemSchema(schema)) continue;
             try {
                 String[] sp = com.pharma.service.access.util.SqlBuilder.splitTable(schema.isEmpty() ? table : schema + "." + table);
                 List<Map<String, Object>> cols = a.describeTable(pool, sp[0], sp[1]);

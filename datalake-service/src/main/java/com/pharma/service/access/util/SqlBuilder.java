@@ -30,6 +30,17 @@ public final class SqlBuilder {
         return new String[]{t.substring(0, i), t.substring(i + 1)};
     }
 
+    /**
+     * 是否数据库自带的系统库（information_schema / _statistics_ / performance_schema / mysql / sys 等）。
+     * 元数据同步/采集时跳过，避免系统表入册污染数据地图、资产挂载与落标推荐。
+     */
+    public static boolean isSystemSchema(String schema) {
+        if (schema == null) return true;
+        String s = schema.trim().toLowerCase();
+        return s.isEmpty() || s.equals("information_schema") || s.equals("performance_schema")
+                || s.equals("mysql") || s.equals("sys") || s.startsWith("_statistics_");
+    }
+
     public static String quote(String s) {
         ident(s);
         return "`" + s + "`";

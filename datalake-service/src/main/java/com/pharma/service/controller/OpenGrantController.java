@@ -21,16 +21,22 @@ public class OpenGrantController {
     @Autowired private OpenGrantService grantService;
     @Autowired private com.pharma.service.access.util.CryptoUtil crypto;
 
-    /** 授权列表（带资产名/状态 + 累计调用数） */
+    /** 授权列表（带资产名/状态 + 累计调用数；app_secret 解密回显——管理员视角所见即所存，与订阅凭证口径一致） */
     @GetMapping("/list")
     public List<Map<String, Object>> list() {
         Authz.require(Authz.SYS_ADMIN);
-        return jdbc.queryForList("SELECT g.id, g.name, g.asset_id, g.open_type, g.app_key, g.app_secret, g.grantee, " +
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT g.id, g.name, g.asset_id, g.open_type, g.app_key, g.app_secret, g.grantee, " +
                 "g.fields_json, g.service_code, g.limit_count, g.limit_qps, g.expire_time, g.status, g.create_time, " +
                 "a.name AS asset_name, a.status AS asset_status, s.params AS svc_params, " +
                 "(SELECT COUNT(*) FROM meta.data_service_log l, meta.data_service s WHERE s.code=g.service_code AND l.service_id=s.id) AS calls " +
                 "FROM meta.data_open_grant g LEFT JOIN meta.asset a ON a.id=g.asset_id " +
                 "LEFT JOIN meta.data_service s ON s.code=g.service_code ORDER BY g.id DESC");
+        for (Map<String, Object> r : rows) {
+            String stored = r.get("app_secret") == null ? "" : String.valueOf(r.get("app_secret"));
+            try { r.put("app_secret", crypto.decrypt(stored)); }
+            catch (Exception e) { r.put("app_secret", stored); } // 历史明文兼容
+        }
+        return rows;
     }
 
     /** 可开放的已审核表资产（含字段列表） */

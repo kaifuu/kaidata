@@ -64,6 +64,8 @@ public class MetaCollectExecutor {
                 String schema = str(t.get("schema_name"));
                 String table = str(t.get("name"));
                 if (table.isEmpty() || !matchFilter(table, tableFilter)) continue;
+                // 系统库（information_schema/_statistics_ 等）不入册，防污染数据地图/资产挂载/落标推荐
+                if (SqlBuilder.isSystemSchema(schema)) continue;
                 total++;
                 seen.add(norm(schema, table));
                 try {

@@ -24,10 +24,17 @@
 
     <div class="bar">
       <span class="muted">共 <b>{{ rows.length }}</b> 个已审核表</span>
-      <el-badge :value="cart.length" :hidden="!cart.length"><el-button size="small" @click="cartDrawer = true"><el-icon><ShoppingCart /></el-icon> 购物车</el-button></el-badge>
+      <div class="bar-right">
+        <el-radio-group v-model="view" size="small" @change="onViewChange">
+          <el-radio-button value="card"><el-icon class="vic"><Grid /></el-icon>卡片</el-radio-button>
+          <el-radio-button value="list"><el-icon class="vic"><Menu /></el-icon>列表</el-radio-button>
+        </el-radio-group>
+        <el-badge :value="cart.length" :hidden="!cart.length"><el-button size="small" @click="cartDrawer = true"><el-icon><ShoppingCart /></el-icon> 购物车</el-button></el-badge>
+      </div>
     </div>
 
-    <div class="grid2" v-loading="loading">
+    <!-- 卡片视图 -->
+    <div class="grid2" v-if="view === 'card'" v-loading="loading">
       <div v-for="r in paged" :key="r.asset_id" class="rcard">
         <div class="rhead"><el-icon class="ricon"><Files /></el-icon><div class="rtitle">{{ r.name }}</div><el-tag size="small" round effect="plain">{{ r.security_level || '内部' }}</el-tag></div>
         <div class="rtable mono">{{ r.schema_name }}.{{ r.table_name }}</div>
@@ -40,6 +47,37 @@
         </div>
       </div>
       <div v-if="!rows.length" class="empty">暂无已审核通过的表资产（需在「数据资产」挂载表资产并通过审核）</div>
+    </div>
+
+    <!-- 列表视图 -->
+    <div class="dl-card" v-else v-loading="loading">
+      <el-table :data="paged" stripe size="small">
+        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="lname"><el-icon class="ricon"><Files /></el-icon>{{ row.name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="库表" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }"><span class="mono">{{ row.schema_name }}.{{ row.table_name }}</span></template>
+        </el-table-column>
+        <el-table-column label="描述" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.comment || row.description || '暂无描述' }}</template>
+        </el-table-column>
+        <el-table-column label="字段数" width="80" align="center">
+          <template #default="{ row }">{{ countCols(row.columns_json) }}</template>
+        </el-table-column>
+        <el-table-column label="安全等级" width="100" align="center">
+          <template #default="{ row }"><el-tag size="small" round effect="plain">{{ row.security_level || '内部' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="操作" width="210" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openSchema(row)">结构/样例</el-button>
+            <el-button link size="small" @click="addCart(row)">购物车</el-button>
+            <el-button link type="warning" size="small" @click="openSubscribe([row])">订阅</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><div style="padding:24px 0" class="muted">暂无已审核通过的表资产（需在「数据资产」挂载表资产并通过审核）</div></template>
+      </el-table>
     </div>
     <div class="dl-pagination">
       <el-pagination :current-page="page.page" :page-size="page.size" :total="rows.length"
@@ -102,11 +140,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ShoppingCart, Files, Search, View } from '@element-plus/icons-vue'
+import { ShoppingCart, Files, Search, View, Grid, Menu } from '@element-plus/icons-vue'
 import { api, errMsg } from '@/api'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
+// 卡片/列表双视图，localStorage 记忆上次选择
+const view = ref<'card' | 'list'>(localStorage.getItem('market-dataset-view') === 'list' ? 'list' : 'card')
+function onViewChange(v: any) { localStorage.setItem('market-dataset-view', v) }
 // 客户端分页：卡片栅格按页切片
 const page = reactive({ page: 1, size: 10 })
 const paged = computed(() => rows.value.slice((page.page - 1) * page.size, page.page * page.size))
@@ -202,36 +243,47 @@ onMounted(() => { loadResources(); loadCart() })
 </script>
 <style scoped>
 /* Hero（双主题适配：背景/文字均用主题变量，避免暗色下白底浅字撞色） */
-.hero { text-align: center; padding: 40px 20px 28px; background: var(--tech-panel); border: 1px solid var(--tech-panel-border); border-radius: 16px; box-shadow: var(--tech-shadow); margin-bottom: 18px; }
-.hero-title { font-size: 28px; font-weight: 700; color: var(--tech-primary); letter-spacing: 0.5px; text-shadow: var(--tech-glow); }
-.hero-sub { color: var(--tech-text-muted); font-size: 13px; margin: 8px 0 22px; }
+.hero { text-align: center; padding: 34px 20px 26px; background: var(--tech-panel); border: 1px solid var(--tech-panel-border); border-radius: 16px; box-shadow: var(--tech-shadow); margin-bottom: 16px; position: relative; overflow: hidden; }
+.hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 64% 90% at 50% -24%, color-mix(in srgb, var(--tech-primary) 10%, transparent), transparent); pointer-events: none; }
+.hero-title { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; background: linear-gradient(92deg, var(--tech-primary), var(--tech-primary-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.hero-sub { color: var(--tech-text-muted); font-size: 13px; margin: 8px 0 20px; }
 .hero-search { display: flex; justify-content: center; gap: 12px; max-width: 680px; margin: 0 auto 4px; align-items: center; }
 .hero-search .big-input { flex: 1; }
 .hero-search .big-input :deep(.el-input__wrapper) { border-radius: 24px; background: var(--el-bg-color); border: 1px solid var(--tech-panel-border); box-shadow: var(--tech-shadow); padding-left: 18px; }
 .hero-search .big-input :deep(.el-input__wrapper:hover) { border-color: var(--tech-primary); }
-.hero-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.hero-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .ml { font-size: 12px; color: var(--tech-text-muted); }
-.chip { font-size: 12px; padding: 4px 14px; border-radius: 16px; border: 1px solid var(--tech-panel-border); color: var(--tech-text); background: var(--el-fill-color-light); cursor: pointer; transition: all .15s; user-select: none; }
-.chip:hover { color: var(--tech-primary); border-color: var(--tech-primary); }
-.chip.on { color: #fff; background: var(--tech-primary); border-color: var(--tech-primary); }
+.chip { font-size: 12px; padding: 4px 13px; border-radius: 14px; border: 1px solid var(--tech-panel-border); color: var(--tech-text-muted); background: transparent; cursor: pointer; transition: all .18s; user-select: none; }
+.chip:hover { color: var(--tech-primary); border-color: var(--tech-primary); background: color-mix(in srgb, var(--tech-primary) 8%, transparent); }
+.chip.on { color: #fff; background: linear-gradient(90deg, var(--tech-primary), var(--tech-primary-2)); border-color: transparent; box-shadow: 0 2px 8px color-mix(in srgb, var(--tech-primary) 35%, transparent); }
 .cat-sel { width: 220px; }
 /* 结果条 */
 .bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.bar .muted { font-size: 13px; }
+.bar b { color: var(--tech-primary); font-size: 14px; padding: 0 2px; }
+.bar-right { display: flex; align-items: center; gap: 10px; }
+.vic { margin-right: 4px; font-size: 13px; }
+/* 列表视图 */
+.dl-card { background: var(--tech-panel); border: 1px solid var(--tech-panel-border); border-radius: 12px; padding: 12px; box-shadow: var(--tech-shadow); }
+.lname { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--tech-text); font-size: 13px; }
+.lname .ricon { font-size: 15px; }
 /* 卡片网格 */
 .grid2 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.rcard { background: var(--tech-panel); border: 1px solid var(--tech-panel-border); border-radius: 12px; padding: 18px; box-shadow: var(--tech-shadow); transition: all .2s; display: flex; flex-direction: column; }
-.rcard:hover { transform: translateY(-2px); border-color: var(--tech-primary); box-shadow: 0 6px 20px rgba(0,0,0,0.22); }
-.rhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.ricon { font-size: 20px; color: var(--tech-primary); }
-.rtitle { font-size: 16px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tech-text); }
-.rtable { font-size: 12px; color: var(--tech-text-muted); margin-bottom: 8px; }
-.rdesc { font-size: 13px; color: var(--tech-text); flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px; }
-.rmeta { font-size: 12px; color: var(--tech-text-muted); margin-bottom: 10px; }
-.rops { display: flex; gap: 6px; flex-wrap: wrap; }
-.empty { grid-column: 1 / -1; text-align: center; color: var(--tech-text-muted); padding: 50px; }
+.rcard { background: var(--tech-panel); border: 1px solid var(--tech-panel-border); border-radius: 12px; padding: 16px 18px 12px; box-shadow: var(--tech-shadow); transition: transform .2s, border-color .2s, box-shadow .2s; display: flex; flex-direction: column; }
+.rcard:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--tech-primary) 45%, var(--tech-panel-border)); box-shadow: 0 8px 24px color-mix(in srgb, var(--tech-primary) 14%, rgba(16, 24, 40, 0.12)); }
+.rhead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ricon { font-size: 18px; color: var(--tech-primary); flex-shrink: 0; }
+.rtitle { font-size: 15px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tech-text); }
+/* 库表名胶囊 */
+.rtable { align-self: flex-start; font-size: 12px; color: var(--tech-text-muted); background: color-mix(in srgb, var(--tech-primary) 8%, transparent); border: 1px solid color-mix(in srgb, var(--tech-primary) 18%, transparent); border-radius: 6px; padding: 2px 8px; margin-bottom: 10px; }
+.rdesc { font-size: 13px; line-height: 1.6; color: var(--tech-text-muted); flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 6px; }
+.rmeta { font-size: 12px; color: var(--tech-text-muted); padding-top: 8px; margin-bottom: 8px; border-top: 1px dashed var(--tech-panel-border); }
+.rops { display: flex; gap: 4px; flex-wrap: wrap; }
+.empty { grid-column: 1 / -1; text-align: center; color: var(--tech-text-muted); padding: 50px; font-size: 13px; }
 /* 通用 */
 .muted { color: var(--tech-text-muted); font-size: 12px; }
 .mb { margin-bottom: 6px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 @media (max-width: 1200px) { .grid2 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
 </style>

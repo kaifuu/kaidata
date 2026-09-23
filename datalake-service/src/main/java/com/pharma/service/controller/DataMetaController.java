@@ -73,7 +73,7 @@ public class DataMetaController {
                     + where.substring(where.indexOf("WHERE 1=1") + "WHERE 1=1".length()), Long.class, args.toArray());
             int sz = Math.min(Math.max(size, 1), 200);
             List<Map<String, Object>> records = jdbc.queryForList(
-                    where + " ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT " + sz + "," + ((page - 1) * sz), args.toArray());
+                    where + " ORDER BY t.ds_id, t.schema_name, t.table_name LIMIT " + ((page - 1) * sz) + "," + sz, args.toArray());
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("records", records);
             out.put("total", total == null ? 0 : total);
